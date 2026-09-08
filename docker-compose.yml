@@ -1,0 +1,49 @@
+services:
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: tender-open-webui
+    ports:
+      - "${WEBUI_PORT:-3000}:8080"
+    environment:
+      # Локальные модели через Ollama в этой же сети
+      - OLLAMA_BASE_URL=http://ollama:11434
+      # Внешние OpenAI-совместимые API (DeepSeek / Qwen).
+      # Несколько URL и ключей разделяются ";"
+      - OPENAI_API_BASE_URLS=${OPENAI_API_BASE_URLS:-}
+      - OPENAI_API_KEYS=${OPENAI_API_KEYS:-}
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-tender-dev-change-me}
+      # Для одного ПК можно отключить регистрацию после первого админа
+      - ENABLE_SIGNUP=${ENABLE_SIGNUP:-true}
+      # Этап 1 без своего RAG: не тянем embedding/whisper при старте
+      - RAG_EMBEDDING_MODEL_AUTO_UPDATE=${RAG_EMBEDDING_MODEL_AUTO_UPDATE:-false}
+      - WHISPER_MODEL_AUTO_UPDATE=${WHISPER_MODEL_AUTO_UPDATE:-false}
+    volumes:
+      - open-webui-data:/app/backend/data
+      # Документы на хосте — для удобства и будущего этапа RAG
+      - ./data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: tender-ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+    # Раскомментируйте на машине с NVIDIA GPU + nvidia-container-toolkit:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  open-webui-data:
+  ollama-data:

@@ -1,0 +1,19 @@
+.env
+*.pem
+*.key
+
+# Данные пользователя (тендеры/каталоги) — не коммитим содержимое
+data/tenders/**
+!data/tenders/.gitkeep
+data/catalogs/**
+!data/catalogs/.gitkeep
+data/uploads/**
+!data/uploads/.gitkeep
+
+# Локальные артефакты
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+Thumbs.db

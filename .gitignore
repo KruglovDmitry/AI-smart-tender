@@ -2,11 +2,14 @@
 *.pem
 *.key
 
-# Данные пользователя (тендеры/каталоги) — не коммитим содержимое
+# Данные пользователя (тендеры/каталоги) — не коммитим содержимое,
+# кроме примеров sample-*
 data/tenders/**
 !data/tenders/.gitkeep
+!data/tenders/sample-*
 data/catalogs/**
 !data/catalogs/.gitkeep
+!data/catalogs/sample-*
 data/uploads/**
 !data/uploads/.gitkeep
 

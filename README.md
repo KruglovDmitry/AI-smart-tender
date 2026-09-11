@@ -1,111 +1,112 @@
-# AI Smart Tender — этап 1
+# AI Smart Tender
 
-Локальный чат с LLM и документами: [Open WebUI](https://github.com/open-webui/open-webui) + Ollama (локальный Qwen) + облачные API (DeepSeek / Qwen).
-
-Свой RAG и FastAPI **не входят** в этот этап. Документы передаются в модель через вложения в чате.
+Локальный чат с LLM и документами: [Open WebUI](https://github.com/open-webui/open-webui) + Ollama + облачные API (DeepSeek / Qwen) + **OpenAPI Tool Server** (папка на сервере + просмотр ссылок).
 
 ## Что получите
 
 - UI как у ChatGPT / DeepSeek на `http://localhost:3000`
-- Выбор моделей: локальный Qwen (Ollama) и/или DeepSeek / Qwen по API
-- Загрузка файлов в чат (тендеры, каталоги, ZIP)
-- Папки на диске: `data/tenders`, `data/catalogs`, `data/uploads`
+- Выбор моделей: локальный Qwen и/или DeepSeek / Qwen по API
+- Вложения файлов в чат + Knowledge
+- Tools без форка UI:
+  - чтение документов из `data/` на сервере (извлечение текста как в Open WebUI)
+  - просмотр внешней ссылки (как browse в DeepSeek/ChatGPT)
 
 ## Требования
 
 - Docker Desktop (Windows) с Docker Compose
 - Для облачных моделей — API-ключи
-- Для локального Qwen — достаточно RAM (для `qwen2.5:7b` комфортно от ~16 GB; GPU ускоряет, но не обязателен)
+- Для локального Qwen — от ~16 GB RAM для `qwen2.5:7b`
 
 ## Быстрый старт
 
-### 1. Настройка окружения
-
 ```powershell
 copy .env.example .env
+docker compose up -d --build
 ```
 
-Откройте `.env` и при необходимости укажите ключи.
+Откройте [http://localhost:3000](http://localhost:3000).  
+Swagger tools: [http://localhost:8000/docs](http://localhost:8000/docs).
 
-**Только локальный Qwen** — ключи можно не трогать.
-
-**DeepSeek:**
-
-```env
-OPENAI_API_BASE_URLS=https://api.deepseek.com/v1
-OPENAI_API_KEYS=sk-ваш-ключ
-```
-
-**DeepSeek + Qwen (DashScope):**
-
-```env
-OPENAI_API_BASE_URLS=https://api.deepseek.com/v1;https://dashscope.aliyuncs.com/compatible-mode/v1
-OPENAI_API_KEYS=sk-deepseek;sk-qwen
-```
-
-Ключи: [DeepSeek](https://platform.deepseek.com/), [DashScope / Qwen](https://dashscope.console.aliyun.com/).
-
-### 2. Запуск
-
-```powershell
-docker compose up -d
-```
-
-Откройте [http://localhost:3000](http://localhost:3000).
-
-Первый зарегистрированный пользователь становится администратором.
-
-### 3. Локальная модель Qwen
+Локальный Qwen:
 
 ```powershell
 .\scripts\pull-qwen.ps1
 ```
 
-По умолчанию тянется `qwen2.5:7b`. Другая модель:
+## Подключение Tool Server в Open WebUI
 
-```powershell
-.\scripts\pull-qwen.ps1 -Model "qwen2.5:14b"
-```
+Tools работают **без изменения UI** — через штатные OpenAPI Tool Servers.
 
-В Open WebUI модель появится в списке (Ollama).
+### 1. Сервер инструментов
 
-### 4. Облачные модели в UI (если не задали в `.env`)
+В `.env` уже задан `TOOL_SERVER_CONNECTIONS` на `http://tools-server:8000`.  
+Swagger: [http://localhost:8000/docs](http://localhost:8000/docs).
 
-Admin Panel → Settings → Connections → OpenAI:
+Если добавляешь вручную:
 
-| Провайдер | URL | Ключ |
-|-----------|-----|------|
-| DeepSeek | `https://api.deepseek.com/v1` | из platform.deepseek.com |
-| Qwen | `https://dashscope.aliyuncs.com/compatible-mode/v1` | из DashScope |
+| Где | URL |
+|-----|-----|
+| Admin → Integrations → Tools (**Global**) | `http://tools-server:8000` |
+| User → Integrations (из браузера) | `http://localhost:8000` |
 
-Сохраните — модели подтянутся автоматически.
+После добавления нажми проверку и **Сохранить**.
 
-## Как работать с тендерами (этап 1)
+### 2. Сделать tools доступными **в чате**
 
-1. Положите файлы в `data/tenders` и `data/catalogs` (для порядка на диске).
-2. В чате Open WebUI **прикрепите** нужные файлы к сообщению (скрепка / upload).
-3. Выберите модель (Qwen или DeepSeek).
-4. Напишите задачу, например:
+Сервер сам по себе недостаточен — tools нужно включить у модели/чата:
 
-> Вот тендер и каталог. Подбери аналоги позиций из тендера по каталогу. Ответ таблицей: позиция → кандидат → почему.
+**Навсегда для модели (рекомендуется):**
+1. Рабочее пространство → **Модели** → **Тендер агент** (или deepseek) → ✎
+2. Секция **Tools** — отметь `list_documents`, `read_document`, `read_folder`, `fetch_url` (Tender Tools)
+3. Advanced → **Function Calling = Native**
+4. Сохранить
 
-Пока нет RAG: в контекст попадают только **прикреплённые** файлы (и то, что модель успевает «прочитать» по лимиту контекста). Большие архивы лучше давать частями.
+**Только для текущего чата:**
+1. В поле ввода нажми **+**
+2. Включи нужные Tools
+3. Напиши запрос заново
+
+После этого модель сможет вызывать tools. Без этого шага она видит только Knowledge Open WebUI.
+
+Документация: [Tools in chat](https://docs.openwebui.com/features/extensibility/plugin/tools/).
+
+### Примеры запросов агенту
+
+> Покажи файлы в папке tenders и прочитай sample-tender.txt вместе с каталогом catalogs/sample-catalog.csv. Подбери аналоги.
+
+> Открой ссылку https://example.com и кратко перескажи, о чём страница.
+
+Положите свои файлы в `data/tenders` и `data/catalogs` на диске сервера — агент увидит их через tools.
+
+## Как устроено чтение документов
+
+Извлечение текста повторяет **default engine** Open WebUI ([loaders/main.py](https://github.com/open-webui/open-webui/blob/main/backend/open_webui/retrieval/loaders/main.py)):
+
+| Формат | Способ |
+|--------|--------|
+| PDF | PyPDFLoader |
+| DOCX | Docx2txtLoader |
+| TXT/MD/… | TextLoader + encoding detect |
+| CSV | CSVLoader |
+| XLSX | pandas |
+| PPTX | python-pptx |
+| ZIP | распаковка + извлечение вложенных файлов |
+| HTML | BSHTMLLoader |
+
+То есть в контекст модели попадает **извлечённый текст**, как после добавления файла в чат (не отдельный «чужой» RAG).
+
+## Просмотр ссылок
+
+`fetch_url` скачивает страницу и вычищает основной контент через **trafilatura** (title + body + таблицы) — тот же класс задач, что web-browsing в ChatGPT/DeepSeek.
 
 ## Полезные команды
 
 ```powershell
 docker compose ps
-docker compose logs -f open-webui
-docker compose logs -f ollama
-docker compose down
-docker compose pull
-docker compose up -d
-```
-
-Список локальных моделей Ollama:
-
-```powershell
-docker exec -it tender-ollama ollama list
+docker compose logs -f tools-server
+docker compose up -d --build tools-server
+curl http://localhost:8000/health
+curl "http://localhost:8000/list_documents?path=tenders"
 ```
 
 ## Структура
@@ -114,30 +115,28 @@ docker exec -it tender-ollama ollama list
 AI-smart-tender/
 ├── docker-compose.yml
 ├── .env.example
+├── prompts/tender-agent-system.txt
+├── tools-server/          # OpenAPI tools для Open WebUI
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── app/
 ├── data/
-│   ├── tenders/      # тендеры
-│   ├── catalogs/     # эталоны / каталоги
-│   └── uploads/      # временные файлы
-└── scripts/
-    └── pull-qwen.ps1
+│   ├── tenders/
+│   ├── catalogs/
+│   └── uploads/
+└── scripts/pull-qwen.ps1
 ```
 
-## Этап 2 (позже)
+## Дальше
 
-Когда документов станет много для ручных вложений — отдельный RAG по `data/tenders` и `data/catalogs` (поиск чанков, метаданные, автоматический контекст).
+- Bitrix24 как ещё один tool
+- Свой RAG по `data/`, если объём документов вырастет
 
 ## Troubleshooting
 
 | Проблема | Что проверить |
 |----------|----------------|
-| UI не открывается | `docker compose ps`, порт `WEBUI_PORT` в `.env` |
-| Нет моделей Ollama | `.\scripts\pull-qwen.ps1`, логи `tender-ollama` |
-| DeepSeek/Qwen не видны | ключи в `.env` или Connections в админке; URL с суффиксом `/v1` |
-| Медленный локальный Qwen | меньшая модель (`7b`) или GPU в `docker-compose.yml` |
-| Файл «не учитывается» | прикрепите к сообщению; слишком большой PDF — разбейте |
-
-## Ссылки
-
-- [Open WebUI](https://github.com/open-webui/open-webui)
-- [Документация: OpenAI-compatible провайдеры](https://docs.openwebui.com/getting-started/quick-start/connect-a-provider/starting-with-openai-compatible/)
-- [Ollama](https://ollama.com/)
+| Tools не видны | URL `http://tools-server:8000` как **Global** tool server; `docker compose ps` |
+| Нет доступа к файлам | файлы лежат в `./data/...`, volume смонтирован |
+| fetch_url пустой | страница требует JS/логин — тогда только публичный HTML |
+| Модель не вызывает tools | включите Tools у модели; DeepSeek/Qwen с function calling |

@@ -5,26 +5,23 @@ services:
     ports:
       - "${WEBUI_PORT:-3000}:8080"
     environment:
-      # Локальные модели через Ollama в этой же сети
       - OLLAMA_BASE_URL=http://ollama:11434
-      # Внешние OpenAI-совместимые API (DeepSeek / Qwen).
-      # Несколько URL и ключей разделяются ";"
       - OPENAI_API_BASE_URLS=${OPENAI_API_BASE_URLS:-}
       - OPENAI_API_KEYS=${OPENAI_API_KEYS:-}
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-tender-dev-change-me}
-      # Для одного ПК можно отключить регистрацию после первого админа
       - ENABLE_SIGNUP=${ENABLE_SIGNUP:-true}
-      # Этап 1 без своего RAG: не тянем embedding/whisper при старте
       - RAG_EMBEDDING_MODEL_AUTO_UPDATE=${RAG_EMBEDDING_MODEL_AUTO_UPDATE:-false}
       - WHISPER_MODEL_AUTO_UPDATE=${WHISPER_MODEL_AUTO_UPDATE:-false}
+      # Global OpenAPI Tool Server (доступен в чате после включения у модели)
+      - TOOL_SERVER_CONNECTIONS=${TOOL_SERVER_CONNECTIONS}
     volumes:
       - open-webui-data:/app/backend/data
-      # Документы на хосте — для удобства и будущего этапа RAG
       - ./data:/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
       - ollama
+      - tools-server
     restart: unless-stopped
 
   ollama:
@@ -35,14 +32,20 @@ services:
     volumes:
       - ollama-data:/root/.ollama
     restart: unless-stopped
-    # Раскомментируйте на машине с NVIDIA GPU + nvidia-container-toolkit:
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
+
+  tools-server:
+    build: ./tools-server
+    container_name: tender-tools
+    ports:
+      - "${TOOLS_PORT:-8000}:8000"
+    environment:
+      - DATA_ROOT=/data
+      - DEFAULT_MAX_CHARS=${DEFAULT_MAX_CHARS:-120000}
+      - DEFAULT_MAX_FILES=${DEFAULT_MAX_FILES:-30}
+      - FETCH_TIMEOUT_SEC=${FETCH_TIMEOUT_SEC:-30}
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
 
 volumes:
   open-webui-data:

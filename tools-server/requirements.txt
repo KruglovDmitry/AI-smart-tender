@@ -1,0 +1,15 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+pydantic==2.11.3
+httpx==0.28.1
+trafilatura==2.0.0
+ftfy==6.3.1
+pypdf==5.4.0
+docx2txt==0.9
+python-pptx==1.0.2
+pandas==2.2.3
+openpyxl==3.1.5
+beautifulsoup4==4.13.3
+langchain-community==0.3.21
+langchain-core==0.3.51
+lxml_html_clean==0.4.1

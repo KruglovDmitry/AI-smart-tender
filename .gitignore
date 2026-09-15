@@ -14,6 +14,7 @@ data/uploads/**
 !data/uploads/.gitkeep
 
 # Локальные артефакты
+tmp-*.json
 __pycache__/
 *.pyc
 .venv/

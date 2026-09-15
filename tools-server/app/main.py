@@ -1,4 +1,4 @@
-"""OpenAPI Tool Server for Open WebUI: server documents + web browse."""
+"""OpenAPI Tool Server for Open WebUI: documents, fetch URL, browser agent."""
 
 from __future__ import annotations
 
@@ -7,16 +7,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from . import config
-from .documents import list_directory, read_document, read_folder_documents
-from .web import fetch_page
+from .document_tool import list_directory, read_document, read_folder_documents
+from .web_tool import fetch_page
 
 app = FastAPI(
     title="Tender Tools API",
-    version="1.0.0",
+    version="1.1.0",
     description=(
-        "Tools for the tender agent: read documents from the server data folder "
-        "(text extraction like Open WebUI chat uploads) and browse external URLs "
-        "(like ChatGPT / DeepSeek web browsing)."
+        "Tools for the tender agent: server documents, simple URL fetch, "
+        "and a browser agent (DOM + screenshot tools, LLM chooses the path)."
     ),
 )
 
@@ -70,9 +69,46 @@ class FetchUrlBody(BaseModel):
     )
 
 
+class BrowserTaskBody(BaseModel):
+    task: str = Field(
+        ...,
+        description=(
+            "Natural-language task for the browser agent, e.g. "
+            "'Скачай все документы со страницы тендера и кратко опиши лот'."
+        ),
+    )
+    url: str | None = Field(
+        None,
+        description="Optional starting URL (agent will navigate here first).",
+    )
+    max_steps: int | None = Field(
+        None,
+        description=f"Max tool steps (default {config.BROWSER_MAX_STEPS}).",
+    )
+    download_subdir: str | None = Field(
+        None,
+        description=(
+            "Optional folder name under data/tenders/ for downloads "
+            "(default data/tenders/_browser)."
+        ),
+    )
+
+
 @app.get("/health", summary="Health check")
 def health():
-    return {"status": "ok", "data_root": str(config.DATA_ROOT)}
+    return {
+        "status": "ok",
+        "data_root": str(config.DATA_ROOT),
+        "browser_agent": {
+            "llm_configured": bool(
+                config.AGENT_LLM_BASE_URL and config.AGENT_LLM_API_KEY
+            ),
+            "model": config.AGENT_LLM_MODEL,
+            "vl_model": config.AGENT_VL_MODEL,
+            "vl_enabled": config.AGENT_VL_ENABLED,
+            "headless": config.BROWSER_HEADLESS,
+        },
+    }
 
 
 @app.get(
@@ -166,3 +202,36 @@ def api_fetch_url(body: FetchUrlBody):
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Fetch failed: {e}") from e
+
+
+@app.post(
+    "/run_browser_task",
+    summary="Run browser agent on a tender URL / task",
+    description=(
+        "Starts an internal browser agent with tools: navigate, screenshot, "
+        "click_xy, type_text, list_download_links, download_url, get_page_text, finish. "
+        "The agent itself chooses DOM vs vision path — no fixed grounding stage. "
+        "Requires AGENT_LLM_* env (prefer a VL-capable OpenAI-compatible model)."
+    ),
+)
+async def api_run_browser_task(body: BrowserTaskBody):
+    try:
+        from .browser_tool.agent import run_browser_task
+
+        return await run_browser_task(
+            task=body.task,
+            url=body.url,
+            max_steps=body.max_steps,
+            download_subdir=body.download_subdir,
+        )
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Playwright is not installed in the container: {e}",
+        ) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Browser agent failed: {e}") from e

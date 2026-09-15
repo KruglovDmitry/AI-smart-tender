@@ -43,10 +43,23 @@ services:
       - DEFAULT_MAX_CHARS=${DEFAULT_MAX_CHARS:-120000}
       - DEFAULT_MAX_FILES=${DEFAULT_MAX_FILES:-30}
       - FETCH_TIMEOUT_SEC=${FETCH_TIMEOUT_SEC:-30}
+      - BROWSER_HEADLESS=${BROWSER_HEADLESS:-true}
+      - BROWSER_MAX_STEPS=${BROWSER_MAX_STEPS:-20}
+      - BROWSER_VIEWPORT_WIDTH=${BROWSER_VIEWPORT_WIDTH:-1280}
+      - BROWSER_VIEWPORT_HEIGHT=${BROWSER_VIEWPORT_HEIGHT:-900}
+      - AGENT_LLM_BASE_URL=${AGENT_LLM_BASE_URL:-}
+      - AGENT_LLM_API_KEY=${AGENT_LLM_API_KEY:-}
+      - AGENT_LLM_MODEL=${AGENT_LLM_MODEL:-qwen-max}
+      - AGENT_VL_MODEL=${AGENT_VL_MODEL:-qwen-vl-plus}
+      - AGENT_VL_ENABLED=${AGENT_VL_ENABLED:-true}
     volumes:
       - ./data:/data
+      - ./tools-server/app:/app/app
+      - browser-profile:/tmp/tender-browser-profile
+    shm_size: "1gb"
     restart: unless-stopped
 
 volumes:
   open-webui-data:
   ollama-data:
+  browser-profile:

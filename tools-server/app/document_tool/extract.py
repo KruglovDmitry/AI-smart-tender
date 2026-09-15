@@ -13,7 +13,7 @@ from typing import Any
 
 import ftfy
 
-from .config import ALLOWED_EXTENSIONS
+from ..config import ALLOWED_EXTENSIONS
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +51,46 @@ def _detect_encoding(path: Path) -> str:
         except UnicodeDecodeError:
             continue
     return "latin-1"
+
+
+def _extract_legacy_doc(path: Path) -> str:
+    """Extract text from legacy .doc via antiword/catdoc (installed in image)."""
+    import shutil
+    import subprocess
+
+    errors: list[str] = []
+    for cmd in (
+        ["antiword", "-m", "UTF-8.txt", str(path)],
+        ["antiword", str(path)],
+        ["catdoc", "-d", "utf-8", str(path)],
+        ["catdoc", str(path)],
+    ):
+        binary = cmd[0]
+        if not shutil.which(binary):
+            errors.append(f"{binary} not installed")
+            continue
+        try:
+            proc = subprocess.run(
+                cmd,
+                check=False,
+                capture_output=True,
+                timeout=60,
+            )
+            if proc.returncode == 0 and (proc.stdout or b"").strip():
+                text = proc.stdout.decode("utf-8", errors="replace")
+                if not text.strip():
+                    text = proc.stdout.decode("cp1251", errors="replace")
+                return text
+            err = (proc.stderr or b"").decode("utf-8", errors="replace")[:200]
+            errors.append(f"{' '.join(cmd)} -> rc={proc.returncode} {err}")
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{binary}: {e}")
+
+    raise ValueError(
+        "Cannot read legacy .doc ("
+        + "; ".join(errors[:4])
+        + "). Convert to .docx or install antiword/catdoc."
+    )
 
 
 def extract_file(path: Path) -> dict[str, Any]:
@@ -122,7 +162,12 @@ def _extract_by_ext(path: Path, ext: str) -> str:
         import pandas as pd
 
         parts: list[str] = []
-        xls = pd.ExcelFile(path)
+        engine = "xlrd" if ext == ".xls" else "openpyxl"
+        try:
+            xls = pd.ExcelFile(path, engine=engine)
+        except Exception:
+            # fallback: let pandas choose
+            xls = pd.ExcelFile(path)
         for sheet in xls.sheet_names:
             df = pd.read_excel(xls, sheet_name=sheet)
             parts.append(f"Sheet: {sheet}\n{df.to_string(index=False)}")
@@ -147,9 +192,7 @@ def _extract_by_ext(path: Path, ext: str) -> str:
             raise ValueError(f"Cannot read PowerPoint: {e}") from e
 
     if ext == ".doc":
-        raise ValueError(
-            "Legacy .doc is not supported without unstructured. Convert to .docx."
-        )
+        return _extract_legacy_doc(path)
 
     # text-like
     enc = _detect_encoding(path)

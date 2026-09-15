@@ -57,7 +57,7 @@ Swagger: [http://localhost:8000/docs](http://localhost:8000/docs).
 
 **Навсегда для модели (рекомендуется):**
 1. Рабочее пространство → **Модели** → **Тендер агент** (или deepseek) → ✎
-2. Секция **Tools** — отметь `list_documents`, `read_document`, `read_folder`, `fetch_url` (Tender Tools)
+2. Секция **Tools** — отметь `list_documents`, `read_document`, `read_folder`, `fetch_url`, `run_browser_task`
 3. Advanced → **Function Calling = Native**
 4. Сохранить
 
@@ -74,9 +74,28 @@ Swagger: [http://localhost:8000/docs](http://localhost:8000/docs).
 
 > Покажи файлы в папке tenders и прочитай sample-tender.txt вместе с каталогом catalogs/sample-catalog.csv. Подбери аналоги.
 
+> Через browser-агент обработай тендер https://… — скачай документацию и кратко опиши лот.
+
 > Открой ссылку https://example.com и кратко перескажи, о чём страница.
 
 Положите свои файлы в `data/tenders` и `data/catalogs` на диске сервера — агент увидит их через tools.
+
+## Browser agent (`run_browser_task`)
+
+Внутри tools-server крутится **агент с tools** (без фиксированного grounding):
+`navigate`, `screenshot`, `click_xy`, `type_text`, `list_download_links`, `download_url`, `get_page_text`, `finish`.
+
+Агент сам решает: DOM, vision или оба. Нужны переменные:
+
+```env
+AGENT_LLM_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+AGENT_LLM_API_KEY=sk-...
+AGENT_LLM_MODEL=qwen-max
+```
+
+> `qwen-vl-max` на intl часто **не** делает function calling. Для агента с tools берите `qwen-max` / `qwen-plus`. Endpoint для intl-ключа: `dashscope-intl.aliyuncs.com`.
+
+Скачивания: `data/tenders/_browser/`.
 
 ## Как устроено чтение документов
 

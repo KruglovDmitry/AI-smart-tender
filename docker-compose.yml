@@ -8,14 +8,16 @@ services:
       - OLLAMA_BASE_URL=http://ollama:11434
       - OPENAI_API_BASE_URLS=${OPENAI_API_BASE_URLS:-}
       - OPENAI_API_KEYS=${OPENAI_API_KEYS:-}
-      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-tender-dev-change-me}
+      # Пустой ключ = Open WebUI берёт уже сохранённый из volume (сессии не слетают)
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-}
       - ENABLE_SIGNUP=${ENABLE_SIGNUP:-true}
       - RAG_EMBEDDING_MODEL_AUTO_UPDATE=${RAG_EMBEDDING_MODEL_AUTO_UPDATE:-false}
       - WHISPER_MODEL_AUTO_UPDATE=${WHISPER_MODEL_AUTO_UPDATE:-false}
       # Global OpenAPI Tool Server (доступен в чате после включения у модели)
       - TOOL_SERVER_CONNECTIONS=${TOOL_SERVER_CONNECTIONS}
     volumes:
-      - open-webui-data:/app/backend/data
+      # Существующий volume со всеми пользователями / чатами / настройками
+      - open-webui:/app/backend/data
       - ./data:/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -30,7 +32,8 @@ services:
     ports:
       - "${OLLAMA_PORT:-11434}:11434"
     volumes:
-      - ollama-data:/root/.ollama
+      # Модели, уже скачанные в текущем open-webui:ollama
+      - ollama:/root/.ollama
     restart: unless-stopped
 
   tools-server:
@@ -60,6 +63,8 @@ services:
     restart: unless-stopped
 
 volumes:
-  open-webui-data:
-  ollama-data:
+  open-webui:
+    external: true
+  ollama:
+    external: true
   browser-profile:

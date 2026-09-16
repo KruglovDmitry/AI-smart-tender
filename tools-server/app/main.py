@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -9,6 +11,15 @@ from pydantic import BaseModel, Field
 from . import config
 from .document_tool import list_directory, read_document, read_folder_documents
 from .web_tool import fetch_page
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+# LangChain verbose + our agent debug callbacks
+logging.getLogger("langchain").setLevel(logging.INFO)
+logging.getLogger("browser_agent.debug").setLevel(logging.INFO)
 
 app = FastAPI(
     title="Tender Tools API",
@@ -69,6 +80,29 @@ class FetchUrlBody(BaseModel):
     )
 
 
+class PlatformTaskBody(BaseModel):
+    platform_url: str = Field(
+        ...,
+        description="Tender platform base URL, e.g. https://zakupki.gov.ru/",
+    )
+    keywords: str = Field(
+        ...,
+        description="Search keywords for new tenders on the platform.",
+    )
+    max_new_tenders: int | None = Field(
+        None,
+        description=f"Max NEW tenders to process (default {config.PLATFORM_MAX_NEW_TENDERS}).",
+    )
+    max_steps: int | None = Field(
+        None,
+        description=f"Max agent steps (default {config.PLATFORM_MAX_STEPS}).",
+    )
+    download_subdir: str | None = Field(
+        None,
+        description="Optional folder under data/tenders/ for downloads.",
+    )
+
+
 class BrowserTaskBody(BaseModel):
     task: str = Field(
         ...,
@@ -107,6 +141,16 @@ def health():
             "vl_model": config.AGENT_VL_MODEL,
             "vl_enabled": config.AGENT_VL_ENABLED,
             "headless": config.BROWSER_HEADLESS,
+        },
+        "platform_agent": {
+            "llm_configured": bool(
+                config.AGENT_LLM_BASE_URL and config.AGENT_LLM_API_KEY
+            ),
+            "model": config.AGENT_LLM_MODEL,
+            "vl_model": config.AGENT_VL_MODEL,
+            "max_steps": config.PLATFORM_MAX_STEPS,
+            "max_new_tenders": config.PLATFORM_MAX_NEW_TENDERS,
+            "seen_tenders_db": str(config.SEEN_TENDERS_DB),
         },
     }
 
@@ -202,6 +246,39 @@ def api_fetch_url(body: FetchUrlBody):
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Fetch failed: {e}") from e
+
+
+@app.post(
+    "/run_platform_task",
+    summary="Monitor a tender platform by keywords (LangChain agent)",
+    description=(
+        "LangChain agent: navigate platform, search by keywords, deduplicate via SQLite, "
+        "open new tender cards and download documentation. Uses qwen-max for tool-calling "
+        "and qwen-vl-plus for screenshot analysis."
+    ),
+)
+async def api_run_platform_task(body: PlatformTaskBody):
+    try:
+        from .browser_agent.agent import run_platform_task
+
+        return await run_platform_task(
+            platform_url=body.platform_url,
+            keywords=body.keywords,
+            max_new_tenders=body.max_new_tenders,
+            max_steps=body.max_steps,
+            download_subdir=body.download_subdir,
+        )
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Platform agent dependencies missing: {e}",
+        ) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Platform agent failed: {e}") from e
 
 
 @app.post(

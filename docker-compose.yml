@@ -50,11 +50,15 @@ services:
       - BROWSER_MAX_STEPS=${BROWSER_MAX_STEPS:-20}
       - BROWSER_VIEWPORT_WIDTH=${BROWSER_VIEWPORT_WIDTH:-1280}
       - BROWSER_VIEWPORT_HEIGHT=${BROWSER_VIEWPORT_HEIGHT:-900}
+      - BROWSER_PROFILE_DIR=/tmp/tender-browser-profile
       - AGENT_LLM_BASE_URL=${AGENT_LLM_BASE_URL:-}
       - AGENT_LLM_API_KEY=${AGENT_LLM_API_KEY:-}
       - AGENT_LLM_MODEL=${AGENT_LLM_MODEL:-qwen-max}
       - AGENT_VL_MODEL=${AGENT_VL_MODEL:-qwen-vl-plus}
       - AGENT_VL_ENABLED=${AGENT_VL_ENABLED:-true}
+      - AGENT_DEBUG_LOGS=${AGENT_DEBUG_LOGS:-true}
+      - PLATFORM_MAX_STEPS=${PLATFORM_MAX_STEPS:-40}
+      - PLATFORM_MAX_NEW_TENDERS=${PLATFORM_MAX_NEW_TENDERS:-3}
     volumes:
       - ./data:/data
       - ./tools-server/app:/app/app

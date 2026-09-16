@@ -57,7 +57,7 @@ Swagger: [http://localhost:8000/docs](http://localhost:8000/docs).
 
 **Навсегда для модели (рекомендуется):**
 1. Рабочее пространство → **Модели** → **Тендер агент** (или deepseek) → ✎
-2. Секция **Tools** — отметь `list_documents`, `read_document`, `read_folder`, `fetch_url`, `run_browser_task`
+2. Секция **Tools** — отметь `list_documents`, `read_document`, `read_folder`, `fetch_url`, `run_browser_task`, `run_platform_task`
 3. Advanced → **Function Calling = Native**
 4. Сохранить
 
@@ -78,7 +78,28 @@ Swagger: [http://localhost:8000/docs](http://localhost:8000/docs).
 
 > Открой ссылку https://example.com и кратко перескажи, о чём страница.
 
+> Проверь на zakupki.gov.ru новые тендеры по ключевым словам «счётчик газа», скачай документы по новым лотам.
+
 Положите свои файлы в `data/tenders` и `data/catalogs` на диске сервера — агент увидит их через tools.
+
+## Platform agent (`run_platform_task`)
+
+LangChain-агент в стиле **AI-booking**: `create_openai_tools_agent` + `AgentExecutor`
+(системный промпт в `browser_agent/agent.py`).
+
+- ищет тендеры на платформе (`platform_url` + `keywords`)
+- дедуплицирует через SQLite (`data/_state/seen_tenders.sqlite3`)
+- открывает **новые** карточки и скачивает документацию
+- `qwen-max` — tool-calling через AgentExecutor
+- `qwen-vl-plus` — внутри tool `screenshot` (подсказки по UI)
+
+Пример:
+
+```powershell
+curl -X POST http://localhost:8000/run_platform_task `
+  -H "Content-Type: application/json" `
+  -d '{"platform_url":"https://zakupki.gov.ru/","keywords":"счётчик газа","max_new_tenders":2}'
+```
 
 ## Browser agent (`run_browser_task`)
 

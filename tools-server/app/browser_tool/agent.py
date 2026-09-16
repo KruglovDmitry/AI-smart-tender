@@ -182,11 +182,18 @@ async def run_browser_task(
         final: dict[str, Any] | None = None
 
         for step in range(max_steps):
-            logger.info("browser agent step %s/%s", step + 1, max_steps)
+            logger.info("─── browser agent step %s/%s ───", step + 1, max_steps)
             data = await _llm_chat(messages)
             choice = (data.get("choices") or [{}])[0]
             message = choice.get("message") or {}
             tool_calls = message.get("tool_calls") or []
+            content_preview = (message.get("content") or "").strip()
+            if config.AGENT_DEBUG_LOGS and content_preview:
+                logger.info(
+                    "LLM text:\n%s",
+                    content_preview[:2000]
+                    + ("..." if len(content_preview) > 2000 else ""),
+                )
 
             asst: dict[str, Any] = {
                 "role": "assistant",
@@ -223,6 +230,13 @@ async def run_browser_task(
                 except json.JSONDecodeError:
                     args = {}
 
+                if config.AGENT_DEBUG_LOGS:
+                    logger.info(
+                        "▶ tool %s\n  args: %s",
+                        name,
+                        json.dumps(args, ensure_ascii=False)[:2000],
+                    )
+
                 result = await _dispatch(rt, name, args)
                 if "file" in result and result["file"]:
                     result["file_rel"] = _rel_data_path(str(result["file"]))
@@ -252,6 +266,13 @@ async def run_browser_task(
                         "advice": vl.get("advice"),
                         "error": vl.get("error"),
                     }
+                    if config.AGENT_DEBUG_LOGS:
+                        advice = str(vl.get("advice") or vl.get("error") or "")
+                        logger.info(
+                            "VL (%s):\n%s",
+                            vl.get("model") or config.AGENT_VL_MODEL,
+                            advice[:3000] + ("..." if len(advice) > 3000 else ""),
+                        )
                     trace.append(
                         {
                             "tool": "vl_analyze_screenshot",
@@ -280,6 +301,19 @@ async def run_browser_task(
                             "tool_call_id": call.get("id") or name,
                             "content": tool_content,
                         }
+                    )
+
+                if config.AGENT_DEBUG_LOGS:
+                    slim = {
+                        k: v
+                        for k, v in result.items()
+                        if k not in {"screenshot_b64", "image_b64"}
+                    }
+                    dumped = json.dumps(slim, ensure_ascii=False, default=str)
+                    logger.info(
+                        "◀ tool %s result:\n%s",
+                        name,
+                        dumped[:4000] + ("..." if len(dumped) > 4000 else ""),
                     )
 
                 trace.append({"tool": name, "args": args, "result": result})

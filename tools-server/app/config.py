@@ -3,7 +3,18 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-DATA_ROOT = Path(os.getenv("DATA_ROOT", "/data")).resolve()
+# tools-server/app/config.py → repo root (AI-smart-tender)
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+try:
+    from dotenv import load_dotenv
+
+    # Local debug: load repo .env without overriding already-set env (Docker/compose).
+    load_dotenv(_REPO_ROOT / ".env", override=False)
+except ImportError:
+    pass
+
+DATA_ROOT = Path(os.getenv("DATA_ROOT", str(_REPO_ROOT / "data"))).resolve()
 HOST = os.getenv("TOOLS_HOST", "0.0.0.0")
 PORT = int(os.getenv("TOOLS_PORT", "8000"))
 
@@ -21,8 +32,17 @@ BROWSER_DOWNLOADS_DIR = Path(
     os.getenv("BROWSER_DOWNLOADS_DIR", str(DATA_ROOT / "tenders" / "_browser"))
 ).resolve()
 BROWSER_PROFILE_DIR = Path(
-    os.getenv("BROWSER_PROFILE_DIR", "/tmp/tender-browser-profile")
+    os.getenv(
+        "BROWSER_PROFILE_DIR",
+        str(_REPO_ROOT / ".browser-profile"),
+    )
 ).resolve()
+# Verbose agent step logs (LLM text, tool args/results, VL advice)
+AGENT_DEBUG_LOGS = os.getenv("AGENT_DEBUG_LOGS", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 # OpenAI-compatible chat API for the browser agent
 # AGENT_LLM_MODEL — tool-calling brain (qwen-max / qwen-plus)
@@ -36,6 +56,13 @@ AGENT_VL_ENABLED = os.getenv("AGENT_VL_ENABLED", "true").lower() in {
     "true",
     "yes",
 }
+
+# Platform monitoring agent (LangChain + SQLite dedup)
+PLATFORM_MAX_STEPS = int(os.getenv("PLATFORM_MAX_STEPS", "40"))
+PLATFORM_MAX_NEW_TENDERS = int(os.getenv("PLATFORM_MAX_NEW_TENDERS", "3"))
+SEEN_TENDERS_DB = Path(
+    os.getenv("SEEN_TENDERS_DB", str(DATA_ROOT / "_state" / "seen_tenders.sqlite3"))
+).resolve()
 
 ALLOWED_EXTENSIONS = {
     ".pdf",

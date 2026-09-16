@@ -78,6 +78,32 @@ def _rel_data_path(path: str) -> str:
         return path
 
 
+def _recover_finish_from_text(content: str) -> dict[str, Any] | None:
+    """Если модель написала finish({...}) текстом — вытащить summary/success."""
+    if not content:
+        return None
+    lower = content.lower()
+    if "finish" not in lower and "success" not in lower:
+        return None
+    # ищем JSON-объект в тексте
+    start = content.find("{")
+    end = content.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            obj = json.loads(content[start : end + 1])
+            if isinstance(obj, dict) and ("summary" in obj or "success" in obj):
+                return {
+                    "summary": str(obj.get("summary") or content[:500]),
+                    "success": bool(obj.get("success", False)),
+                }
+        except json.JSONDecodeError:
+            pass
+    return {
+        "summary": content[:800],
+        "success": False,
+    }
+
+
 async def _dispatch(rt, name: str, args: dict[str, Any]) -> dict[str, Any]:
     handler = TOOL_HANDLERS.get(name)
     if not handler:
@@ -205,10 +231,40 @@ async def run_browser_task(
 
             if not tool_calls:
                 content = (message.get("content") or "").strip()
+                # Модель иногда пишет finish текстом вместо tool call — пробуем восстановить.
+                recovered = _recover_finish_from_text(content)
+                if recovered is not None:
+                    final = await _dispatch(rt, "finish", recovered)
+                    if "downloaded_files" in final:
+                        final["downloaded_files_rel"] = [
+                            _rel_data_path(f) for f in final["downloaded_files"]
+                        ]
+                    trace.append(
+                        {"tool": "finish", "args": recovered, "result": final}
+                    )
+                    break
+
+                # Один раз напомнить вызвать tool, а не текст
+                if step + 1 < max_steps:
+                    logger.warning(
+                        "LLM returned text without tool_calls; nudging to use tools"
+                    )
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Отвечай ТОЛЬКО tool call. "
+                                "Для завершения вызови инструмент finish(summary, success). "
+                                "Не пиши finish обычным текстом."
+                            ),
+                        }
+                    )
+                    continue
+
                 final = {
                     "ok": True,
                     "action": "finish",
-                    "success": bool(rt.downloaded_files),
+                    "success": False,
                     "message": content or "Agent stopped without finish()",
                     "downloaded_files": list(rt.downloaded_files),
                     "url": rt.page.url,

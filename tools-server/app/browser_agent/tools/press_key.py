@@ -10,7 +10,10 @@ from ._common import PlatformAgentContext, to_json, trace
 
 
 class PressKeyInput(BaseModel):
-    key: str = Field(default="Enter", description="Key name, e.g. Enter, Tab, Escape")
+    key: str = Field(
+        default="Enter",
+        description="Имя клавиши Playwright: Enter, Tab, Escape, ArrowDown, ...",
+    )
 
 
 def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
@@ -22,6 +25,12 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
     return StructuredTool.from_function(
         coroutine=press_key,
         name="press_key",
-        description="Press a keyboard key (Enter, Tab, Escape, ...).",
+        description=(
+            "Нажать клавишу в активном контексте страницы.\n"
+            "КОГДА: Enter после type_text (отправить поиск); Escape закрыть модалку; Tab между полями.\n"
+            "АЛЬТЕРНАТИВА: click_xy по кнопке Submit, если Enter не срабатывает.\n"
+            "НЕ для: навигации по URL (→ navigate) и скачивания (→ download_url).\n"
+            "ВЕРНЁТ JSON: ok, action, message, url."
+        ),
         args_schema=PressKeyInput,
     )

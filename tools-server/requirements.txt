@@ -18,3 +18,5 @@ langchain-openai==0.3.12
 langchain==0.3.23
 lxml_html_clean==0.4.1
 playwright==1.50.0
+pytest==8.3.5
+pytest-asyncio==0.25.3

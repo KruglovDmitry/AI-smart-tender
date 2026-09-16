@@ -9,8 +9,8 @@ from ._common import PlatformAgentContext, to_json, trace
 
 
 class TenderSeenInput(BaseModel):
-    tender_id: str = Field(description="Stable tender id from extract_tender_id")
-    tender_url: str = Field(description="Tender card URL")
+    tender_id: str = Field(description="tender_id строго из ответа extract_tender_id")
+    tender_url: str = Field(description="URL той же карточки")
 
 
 def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
@@ -27,6 +27,11 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
     return StructuredTool.from_function(
         coroutine=check_tender_seen,
         name="check_tender_seen",
-        description="Check if tender was seen before (SQLite dedup).",
+        description=(
+            "Проверить в SQLite, видели ли уже этот tender_id на площадке (без записи).\n"
+            "КОГДА: после extract_tender_id, ДО открытия/скачивания. Если is_seen=true — пропусти кандидата.\n"
+            "АЛЬТЕРНАТИВА: mark_tender_seen пишет в базу — вызывай его только после реальной обработки.\n"
+            "ВЕРНЁТ JSON: platform, tender_id, tender_url, is_seen, is_new (=не is_seen)."
+        ),
         args_schema=TenderSeenInput,
     )

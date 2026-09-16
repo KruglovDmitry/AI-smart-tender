@@ -10,8 +10,11 @@ from ._common import PlatformAgentContext, to_json, trace
 
 
 class ScrollInput(BaseModel):
-    delta_y: int = Field(default=600, description="Vertical scroll delta in pixels")
-    times: int = Field(default=1, description="How many times to scroll")
+    delta_y: int = Field(
+        default=600,
+        description="Сдвиг по вертикали в px: >0 вниз, <0 вверх",
+    )
+    times: int = Field(default=1, description="Сколько раз повторить сдвиг")
 
 
 def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
@@ -23,6 +26,13 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
     return StructuredTool.from_function(
         coroutine=scroll,
         name="scroll",
-        description="Scroll the page vertically.",
+        description=(
+            "Прокрутить страницу по вертикали (viewport).\n"
+            "КОГДА: следующие карточки в выдаче ниже fold; доскроллить до блока документов/кнопок.\n"
+            "АЛЬТЕРНАТИВА: eval_js (element.scrollIntoView) для конкретного элемента; "
+            "navigate на URL следующей страницы пагинации, если видна.\n"
+            "После scroll почти всегда нужен свежий screenshot или get_page_text.\n"
+            "ВЕРНЁТ JSON: ok, message, url."
+        ),
         args_schema=ScrollInput,
     )

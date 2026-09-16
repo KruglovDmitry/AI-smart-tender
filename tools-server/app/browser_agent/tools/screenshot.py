@@ -47,7 +47,14 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
         coroutine=screenshot,
         name="screenshot",
         description=(
-            "Capture viewport screenshot. Response includes VL analysis "
-            "(page_summary, click hints). Use when DOM is unclear."
+            "Снимок viewport + VL-анализ экрана (единственный способ «увидеть» UI).\n"
+            "КОГДА: верификация после navigate/поиска/карточки/документов; найти поле поиска "
+            "или кнопку (координаты x,y); понять капчу/логин/404; подсказки куда кликать.\n"
+            "АЛЬТЕРНАТИВА: get_page_text — только текст без координат и визуала; "
+            "eval_js — структура DOM без «что нарисовано».\n"
+            "НЕ замена: download_url / list_download_links для файлов.\n"
+            "ВЕРНЁТ JSON: ok, url, width, height + блок VL (page_summary, suggested_actions, "
+            "download_hints, blockers, confidence). Координаты для type_text/click_xy бери "
+            "только из свежего screenshot (x < width, y < height)."
         ),
     )

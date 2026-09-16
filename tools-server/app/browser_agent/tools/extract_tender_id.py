@@ -10,7 +10,7 @@ from .tender_id import resolve_tender_id
 
 
 class TenderUrlInput(BaseModel):
-    url: str = Field(description="Tender card URL")
+    url: str = Field(description="URL карточки/извещения (из выдачи или текущей страницы)")
 
 
 def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
@@ -24,6 +24,12 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
     return StructuredTool.from_function(
         coroutine=extract_tender_id,
         name="extract_tender_id",
-        description="Extract stable tender_id from a tender card URL.",
+        description=(
+            "Извлечь стабильный tender_id из URL карточки (для дедупа).\n"
+            "КОГДА: сразу перед check_tender_seen / mark_tender_seen, на КАЖДОМ кандидате.\n"
+            "АЛЬТЕРНАТИВА: нет — не угадывай id из текста вручную; всегда этот tool.\n"
+            "ВЕРНЁТ JSON: tender_id, method (query:/path:/hash:), platform, url. "
+            "Передавай полученный tender_id дальше как есть."
+        ),
         args_schema=TenderUrlInput,
     )

@@ -3,6 +3,21 @@
 from __future__ import annotations
 
 import logging
+import sys
+
+
+def _force_utf8_stdio() -> None:
+    """Windows-консоль часто в cp1251/cp866 — логи с кириллицей превращаются в кракозябры."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
+_force_utf8_stdio()
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,14 +27,15 @@ from . import config
 from .document_tool import list_directory, read_document, read_folder_documents
 from .web_tool import fetch_page
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-    datefmt="%H:%M:%S",
+_handler = logging.StreamHandler(sys.stdout)
+_handler.setFormatter(
+    logging.Formatter(
+        "%(asctime)s %(levelname)s [%(name)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
 )
-# LangChain verbose + our agent debug callbacks
+logging.basicConfig(level=logging.INFO, handlers=[_handler], force=True)
 logging.getLogger("langchain").setLevel(logging.INFO)
-logging.getLogger("browser_agent.debug").setLevel(logging.INFO)
 
 app = FastAPI(
     title="Tender Tools API",
@@ -100,6 +116,13 @@ class PlatformTaskBody(BaseModel):
     download_subdir: str | None = Field(
         None,
         description="Optional folder under data/tenders/ for downloads.",
+    )
+    instruction: str | None = Field(
+        None,
+        description=(
+            "Optional override of the agent user request "
+            "(used by debug/integration scripts)."
+        ),
     )
 
 
@@ -267,6 +290,7 @@ async def api_run_platform_task(body: PlatformTaskBody):
             max_new_tenders=body.max_new_tenders,
             max_steps=body.max_steps,
             download_subdir=body.download_subdir,
+            instruction=body.instruction,
         )
     except ImportError as e:
         raise HTTPException(

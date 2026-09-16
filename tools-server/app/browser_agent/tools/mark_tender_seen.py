@@ -9,8 +9,8 @@ from ._common import PlatformAgentContext, to_json, trace
 
 
 class TenderSeenInput(BaseModel):
-    tender_id: str = Field(description="Stable tender id from extract_tender_id")
-    tender_url: str = Field(description="Tender card URL")
+    tender_id: str = Field(description="tender_id строго из ответа extract_tender_id")
+    tender_url: str = Field(description="URL обработанной карточки")
 
 
 def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
@@ -30,6 +30,13 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
     return StructuredTool.from_function(
         coroutine=mark_tender_seen,
         name="mark_tender_seen",
-        description="Mark tender as seen after processing.",
+        description=(
+            "Пометить тендер как обработанный в SQLite (дедуп на следующие запуски).\n"
+            "КОГДА: ПОСЛЕ успешной обработки кандидата (карточка открыта и/или файлы скачаны "
+            "по условиям задачи). Увеличивает счётчик новых, если is_new.\n"
+            "АЛЬТЕРНАТИВА: check_tender_seen — только чтение, без записи.\n"
+            "НЕ вызывать до проверки is_seen и не на «пустых» проходах без реальной работы.\n"
+            "ВЕРНЁТ JSON: platform, tender_id, tender_url, is_new, first_seen_at, last_seen_at."
+        ),
         args_schema=TenderSeenInput,
     )

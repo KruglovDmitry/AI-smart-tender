@@ -10,7 +10,7 @@ from ._common import PlatformAgentContext, to_json, trace
 
 
 class ListDownloadLinksInput(BaseModel):
-    limit: int = Field(default=40, description="Max candidate links to return")
+    limit: int = Field(default=40, description="Максимум кандидатов в ответе")
 
 
 def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
@@ -22,6 +22,15 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
     return StructuredTool.from_function(
         coroutine=list_download_links,
         name="list_download_links",
-        description="Scan DOM for document/download links.",
+        description=(
+            "Сканировать DOM на кандидаты загрузок/вкладок документов.\n"
+            "КОГДА: на карточке или вкладке документов перед скачиванием; понять, есть ли файлы.\n"
+            "kind в элементах: file — прямой файл для download_url; tab — вкладка/раздел "
+            "(сначала click_xy или navigate, не download_url); прочее — обычно пропускать.\n"
+            "АЛЬТЕРНАТИВА: screenshot+VL download_hints, если DOM пустой; "
+            "click_xy(expect_download=true) для кнопки без URL.\n"
+            "НЕ качать футер/статистику/служебные ссылки даже если попали в список.\n"
+            "ВЕРНЁТ JSON: ok, url, links[] (text, href/url, kind, ...), message."
+        ),
         args_schema=ListDownloadLinksInput,
     )

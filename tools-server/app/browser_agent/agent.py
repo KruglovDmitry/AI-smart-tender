@@ -14,46 +14,64 @@ from langchain_openai import ChatOpenAI
 from .. import config
 from ..browser_tool import tools as browser_tools
 from ..browser_tool.session import browser_runtime
-from .debug_callback import AgentDebugCallback
 from .tools import SeenTenderStore, build_langchain_tools, make_context, platform_from_url
 
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """Ты — автономный агент мониторинга тендерных площадок.
 
-Твоя работа — вызывать инструменты браузера и дедупликации, точно следуя алгоритму. Генерация текста вторична.
+Твоя работа — вызывать инструменты браузера и дедупликации. Генерация текста вторична.
 
 **КРИТИЧЕСКИЕ ЗАКОНЫ (НАРУШЕНИЕ = ПРОВАЛ):**
 
 **ЗАКОН №1: ИНСТРУМЕНТЫ — ЕДИНСТВЕННАЯ РЕАЛЬНОСТЬ.**
 - Запрещено выдумывать URL тендеров, tender_id, содержимое документов или факт скачивания.
-- Единственный источник правды — РЕАЛЬНЫЙ результат tool call (JSON с ok/message/...).
-- Если tender_id не извлечён со страницы — вызови extract_tender_id (там есть hash-fallback).
+- Источник правды — РЕАЛЬНЫЙ результат tool call (JSON с ok/message/url/...).
+- finish_platform_task — ТОЛЬКО tool call (не текстом). Вызывай ОДИН раз, когда задача реально завершена.
+- success=true только если критерии подтверждены текущим URL / скачанными файлами / processed_tenders.
+- Запрещён ранний finish на главной/лендинге, если задача — поиск, карточка или документы.
 
 **ЗАКОН №2: АЛГОРИТМ МОНИТОРИНГА.**
-1. Убедись, что открыта платформа (navigate при необходимости).
-2. Найди поиск/фильтры, введи keywords (type_text + press_key Enter или click_xy).
-3. Извлеки ссылки на карточки из DOM: get_page_text и/или list_download_links.
-4. Для каждого кандидата-URL:
+1. Убедись, что открыта целевая платформа (navigate при необходимости на platform_url).
+2. Поиск по keywords — через UI площадки (не хардкодь чужие URL-шаблоны):
+   a) Найди поле поиска на странице: screenshot → type_text ОБЯЗАТЕЛЬНО с x,y внутри viewport → submit/Enter.
+      type_text без x,y ЗАПРЕЩЁН.
+   b) Если координаты плохие — eval_js: найти видимое поле поиска, заполнить keywords, отправить форму.
+   c) Успех поиска — только после screenshot (VL): на кадре видна выдача/список по запросу,
+      не главная и не пустая форма. Иначе НЕ finish(success=true); повтори поиск.
+3. Кандидаты карточек:
+   - Собери ссылки на закупки из выдачи через get_page_text и/или eval_js (в порядке сверху вниз).
+   - Открывай только карточки/извещения этой же площадки; пропускай javascript:, mailto:, служебные
+     отчёты/статистику/футер и явные заглушки.
+   - Если после navigate 404 / нет документов / list_download_links=0 — НЕ finish; следующий кандидат.
+4. Для каждого кандидата:
    a) extract_tender_id(url)
-   b) check_tender_seen — если уже seen, ПРОПУСТИ
-   c) если new и лимит новых тендеров не исчерпан:
-      - открой карточку (navigate или click_xy)
-      - вкладка «Документы» / «Документы закупки» при необходимости
-      - list_download_links → download_url (передавай suggested_name из текста ссылки)
-      - mark_tender_seen после обработки карточки
-5. DOM-first. screenshot — если UI непонятен (после screenshot в ответе будет VL-анализ).
-6. Не качай десятки одинаковых редакций — достаточно последней + уникальных решений/протоколов.
-7. При login/captcha/403 — сразу finish_platform_task(success=false) с объяснением.
-8. Когда обработал нужное число новых тендеров или исчерпал выдачу — finish_platform_task(success=true, summary=...).
+   b) check_tender_seen — если seen, ПРОПУСТИ
+   c) если new и лимит не исчерпан:
+      - navigate на карточку → screenshot (VL): это карточка закупки, не ошибка/капча
+      - открой раздел документов площадки при необходимости → screenshot (VL) перед скачиванием
+      - list_download_links → download_url ТОЛЬКО kind=file
+      - не качай навигацию, футер и служебные ссылки
+      - если files пусто — screenshot+VL или click_xy(expect_download=true); иначе следующий тендер
+      - mark_tender_seen после обработки
+5. VL-верификация (screenshot обязателен на чекпоинтах):
+   - После: открытие площадки, поиск, переход на карточку, открытие документов, сомнительный клик.
+   - Сверяй VL-описание с ожидаемым состоянием; при расхождении — исправь шаг, не иди дальше «вслепую».
+   - Координаты для type_text/click_xy — только из свежего screenshot (x < width, y < height).
+   - eval_js/get_page_text дополняют VL, но не заменяют проверку ключевых переходов.
+6. Не качай десятки одинаковых редакций — последняя версия + уникальные протоколы/решения.
+7. login/captcha/403 — finish_platform_task(success=false).
+8. finish_platform_task(success=true) только после реальной обработки лимита новых ИЛИ исчерпания валидных кандидатов
+   (краткий summary: URL, tender_id, файлы — только из tool results, без плейсхолдеров).
+   Перед финальным success=true — screenshot (VL), если ещё не делал на последнем состоянии.
 
 **ЗАКОН №3: ЗАВЕРШЕНИЕ.**
-- Итог задачи только через finish_platform_task.
-- В summary кратко: сколько новых, какие URL, что скачано / что не удалось.
+- Итог только через finish_platform_task.
+- В summary: сколько новых, какие URL, что скачано / почему не удалось.
 
 **ДОСТУПНЫЕ ИНСТРУМЕНТЫ:**
 navigate, screenshot, click_xy, type_text, press_key, scroll, wait,
-get_page_text, list_download_links, download_url,
+get_page_text, list_download_links, download_url, eval_js,
 extract_tender_id, check_tender_seen, mark_tender_seen,
 finish_platform_task.
 """
@@ -108,7 +126,6 @@ def build_agent_executor(tools: list, max_iterations: int) -> AgentExecutor:
     )
     llm = _build_llm()
     agent = create_openai_tools_agent(llm, tools, prompt)
-    callbacks = [AgentDebugCallback()] if config.AGENT_DEBUG_LOGS else []
     return AgentExecutor(
         agent=agent,
         tools=tools,
@@ -116,7 +133,6 @@ def build_agent_executor(tools: list, max_iterations: int) -> AgentExecutor:
         max_iterations=max_iterations,
         return_intermediate_steps=True,
         handle_parsing_errors=True,
-        callbacks=callbacks,
     )
 
 
@@ -126,12 +142,14 @@ async def run_platform_task(
     max_new_tenders: int | None = None,
     max_steps: int | None = None,
     download_subdir: str | None = None,
+    instruction: str | None = None,
 ) -> dict[str, Any]:
     """
     LangChain AgentExecutor (как AI-booking):
     - qwen-max tool-calling
     - VL внутри tool `screenshot` (qwen-vl-plus)
     - SQLite dedup
+    - instruction — опциональный override user-запроса (для отладочных скриптов)
     """
     platform_url = (platform_url or "").strip()
     keywords = (keywords or "").strip()
@@ -158,11 +176,13 @@ async def run_platform_task(
 
     store = SeenTenderStore(config.SEEN_TENDERS_DB)
 
-    user_input = (
+    user_input = (instruction or "").strip() or (
         f"Перейди на платформу и найди НОВЫЕ тендеры по ключевым словам, "
         f"скачай документацию. Лимит новых: {max_new}. "
         f"В конце обязательно вызови finish_platform_task."
     )
+    if "finish_platform_task" not in user_input:
+        user_input += " В конце обязательно вызови finish_platform_task."
 
     async with browser_runtime(downloads_dir=downloads) as rt:
         nav = await browser_tools.navigate(rt, platform_url)

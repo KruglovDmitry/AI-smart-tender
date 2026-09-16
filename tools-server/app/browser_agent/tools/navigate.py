@@ -10,7 +10,9 @@ from ._common import PlatformAgentContext, to_json, trace
 
 
 class NavigateInput(BaseModel):
-    url: str = Field(description="http(s) URL to open")
+    url: str = Field(
+        description="Полный http(s) URL. Только абсолютные ссылки с хостом; не javascript:/mailto:."
+    )
 
 
 def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
@@ -22,6 +24,15 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
     return StructuredTool.from_function(
         coroutine=navigate,
         name="navigate",
-        description="Open a URL in the browser.",
+        description=(
+            "Открыть URL в браузере (полный переход страницы).\n"
+            "КОГДА: старт на platform_url; переход на карточку закупки; раздел документов; "
+            "повторный поиск, если известен рабочий URL выдачи с этой же площадки.\n"
+            "АЛЬТЕРНАТИВА: click_xy — если нужно нажать кнопку/вкладку без известного URL; "
+            "press_key/scroll — если страница уже нужная.\n"
+            "НЕ для: скачивания файлов (→ download_url / click_xy expect_download).\n"
+            "ВЕРНЁТ JSON: ok, action, message, url, title (текущие после загрузки). "
+            "При ошибке ok=false и message с причиной."
+        ),
         args_schema=NavigateInput,
     )

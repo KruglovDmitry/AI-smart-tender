@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
+from .. import config
 from .session import BrowserRuntime
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,16 @@ def _ok(action: str, message: str, **data: Any) -> dict[str, Any]:
 
 def _err(action: str, message: str, **data: Any) -> dict[str, Any]:
     return {"ok": False, "action": action, "message": message, **data}
+
+
+def _clamp_xy(rt: BrowserRuntime, x: float, y: float) -> tuple[float, float, bool]:
+    """Держим клики внутри viewport (агент иногда выдаёт x>width)."""
+    vp = rt.page.viewport_size or {}
+    w = float(vp.get("width") or config.BROWSER_VIEWPORT_WIDTH)
+    h = float(vp.get("height") or config.BROWSER_VIEWPORT_HEIGHT)
+    cx = max(0.0, min(float(x), w - 1.0))
+    cy = max(0.0, min(float(y), h - 1.0))
+    return cx, cy, (cx != float(x) or cy != float(y))
 
 
 async def navigate(rt: BrowserRuntime, url: str) -> dict[str, Any]:
@@ -101,6 +112,8 @@ async def click_xy(
 ) -> dict[str, Any]:
     page = rt.page
     try:
+        x, y, clamped = _clamp_xy(rt, x, y)
+        clamp_note = f" (clamped to viewport)" if clamped else ""
         if expect_download:
             async with page.expect_download(timeout=30_000) as dl_info:
                 await page.mouse.click(x, y)
@@ -113,9 +126,10 @@ async def click_xy(
             await _settle(page)
             return _ok(
                 "click_xy",
-                f"Clicked ({x:.0f},{y:.0f}) and downloaded {fname}",
+                f"Clicked ({x:.0f},{y:.0f}){clamp_note} and downloaded {fname}",
                 x=x,
                 y=y,
+                clamped=clamped,
                 file=rel,
                 url=page.url,
             )
@@ -142,9 +156,10 @@ async def click_xy(
             await _settle(rt.page)
             return _ok(
                 "click_xy",
-                f"Clicked ({x:.0f},{y:.0f}) -> new tab",
+                f"Clicked ({x:.0f},{y:.0f}){clamp_note} -> new tab",
                 x=x,
                 y=y,
+                clamped=clamped,
                 url=rt.page.url,
                 new_tab=True,
             )
@@ -152,9 +167,10 @@ async def click_xy(
         await _settle(page)
         return _ok(
             "click_xy",
-            f"Clicked ({x:.0f},{y:.0f})",
+            f"Clicked ({x:.0f},{y:.0f}){clamp_note}",
             x=x,
             y=y,
+            clamped=clamped,
             url=page.url,
         )
     except Exception as e:
@@ -170,14 +186,27 @@ async def type_text(
 ) -> dict[str, Any]:
     page = rt.page
     try:
+        clamped = False
         if x is not None and y is not None:
+            x, y, clamped = _clamp_xy(rt, x, y)
             await page.mouse.click(x, y)
             await page.wait_for_timeout(150)
         if clear:
             await page.keyboard.press("Control+A")
             await page.keyboard.press("Backspace")
         await page.keyboard.type(str(text), delay=25)
-        return _ok("type_text", f"Typed {len(text)} chars", text=text, url=page.url)
+        msg = f"Typed {len(text)} chars"
+        if clamped:
+            msg += f" (click clamped to {x:.0f},{y:.0f})"
+        return _ok(
+            "type_text",
+            msg,
+            text=text,
+            x=x,
+            y=y,
+            clamped=clamped,
+            url=page.url,
+        )
     except Exception as e:
         return _err("type_text", str(e))
 

@@ -10,7 +10,10 @@ from ._common import PlatformAgentContext, to_json, trace
 
 
 class GetPageTextInput(BaseModel):
-    max_chars: int = Field(default=12000, description="Max characters of visible text")
+    max_chars: int = Field(
+        default=12000,
+        description="Максимум символов видимого текста (хвост обрежется)",
+    )
 
 
 def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
@@ -22,6 +25,13 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
     return StructuredTool.from_function(
         coroutine=get_page_text,
         name="get_page_text",
-        description="Read visible DOM text from the page.",
+        description=(
+            "Прочитать видимый текст страницы (innerText), без картинок и координат.\n"
+            "КОГДА: проверить, что площадка загрузилась; найти номера/названия в выдаче; "
+            "убедиться что это карточка, а не 404; дешёвая проверка после navigate.\n"
+            "АЛЬТЕРНАТИВА: screenshot+VL — когда нужны координаты или визуальная верификация; "
+            "eval_js — когда нужны точные href/атрибуты ссылок, а не только текст.\n"
+            "ВЕРНЁТ JSON: ok, url, title, text (обрезанный), иногда truncated."
+        ),
         args_schema=GetPageTextInput,
     )

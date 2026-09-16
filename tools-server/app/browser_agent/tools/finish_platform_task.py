@@ -9,8 +9,16 @@ from ._common import PlatformAgentContext, to_json, trace
 
 
 class FinishInput(BaseModel):
-    summary: str = Field(description="Short summary of what was done")
-    success: bool = Field(default=True, description="Whether the task succeeded")
+    summary: str = Field(
+        description=(
+            "Краткий итог ТОЛЬКО из реальных tool results: URL, tender_id, файлы / причина неудачи. "
+            "Без плейсхолдеров вроде result['...'] или ${...}."
+        )
+    )
+    success: bool = Field(
+        default=True,
+        description="true только если критерии задачи подтверждены tool results",
+    )
 
 
 def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
@@ -36,6 +44,17 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
     return StructuredTool.from_function(
         coroutine=finish_platform_task,
         name="finish_platform_task",
-        description="Finish the platform monitoring task with summary.",
+        description=(
+            "Завершить задачу мониторинга. Единственный допустимый способ финала "
+            "(не пиши «готово» текстом без вызова).\n"
+            "КОГДА: лимит новых обработан ИЛИ кандидаты исчерпаны ИЛИ блокер (login/captcha/403). "
+            "Вызывай ОДИН раз.\n"
+            "success=true — только при подтверждённых критериях (URL выдачи/карточки, файлы, "
+            "processed_tenders). Иначе success=false с причиной.\n"
+            "АЛЬТЕРНАТИВА: нет. Не заменяет mark_tender_seen / download_url.\n"
+            "ВЕРНЁТ JSON: success, message, new_tenders_processed, processed_tenders, "
+            "downloaded_files, url, done=true. return_direct — цикл агента останавливается."
+        ),
         args_schema=FinishInput,
+        return_direct=True,
     )

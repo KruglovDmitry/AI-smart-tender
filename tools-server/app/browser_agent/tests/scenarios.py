@@ -35,12 +35,13 @@ SCENARIOS: dict[int, dict[str, Any]] = {
         "max_steps": 30,
         "max_new_tenders": 1,
         "instruction": (
-            "СЦЕНАРИЙ 3 (первая карточка). Поиск по keywords → открой РОВНО ПЕРВУЮ карточку "
-            "в порядке выдачи (первый валидный a[href*=regNumber]/notice/ea44|/notice/notice223|/notice/ok44] "
-            "сверху списка; НЕ выбирай «удобнее» ниже по списку). "
-            "Пропусти только electronic/fcs или уже seen — тогда сразу следующий по порядку. "
-            "НЕ качай документы. В finish_platform_task передай РЕАЛЬНЫЙ URL и tender_id из tool results "
-            "(не плейсхолдеры вроде result['...'])."
+            "СЦЕНАРИЙ 3 (первая карточка). Поиск по keywords → eval_js: собери href карточек "
+            "из выдачи сверху вниз → navigate(первый валидный href). "
+            "НЕ click_xy вместо navigate, если href уже есть. "
+            "Успех ТОЛЬКО если текущий URL после navigate — карточка (не results/search). "
+            "Если после клика/перехода всё ещё выдача — НЕ finish(success=true), повтори navigate. "
+            "extract_tender_id + check_tender_seen; seen → следующий href по порядку. "
+            "НЕ качай документы. finish: реальные URL и tender_id из tool results."
         ),
     },
     4: {

@@ -23,6 +23,20 @@ class FinishInput(BaseModel):
 
 def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
     async def finish_platform_task(summary: str, success: bool = True) -> str:
+        current_url = ctx.rt.page.url or ""
+        url_l = current_url.lower()
+        sum_l = (summary or "").lower()
+        on_listing = "results.html" in url_l or "extendedsearch" in url_l
+        claims_card = any(
+            x in sum_l for x in ("карточк", "notice", "regnumber", "common-info", "извещен")
+        )
+        if success and on_listing and claims_card and "notice" not in url_l:
+            success = False
+            summary = (
+                f"ОТКЛОНЕНО авто-проверкой: success=true при URL выдачи ({current_url}). "
+                f"Сначала navigate на карточку и подтверди смену URL. Было: {summary}"
+            )
+
         ctx.done = True
         ctx.final_summary = summary
         ctx.final_success = success
@@ -35,7 +49,7 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
             "max_new_tenders": ctx.max_new_tenders,
             "processed_tenders": ctx.processed_tenders,
             "downloaded_files": list(ctx.rt.downloaded_files),
-            "url": ctx.rt.page.url,
+            "url": current_url,
             "done": True,
         }
         trace(ctx, "finish_platform_task", {"summary": summary, "success": success}, result)
@@ -50,7 +64,8 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
             "КОГДА: лимит новых обработан ИЛИ кандидаты исчерпаны ИЛИ блокер (login/captcha/403). "
             "Вызывай ОДИН раз.\n"
             "success=true — только при подтверждённых критериях (URL выдачи/карточки, файлы, "
-            "processed_tenders). Иначе success=false с причиной.\n"
+            "processed_tenders). Иначе success=false с причиной. "
+            "Нельзя success=true про карточку, если url в ответе всё ещё выдача/поиск.\n"
             "АЛЬТЕРНАТИВА: нет. Не заменяет mark_tender_seen / download_url.\n"
             "ВЕРНЁТ JSON: success, message, new_tenders_processed, processed_tenders, "
             "downloaded_files, url, done=true. return_direct — цикл агента останавливается."

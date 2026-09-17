@@ -65,7 +65,10 @@ async def test_platform_scenario(scenario_id: int, require_agent_llm: None) -> N
         instruction=cfg["instruction"],
     )
     path = _save_debug(scenario_id, data)
-    assert data.get("agent_framework") == "langchain.AgentExecutor"
+    assert data.get("agent_framework") in {
+        "langchain.AgentExecutor",
+        "langchain.multimodal_tool_loop",
+    }
     assert path.exists()
 
     url = _last_url(data)

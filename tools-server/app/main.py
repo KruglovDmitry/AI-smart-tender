@@ -276,8 +276,8 @@ def api_fetch_url(body: FetchUrlBody):
     summary="Monitor a tender platform by keywords (LangChain agent)",
     description=(
         "LangChain agent: navigate platform, search by keywords, deduplicate via SQLite, "
-        "open new tender cards and download documentation. Uses qwen-max for tool-calling "
-        "and qwen-vl-plus for screenshot analysis."
+        "open new tender cards and download documentation. Uses one multimodal model "
+        "(AGENT_LLM_MODEL) for tool-calling; screenshots are attached inline (no separate VL call)."
     ),
 )
 async def api_run_platform_task(body: PlatformTaskBody):

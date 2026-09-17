@@ -45,12 +45,13 @@ AGENT_DEBUG_LOGS = os.getenv("AGENT_DEBUG_LOGS", "true").lower() in {
 }
 
 # OpenAI-compatible chat API for the browser agent
-# AGENT_LLM_MODEL — tool-calling brain (qwen-max / qwen-plus)
-# AGENT_VL_MODEL  — vision for screenshots (qwen-vl-plus), as in AI-tender
+# AGENT_LLM_MODEL — multimodal tool-calling brain (also sees screenshots)
+# AGENT_VL_ENABLED — attach screenshot images into the same model context (no separate VL call)
+# AGENT_VL_MODEL — legacy/unused when vl_mode=inline_multimodal (kept for env compat)
 AGENT_LLM_BASE_URL = os.getenv("AGENT_LLM_BASE_URL", "").rstrip("/")
 AGENT_LLM_API_KEY = os.getenv("AGENT_LLM_API_KEY", "")
-AGENT_LLM_MODEL = os.getenv("AGENT_LLM_MODEL", "qwen-max")
-AGENT_VL_MODEL = os.getenv("AGENT_VL_MODEL", "qwen-vl-plus")
+AGENT_LLM_MODEL = os.getenv("AGENT_LLM_MODEL", "qwen3.7-plus")
+AGENT_VL_MODEL = os.getenv("AGENT_VL_MODEL", "qwen3.7-plus")
 AGENT_VL_ENABLED = os.getenv("AGENT_VL_ENABLED", "true").lower() in {
     "1",
     "true",

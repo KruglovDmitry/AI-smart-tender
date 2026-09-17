@@ -1,60 +1,32 @@
-"""Tool: screenshot (+ VL analysis)."""
+"""Tool: screenshot — capture only; vision does the multimodal agent itself."""
 
 from __future__ import annotations
 
 from langchain_core.tools import StructuredTool
 
-from ... import config
 from ...browser_tool import tools as browser_tools
-from ...browser_tool.vision import analyze_screenshot, format_vl_for_agent
 from ._common import PlatformAgentContext, to_json, trace
 
 
 def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
     async def screenshot() -> str:
-        """Capture viewport screenshot; response includes VL analysis text."""
+        """Capture viewport; image is attached to the next multimodal model turn."""
         result = await browser_tools.screenshot(ctx.rt)
-        extra = ""
-        if (
-            result.get("ok")
-            and config.AGENT_VL_ENABLED
-            and ctx.rt.last_screenshot_b64
-        ):
-            vl = await analyze_screenshot(
-                image_b64=ctx.rt.last_screenshot_b64,
-                width=int(result.get("width") or config.BROWSER_VIEWPORT_WIDTH),
-                height=int(result.get("height") or config.BROWSER_VIEWPORT_HEIGHT),
-                url=str(result.get("url") or ctx.rt.page.url),
-                task=ctx.task_hint or ctx.keywords,
-            )
-            result["vl"] = {
-                "ok": vl.get("ok"),
-                "model": vl.get("model"),
-                "advice": vl.get("advice"),
-                "error": vl.get("error"),
-            }
-            trace(
-                ctx,
-                "vl_analyze_screenshot",
-                {"model": config.AGENT_VL_MODEL},
-                result["vl"],
-            )
-            extra = "\n\n" + format_vl_for_agent(vl)
-        trace(ctx, "screenshot", {}, {k: v for k, v in result.items() if k != "vl"})
-        return to_json(result) + extra
+        # Не отдаём base64 в текст tool result (дорого/бессмысленно) — loop подхватит rt.last_screenshot_b64
+        slim = {k: v for k, v in result.items() if k != "image_b64"}
+        trace(ctx, "screenshot", {}, slim)
+        return to_json(slim)
 
     return StructuredTool.from_function(
         coroutine=screenshot,
         name="screenshot",
         description=(
-            "Снимок viewport + VL-анализ экрана (единственный способ «увидеть» UI).\n"
-            "КОГДА: верификация после navigate/поиска/карточки/документов; найти поле поиска "
-            "или кнопку (координаты x,y); понять капчу/логин/404; подсказки куда кликать.\n"
-            "АЛЬТЕРНАТИВА: get_page_text — только текст без координат и визуала; "
-            "eval_js — структура DOM без «что нарисовано».\n"
-            "НЕ замена: download_url / list_download_links для файлов.\n"
-            "ВЕРНЁТ JSON: ok, url, width, height + блок VL (page_summary, suggested_actions, "
-            "download_hints, blockers, confidence). Координаты для type_text/click_xy бери "
-            "только из свежего screenshot (x < width, y < height)."
+            "Снимок viewport. Картинка приходит ТЕБЕ (multimodal) в следующем сообщении — "
+            "отдельного VL-вызова нет: ты сам анализируешь экран.\n"
+            "КОГДА: верификация после navigate/поиска/карточки/документов; найти поле/кнопку "
+            "(координаты x,y); капча/логин/404.\n"
+            "АЛЬТЕРНАТИВА: get_page_text — только текст; eval_js — DOM/href без картинки.\n"
+            "ВЕРНЁТ JSON: ok, url, width, height, has_image. "
+            "Координаты для type_text/click_xy — только из свежего кадра (x < width, y < height)."
         ),
     )

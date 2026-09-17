@@ -32,8 +32,9 @@ class ReadDocumentBody(BaseModel):
     path: str = Field(
         ...,
         description=(
-            "Relative path under data root, e.g. 'tenders/spec.pdf' "
-            "or 'catalogs/prices.xlsx'."
+            "Relative path under server data root only, e.g. 'tenders/spec.pdf' "
+            "or 'catalogs/prices.xlsx'. Do NOT use for chat attachments — "
+            "those are already in the conversation context."
         ),
     )
     max_chars: int = Field(
@@ -61,7 +62,11 @@ class ReadFolderBody(BaseModel):
 class FetchUrlBody(BaseModel):
     url: str = Field(
         ...,
-        description="Public http(s) URL of a tender page or any web page to read.",
+        description=(
+            "Public http(s) URL exactly as provided by the user "
+            "(do not invent paths like /sitemap.xml). "
+            "Use as a complement to chat attachments when a link is present."
+        ),
     )
     max_chars: int = Field(
         default=config.DEFAULT_MAX_CHARS,
@@ -116,7 +121,9 @@ def health():
     summary="List documents on the server",
     description=(
         "List files and folders under the server data directory "
-        "(tenders/, catalogs/, uploads/). Use this before reading."
+        "(tenders/, catalogs/, uploads/). "
+        "Not for chat attachments — those are already in the model context. "
+        "Use when the user refers to a server folder/path."
     ),
 )
 def list_documents(
@@ -140,9 +147,10 @@ def list_documents(
     "/read_document",
     summary="Read one document from the server",
     description=(
-        "Extract text from a file on the server the same way Open WebUI does "
-        "for chat attachments (PDF/DOCX/TXT/CSV/XLSX/ZIP/...). "
-        "Returns full text for the model context (with optional truncation)."
+        "Extract text from a file on the server data volume "
+        "(PDF/DOCX/TXT/CSV/XLSX/ZIP/...). "
+        "Do NOT call this for files attached in the chat — use chat context instead. "
+        "Use only for paths under tenders/, catalogs/, uploads/ on the server."
     ),
 )
 def api_read_document(body: ReadDocumentBody):
@@ -162,8 +170,8 @@ def api_read_document(body: ReadDocumentBody):
     "/read_folder",
     summary="Read all documents from a server folder",
     description=(
-        "Extract text from every supported file in a folder "
-        "(like attaching multiple chat documents at once)."
+        "Extract text from every supported file in a server data folder "
+        "(tenders/, catalogs/, ...). Not a substitute for chat attachments."
     ),
 )
 def api_read_folder(body: ReadFolderBody):
@@ -188,7 +196,8 @@ def api_read_folder(body: ReadFolderBody):
     description=(
         "Fetch a public URL and extract the main readable content "
         "(similar to ChatGPT / DeepSeek web browsing). "
-        "Use for tender portal pages or any external link."
+        "Complement chat attachments when the user provides a link: "
+        "pass the exact URL from the message, do not invent paths."
     ),
 )
 def api_fetch_url(body: FetchUrlBody):

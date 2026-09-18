@@ -26,11 +26,46 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
         current_url = ctx.rt.page.url or ""
         url_l = current_url.lower()
         sum_l = (summary or "").lower()
+        hint_l = (ctx.task_hint or "").lower()
         on_listing = "results.html" in url_l or "extendedsearch" in url_l
-        claims_card = any(
-            x in sum_l for x in ("карточк", "notice", "regnumber", "common-info", "извещен")
+        # сценарий «только поиск» — finish на выдаче нормален
+        search_only = any(
+            x in hint_l
+            for x in ("сценарий 2", "не открывай карточ", "не открывай карточки", "только поиск")
         )
-        if success and on_listing and claims_card and "notice" not in url_l:
+        denies_opening = any(
+            x in sum_l
+            for x in (
+                "не открыв",
+                "не открывал",
+                "карточки не",
+                "карточку не",
+                "без открыт",
+                "не качал",
+                "не скачив",
+            )
+        )
+        # ловим только явную претензию, что карточка уже открыта/обработана
+        claims_opened_card = (not denies_opening) and any(
+            x in sum_l
+            for x in (
+                "notice/",
+                "regnumber=",
+                "common-info",
+                "открыта карточ",
+                "открыл карточ",
+                "открыта первая",
+                "обработана карточ",
+                "обработан тендер",
+            )
+        )
+        if (
+            success
+            and on_listing
+            and claims_opened_card
+            and not search_only
+            and "notice" not in url_l
+        ):
             success = False
             summary = (
                 f"ОТКЛОНЕНО авто-проверкой: success=true при URL выдачи ({current_url}). "

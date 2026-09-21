@@ -14,6 +14,7 @@ from langchain_openai import ChatOpenAI
 from .. import config
 from ..browser_tool import tools as browser_tools
 from ..browser_tool.session import browser_runtime
+from .logging import current_agent_log_path, setup_agent_file_logging
 from .tools import SeenTenderStore, build_langchain_tools, make_context, platform_from_url
 from .tools._common import PlatformAgentContext
 
@@ -58,12 +59,13 @@ SYSTEM_PROMPT = """Ты — автономный агент мониторинг
      отчёты/статистику/футер и явные заглушки.
    - Если после navigate 404 / нет документов / list_download_links=0 — НЕ finish; следующий кандидат.
 4. Для каждого кандидата:
-   a) extract_tender_id(url)
+   a) extract_tender_id(url) — создаёт папку session/<tender_id>/
    b) check_tender_seen — если seen, ПРОПУСТИ
    c) если new и лимит не исчерпан:
-      - navigate на карточку → screenshot: это карточка закупки, не ошибка/капча
-      - открой раздел документов площадки при необходимости → screenshot перед скачиванием
-      - list_download_links → download_url ТОЛЬКО kind=file
+      - navigate на карточку (common-info) → screenshot
+      - save_tender_overview — титульный overview.md/json (цена, объект, заказчик, ссылка)
+      - открой раздел документов → list_download_links → download_url ТОЛЬКО kind=file
+        (файлы автоматически в папку этого tender_id)
       - не качай навигацию, футер и служебные ссылки
       - если files пусто — screenshot или click_xy(expect_download=true); иначе следующий тендер
       - mark_tender_seen после обработки
@@ -85,7 +87,7 @@ SYSTEM_PROMPT = """Ты — автономный агент мониторинг
 **ДОСТУПНЫЕ ИНСТРУМЕНТЫ:**
 navigate, screenshot, click_xy, type_text, press_key, scroll, wait,
 get_page_text, list_download_links, download_url, eval_js,
-extract_tender_id, check_tender_seen, mark_tender_seen,
+extract_tender_id, check_tender_seen, save_tender_overview, mark_tender_seen,
 finish_platform_task.
 """
 
@@ -229,10 +231,16 @@ async def run_multimodal_tool_loop(
             if joined:
                 last_text = joined
 
+        if config.AGENT_DEBUG_LOGS and last_text:
+            logger.info("LLM step=%s text=%s", step_i, last_text[:500])
+
         tool_calls = getattr(ai, "tool_calls", None) or []
         if not tool_calls:
             logger.info("multimodal loop: no tool_calls at step=%s", step_i)
             break
+
+        names = [tc.get("name") for tc in tool_calls]
+        logger.info("LLM step=%s tool_calls=%s", step_i, names)
 
         saw_screenshot = False
         for tc in tool_calls:
@@ -296,22 +304,29 @@ async def run_platform_task(
     max_new = max_new_tenders or config.PLATFORM_MAX_NEW_TENDERS
     max_steps = max_steps or config.PLATFORM_MAX_STEPS
 
+    # Подсессия = имя площадки (host), напр. tenders/zakupki_gov_ru/<tender_id>/
+    plat = "".join(
+        c if c.isalnum() or c in "-_" else "_" for c in platform_from_url(platform_url)
+    )[:80] or "platform"
     if download_subdir:
         safe = "".join(
             c if c.isalnum() or c in "-_" else "_" for c in download_subdir
         )[:80]
-        downloads = config.DATA_ROOT / "tenders" / safe
+        session_name = safe
     else:
-        plat = platform_from_url(platform_url).replace(".", "_")
-        kw = "".join(c if c.isalnum() else "_" for c in keywords[:40])
-        downloads = config.DATA_ROOT / "tenders" / f"platform-{plat}-{kw}"
+        session_name = plat
+    downloads = config.DATA_ROOT / "tenders" / session_name
     downloads.mkdir(parents=True, exist_ok=True)
 
     store = SeenTenderStore(config.SEEN_TENDERS_DB)
 
+    agent_log_path = setup_agent_file_logging(run_tag=session_name)
+
     user_input = (instruction or "").strip() or (
         f"Перейди на платформу и найди НОВЫЕ тендеры по ключевым словам, "
         f"скачай документацию. Лимит новых: {max_new}. "
+        f"Для каждого нового: extract_tender_id → save_tender_overview на карточке → "
+        f"скачай файлы в папку этого тендера → mark_tender_seen. "
         f"В конце обязательно вызови finish_platform_task."
     )
     if "finish_platform_task" not in user_input:
@@ -326,6 +341,7 @@ async def run_platform_task(
             keywords,
             max_new,
             task_hint=user_input,
+            downloads_root=downloads,
         )
         ctx.trace.append({"tool": "navigate", "args": {"url": platform_url}, "result": nav})
 
@@ -379,4 +395,6 @@ async def run_platform_task(
         "vl_enabled": config.AGENT_VL_ENABLED,
         "vl_mode": "inline_multimodal",
         "agent_framework": "langchain.multimodal_tool_loop",
+        "agent_log_path": str(agent_log_path or current_agent_log_path() or ""),
+        "max_steps": max_steps,
     }

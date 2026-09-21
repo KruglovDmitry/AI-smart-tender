@@ -50,10 +50,10 @@ SCENARIOS: dict[int, dict[str, Any]] = {
         "max_steps": 40,
         "max_new_tenders": 1,
         "instruction": (
-            "СЦЕНАРИЙ 4 (документы). Поиск → выбери карточку ТОЛЬКО ea44/notice223/ok44 (не electronic/fcs). "
-            "Если seen или 404/0 files — следующий кандидат. "
-            "Вкладка Документы → скачай 1–3 файла kind=file (не футер). mark_tender_seen. "
-            "finish_platform_task: что скачал."
+            "СЦЕНАРИЙ 4 (документы). Поиск → карточка → extract_tender_id → "
+            "save_tender_overview на common-info → вкладка Документы → "
+            "скачай 1–3 файла kind=file в папку тендера (не футер). mark_tender_seen. "
+            "finish_platform_task: что скачал и путь папки."
         ),
     },
 }

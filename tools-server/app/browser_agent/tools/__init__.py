@@ -16,6 +16,7 @@ from . import (
     mark_tender_seen,
     navigate,
     press_key,
+    save_tender_overview,
     screenshot,
     scroll,
     type_text,
@@ -51,6 +52,7 @@ def build_langchain_tools(ctx: PlatformAgentContext) -> list[StructuredTool]:
         eval_js.make_tool(ctx),
         extract_tender_id.make_tool(ctx),
         check_tender_seen.make_tool(ctx),
+        save_tender_overview.make_tool(ctx),
         mark_tender_seen.make_tool(ctx),
         finish_platform_task.make_tool(ctx),
     ]

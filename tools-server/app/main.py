@@ -115,7 +115,10 @@ class PlatformTaskBody(BaseModel):
     )
     download_subdir: str | None = Field(
         None,
-        description="Optional folder under data/tenders/ for downloads.",
+        description=(
+            "Optional override of session folder under data/tenders/. "
+            "Default: platform host, e.g. zakupki_gov_ru."
+        ),
     )
     instruction: str | None = Field(
         None,

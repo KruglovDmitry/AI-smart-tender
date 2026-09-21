@@ -37,12 +37,15 @@ BROWSER_PROFILE_DIR = Path(
         str(_REPO_ROOT / ".browser-profile"),
     )
 ).resolve()
-# Verbose agent step logs (LLM text, tool args/results, VL advice)
+# Verbose agent step logs (LLM text, tool args/results) → console + data/_logs/agent/
 AGENT_DEBUG_LOGS = os.getenv("AGENT_DEBUG_LOGS", "true").lower() in {
     "1",
     "true",
     "yes",
 }
+AGENT_LOG_DIR = Path(
+    os.getenv("AGENT_LOG_DIR", str(DATA_ROOT / "_logs" / "agent"))
+).resolve()
 
 # OpenAI-compatible chat API for the browser agent
 # AGENT_LLM_MODEL — multimodal tool-calling brain (also sees screenshots)
@@ -59,7 +62,7 @@ AGENT_VL_ENABLED = os.getenv("AGENT_VL_ENABLED", "true").lower() in {
 }
 
 # Platform monitoring agent (LangChain + SQLite dedup)
-PLATFORM_MAX_STEPS = int(os.getenv("PLATFORM_MAX_STEPS", "40"))
+PLATFORM_MAX_STEPS = int(os.getenv("PLATFORM_MAX_STEPS", "90"))
 PLATFORM_MAX_NEW_TENDERS = int(os.getenv("PLATFORM_MAX_NEW_TENDERS", "3"))
 SEEN_TENDERS_DB = Path(
     os.getenv("SEEN_TENDERS_DB", str(DATA_ROOT / "_state" / "seen_tenders.sqlite3"))

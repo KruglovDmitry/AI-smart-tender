@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from ... import config
 from ...browser_tool import tools as browser_tools
-from ._common import PlatformAgentContext, to_json, trace
+from ._common import PlatformAgentContext, ensure_tender_workspace, to_json, trace
 
 
 def _clamp_xy(ctx: PlatformAgentContext, x: float, y: float) -> tuple[float, float]:
@@ -28,10 +28,18 @@ class ClickXyInput(BaseModel):
 
 def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
     async def click_xy(x: float, y: float, expect_download: bool = False) -> str:
+        if expect_download and ctx.current_tender_id:
+            ensure_tender_workspace(ctx, ctx.current_tender_id, ctx.current_tender_url)
         cx, cy = _clamp_xy(ctx, x, y)
         result = await browser_tools.click_xy(ctx.rt, cx, cy, expect_download)
         if cx != float(x) or cy != float(y):
             result = {**result, "clamped": True, "x": cx, "y": cy, "requested": {"x": x, "y": y}}
+        if expect_download and ctx.current_tender_dir and isinstance(result, dict):
+            result = {
+                **result,
+                "tender_id": ctx.current_tender_id,
+                "tender_dir": str(ctx.current_tender_dir),
+            }
         trace(ctx, "click_xy", {"x": cx, "y": cy, "expect_download": expect_download}, result)
         return to_json(result)
 

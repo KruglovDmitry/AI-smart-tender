@@ -61,7 +61,7 @@ async def test_platform_scenario(scenario_id: int, require_agent_llm: None) -> N
         keywords=KEYWORDS,
         max_new_tenders=cfg["max_new_tenders"],
         max_steps=cfg["max_steps"],
-        download_subdir=f"platform-s{scenario_id}",
+        download_subdir=None,
         instruction=cfg["instruction"],
     )
     path = _save_debug(scenario_id, data)

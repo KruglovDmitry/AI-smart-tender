@@ -16,6 +16,8 @@ class TenderSeenInput(BaseModel):
 def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
     async def mark_tender_seen(tender_id: str, tender_url: str) -> str:
         result = ctx.store.mark_seen(ctx.platform, tender_id, tender_url)
+        if ctx.current_tender_dir:
+            result = {**result, "tender_dir": str(ctx.current_tender_dir)}
         if result.get("is_new"):
             ctx.new_tenders_processed += 1
             ctx.processed_tenders.append(result)

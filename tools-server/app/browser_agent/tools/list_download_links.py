@@ -1,4 +1,4 @@
-"""Tool: list_download_links."""
+"""Tool: list_download_links — slim link list for the LLM."""
 
 from __future__ import annotations
 
@@ -16,21 +16,38 @@ class ListDownloadLinksInput(BaseModel):
 def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
     async def list_download_links(limit: int = 40) -> str:
         result = await browser_tools.list_download_links(ctx.rt, limit)
+        slim_links = []
+        for item in result.get("links") or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("kind") == "noise" or (item.get("score") or 0) <= 0:
+                continue
+            slim_links.append(
+                {
+                    "text": (item.get("text") or "")[:120],
+                    "href": item.get("href"),
+                    "score": item.get("score"),
+                    "kind": item.get("kind"),
+                }
+            )
+        slim = {
+            "ok": result.get("ok"),
+            "action": "list_download_links",
+            "message": result.get("message"),
+            "url": result.get("url"),
+            "links": slim_links,
+        }
         trace(ctx, "list_download_links", {"limit": limit}, result)
-        return to_json(result)
+        return to_json(slim)
 
     return StructuredTool.from_function(
         coroutine=list_download_links,
         name="list_download_links",
         description=(
-            "Сканировать DOM на кандидаты загрузок/вкладок документов.\n"
-            "КОГДА: на карточке или вкладке документов перед скачиванием; понять, есть ли файлы.\n"
-            "kind в элементах: file — прямой файл для download_url; tab — вкладка/раздел "
-            "(сначала click_xy или navigate, не download_url); прочее — обычно пропускать.\n"
-            "АЛЬТЕРНАТИВА: screenshot+VL download_hints, если DOM пустой; "
-            "click_xy(expect_download=true) для кнопки без URL.\n"
-            "НЕ качать футер/статистику/служебные ссылки даже если попали в список.\n"
-            "ВЕРНЁТ JSON: ok, url, links[] (text, href/url, kind, ...), message."
+            "Сканировать DOM на кандидаты загрузок (служебный мусор отфильтрован/понижен).\n"
+            "КОГДА: на странице/разделе документов перед download_url.\n"
+            "Сам решай по text/href/score/kind; качай осмысленные файлы закупки.\n"
+            "ВЕРНЁТ JSON: ok, url, links[{text,href,score,kind}]."
         ),
         args_schema=ListDownloadLinksInput,
     )

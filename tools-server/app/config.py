@@ -64,6 +64,8 @@ AGENT_VL_ENABLED = os.getenv("AGENT_VL_ENABLED", "true").lower() in {
 # Platform monitoring agent (LangChain + SQLite dedup)
 PLATFORM_MAX_STEPS = int(os.getenv("PLATFORM_MAX_STEPS", "90"))
 PLATFORM_MAX_NEW_TENDERS = int(os.getenv("PLATFORM_MAX_NEW_TENDERS", "3"))
+# Max document files to download per tender (priority docs; skip junk/wrappers)
+PLATFORM_MAX_FILES_PER_TENDER = int(os.getenv("PLATFORM_MAX_FILES_PER_TENDER", "5"))
 SEEN_TENDERS_DB = Path(
     os.getenv("SEEN_TENDERS_DB", str(DATA_ROOT / "_state" / "seen_tenders.sqlite3"))
 ).resolve()

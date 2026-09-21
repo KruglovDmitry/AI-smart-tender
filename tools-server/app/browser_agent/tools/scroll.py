@@ -28,10 +28,10 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
         name="scroll",
         description=(
             "Прокрутить страницу по вертикали (viewport).\n"
-            "КОГДА: следующие карточки в выдаче ниже fold; доскроллить до блока документов/кнопок.\n"
-            "АЛЬТЕРНАТИВА: eval_js (element.scrollIntoView) для конкретного элемента; "
-            "navigate на URL следующей страницы пагинации, если видна.\n"
-            "После scroll почти всегда нужен свежий screenshot или get_page_text.\n"
+            "КОГДА: контент ниже fold (редко). Для пагинации — сначала inspect_page_nav, "
+            "не крути scroll в цикле.\n"
+            "АЛЬТЕРНАТИВА: navigate(suggested_next_url / next.href).\n"
+            "После scroll НЕ делай screenshot «на автомате» — только если нужен click_xy.\n"
             "ВЕРНЁТ JSON: ok, message, url."
         ),
         args_schema=ScrollInput,

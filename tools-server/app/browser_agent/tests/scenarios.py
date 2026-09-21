@@ -24,7 +24,7 @@ SCENARIOS: dict[int, dict[str, Any]] = {
         "instruction": (
             "СЦЕНАРИЙ 2 (поиск). Предпочтительно navigate сразу на "
             "https://zakupki.gov.ru/epz/order/extendedsearch/results.html?searchString=<urlencoded keywords>. "
-            "Либо screenshot→type_text с обязательными x,y→Enter; иначе eval_js заполнить searchString. "
+            "Либо screenshot→type_text с обязательными x,y→Enter. "
             "НЕ вызывай finish пока URL не содержит results.html или searchString. "
             "НЕ открывай карточки, НЕ качай. finish: URL выдачи."
         ),
@@ -35,8 +35,8 @@ SCENARIOS: dict[int, dict[str, Any]] = {
         "max_steps": 30,
         "max_new_tenders": 1,
         "instruction": (
-            "СЦЕНАРИЙ 3 (первая карточка). Поиск по keywords → eval_js: собери href карточек "
-            "из выдачи сверху вниз → navigate(первый валидный href). "
+            "СЦЕНАРИЙ 3 (первая карточка). Поиск по keywords → collect_card_urls → "
+            "filter_unseen_tenders → navigate(первый new[].tender_url). "
             "НЕ click_xy вместо navigate, если href уже есть. "
             "Успех ТОЛЬКО если текущий URL после navigate — карточка (не results/search). "
             "Если после клика/перехода всё ещё выдача — НЕ finish(success=true), повтори navigate. "

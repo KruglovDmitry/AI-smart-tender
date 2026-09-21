@@ -5,7 +5,7 @@ from __future__ import annotations
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from ._common import PlatformAgentContext, ensure_tender_workspace, to_json, trace
+from ._common import PlatformAgentContext, to_json, trace
 from .tender_id import resolve_tender_id
 
 
@@ -20,11 +20,14 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
         info["url"] = url
         tender_id = str(info.get("tender_id") or "").strip()
         if tender_id:
-            folder = ensure_tender_workspace(ctx, tender_id, url)
-            info["tender_dir"] = str(folder)
+            # Только запоминаем кандидата — папку НЕ создаём (иначе куча пустых dirs).
+            ctx.current_tender_id = tender_id
+            ctx.current_tender_url = url
+            ctx.current_tender_dir = None
             info["message"] = (
-                f"tender_id={tender_id}; downloads go to {folder.name}/ "
-                "(call save_tender_overview on card page before download_url)"
+                f"tender_id={tender_id}. Дальше check_tender_seen; "
+                "папка tenders/<platform>/<tender_id>/ создастся только при "
+                "save_tender_overview / download_url для НОВОГО тендера."
             )
         trace(ctx, "extract_tender_id", {"url": url}, info)
         return to_json(info)
@@ -33,11 +36,10 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
         coroutine=extract_tender_id,
         name="extract_tender_id",
         description=(
-            "Извлечь стабильный tender_id из URL карточки (для дедупа) и открыть "
-            "папку тендера session/<tender_id>/ — все download_url пойдут туда.\n"
-            "КОГДА: сразу перед check_tender_seen / mark_tender_seen, на КАЖДОМ кандидате.\n"
-            "АЛЬТЕРНАТИВА: нет — не угадывай id из текста вручную; всегда этот tool.\n"
-            "ВЕРНЁТ JSON: tender_id, method, platform, url, tender_dir."
+            "Извлечь стабильный tender_id из URL (для дедупа). Папку НЕ создаёт.\n"
+            "КОГДА: на выдаче, ДО navigate на карточку — вместе с check_tender_seen "
+            "или лучше одним вызовом filter_unseen_tenders(urls).\n"
+            "ВЕРНЁТ JSON: tender_id, method, platform, url."
         ),
         args_schema=TenderUrlInput,
     )

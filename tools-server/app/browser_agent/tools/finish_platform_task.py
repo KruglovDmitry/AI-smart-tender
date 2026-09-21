@@ -50,8 +50,6 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
             x in sum_l
             for x in (
                 "notice/",
-                "regnumber=",
-                "common-info",
                 "открыта карточ",
                 "открыл карточ",
                 "открыта первая",

@@ -14,15 +14,16 @@ from langchain_openai import ChatOpenAI
 from .. import config
 from ..browser_tool import tools as browser_tools
 from ..browser_tool.session import browser_runtime
-from .logging import current_agent_log_path, setup_agent_file_logging
+from .logging import current_agent_log_path, log_messages, setup_agent_file_logging
 from .tools import SeenTenderStore, build_langchain_tools, make_context, platform_from_url
-from .tools._common import PlatformAgentContext
+from .tools._common import PlatformAgentContext, platform_notes_digest
 
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """Ты — автономный агент мониторинга тендерных площадок.
 
 Твоя работа — вызывать инструменты браузера и дедупликации. Генерация текста вторична.
+Площадка задана platform_url: изучай её UI сам, не опирайся на шаблоны URL одной конкретной системы.
 
 Ты multimodal: после tool `screenshot` в следующем сообщении приходит ИЗОБРАЖЕНИЕ viewport.
 Отдельной VL-модели нет — экран анализируешь ТЫ сам (что на странице, куда кликать, координаты).
@@ -31,64 +32,40 @@ SYSTEM_PROMPT = """Ты — автономный агент мониторинг
 
 **ЗАКОН №1: ИНСТРУМЕНТЫ — ЕДИНСТВЕННАЯ РЕАЛЬНОСТЬ.**
 - Запрещено выдумывать URL тендеров, tender_id, содержимое документов или факт скачивания.
-- Источник правды — РЕАЛЬНЫЙ результат tool call (JSON с ok/message/url/...) и то, что видно на screenshot.
-- В аргументы tools копируй РЕАЛЬНЫЕ значения из предыдущих JSON (href, tender_id, path).
-  ЗАПРЕЩЕНЫ плейсхолдеры вроде result['...'] или ${...}.
-- finish_platform_task — ТОЛЬКО tool call (не текстом). Вызывай ОДИН раз, когда задача реально завершена.
-- success=true только если критерии подтверждены текущим URL / скачанными файлами / processed_tenders.
-- Запрещён ранний finish на главной/лендинге, если задача — поиск, карточка или документы.
-- Запрещён success=true про «открыта карточка», если текущий URL всё ещё выдача/поиск
-  (после click_xy/navigate URL в последнем tool result должен быть карточкой).
-- Имея href карточки — предпочитай navigate(href), а не click_xy. click_xy без смены URL = промах, не успех.
+- Источник правды — РЕАЛЬНЫЙ результат tool call (JSON с ok/message/url/page_kind/...) и screenshot.
+- Копируй exact href/tender_url из JSON. ЗАПРЕЩЕНЫ плейсхолдеры и «сборка» URL из id+шаблона.
+- При page_kind=not_found / ok=false — вернись на results_url, не перебирай шаблоны.
+- finish_platform_task — ТОЛЬКО tool call, один раз в конце.
+- Имея href — navigate(href), не click_xy.
 
-**ЗАКОН №2: АЛГОРИТМ МОНИТОРИНГА.**
-1. Убедись, что открыта целевая платформа (navigate при необходимости на platform_url).
-2. Поиск по keywords — через UI площадки (не хардкодь чужие URL-шаблоны):
-   a) Найди поле поиска: screenshot → type_text ОБЯЗАТЕЛЬНО с x,y внутри viewport → submit/Enter.
-      type_text без x,y ЗАПРЕЩЁН.
-   b) Если координаты плохие — eval_js: найти видимое поле поиска, заполнить keywords, отправить форму.
-      Для ссылок используй широкие селекторы (a[href] с notice/regNumber/purchase/tender), не хрупкий CSS одной площадки.
-   c) Успех поиска — только после screenshot: на кадре видна выдача/список по запросу,
-      не главная и не пустая форма. Иначе НЕ finish(success=true); повтори поиск.
-3. Кандидаты карточек:
-   - Собери ссылки ТОЛЬКО через eval_js/get_page_text (реальные href из DOM, сверху вниз).
-     Не сочиняй URL карточки из номера на скрине без href в tool result.
-   - Открывай: navigate(href) → screenshot. Успех открытия = URL в ответе navigate/screenshot
-     стал карточкой (не выдача). Если URL не сменился — повтори navigate или другой кандидат.
-   - Открывай только карточки этой же площадки; пропускай javascript:, mailto:, служебные
-     отчёты/статистику/футер и явные заглушки.
-   - Если после navigate 404 / нет документов / list_download_links=0 — НЕ finish; следующий кандидат.
-4. Для каждого кандидата:
-   a) extract_tender_id(url) — создаёт папку session/<tender_id>/
-   b) check_tender_seen — если seen, ПРОПУСТИ
-   c) если new и лимит не исчерпан:
-      - navigate на карточку (common-info) → screenshot
-      - save_tender_overview — титульный overview.md/json (цена, объект, заказчик, ссылка)
-      - открой раздел документов → list_download_links → download_url ТОЛЬКО kind=file
-        (файлы автоматически в папку этого tender_id)
-      - не качай навигацию, футер и служебные ссылки
-      - если files пусто — screenshot или click_xy(expect_download=true); иначе следующий тендер
-      - mark_tender_seen после обработки
-5. Верификация экраном (screenshot обязателен на чекпоинтах):
-   - После: открытие площадки, поиск, переход на карточку, открытие документов, сомнительный клик.
-   - Смотри пришедшее изображение; при расхождении с ожиданием — исправь шаг, не иди «вслепую».
-   - Координаты для type_text/click_xy — только из свежего screenshot (x < width, y < height).
-   - eval_js/get_page_text дополняют зрение, но не заменяют проверку ключевых переходов.
-6. Не качай десятки одинаковых редакций — последняя версия + уникальные протоколы/решения.
-7. login/captcha/403 — finish_platform_task(success=false).
-8. finish_platform_task(success=true) только после реальной обработки лимита новых ИЛИ исчерпания валидных кандидатов
-   (краткий summary: URL, tender_id, файлы — только из tool results, без плейсхолдеров).
-   Перед финальным success=true — screenshot, если ещё не делал на последнем состоянии.
+**ЗАКОН №2: АЛГОРИТМ.**
+1. navigate(platform_url) при необходимости (не дублируй тот же URL).
+2. Поиск: screenshot → type_text(x,y) → Enter. Успех — screenshot с выдачей
+   (или get_page_text, если нужен только текст).
+3. Выдача:
+   a) collect_card_urls → filter_unseen_tenders(urls)
+   b) new_count=0 → inspect_page_nav → navigate(suggested_next_url или next.href)
+      ЗАПРЕЩЁН цикл scroll→screenshot→те же ссылки. Scroll — максимум 1 раз, если
+      inspect_page_nav сказал, что пагинация ниже fold.
+   c) Не меняй сортировку ради unseen, если это уводит в архив.
+4. Для каждого new:
+   a) navigate(exact tender_url) — смотри page_kind
+   b) save_tender_overview; looks_stale → mark_tender_seen(count_toward_limit=false)
+   c) иначе документы со страницы (list_download_links / вкладка) → download_url
+   d) mark_tender_seen(count_toward_limit=true) → контекст сожмётся, NOTES останутся
+5. Screenshot — только перед type_text/click_xy или при неясности UI.
+   Не screenshot после каждого scroll. Для проверки текста — get_page_text.
+6. click_xy: если changed=false — промах, не считай успехом; лучше navigate(href).
+7. login/captcha → finish(success=false).
+8. finish(success=true) после лимита засчитанных новых.
 
-**ЗАКОН №3: ЗАВЕРШЕНИЕ.**
-- Итог только через finish_platform_task.
-- В summary: сколько новых, какие URL, что скачано / почему не удалось.
+**ЗАКОН №3:** итог только через finish_platform_task.
 
-**ДОСТУПНЫЕ ИНСТРУМЕНТЫ:**
+**ИНСТРУМЕНТЫ:**
 navigate, screenshot, click_xy, type_text, press_key, scroll, wait,
-get_page_text, list_download_links, download_url, eval_js,
-extract_tender_id, check_tender_seen, save_tender_overview, mark_tender_seen,
-finish_platform_task.
+get_page_text, inspect_page_nav, list_download_links, download_url, collect_card_urls,
+extract_tender_id, check_tender_seen, filter_unseen_tenders, save_tender_overview,
+mark_tender_seen, finish_platform_task.
 """
 
 
@@ -137,6 +114,66 @@ def _prune_old_screenshots(messages: list[Any]) -> None:
         messages[i] = HumanMessage(
             content="[предыдущий screenshot удалён из контекста; ориентируйся на последний кадр]"
         )
+
+
+def _progress_digest(ctx: PlatformAgentContext) -> str:
+    """Краткий статус для LLM вместо полной истории tools по завершённым тендерам."""
+    try:
+        cur_url = ctx.rt.page.url
+    except Exception:
+        cur_url = ""
+    lines = [
+        "ПРОГРЕСС (сжатый контекст — детали прошлых tool-вызовов удалены):",
+        f"- processed={ctx.new_tenders_processed}/{ctx.max_new_tenders}",
+        f"- keywords={ctx.keywords!r}",
+        f"- current_url={cur_url}",
+    ]
+    for t in ctx.processed_tenders[-8:]:
+        tid = t.get("tender_id") or "?"
+        tdir = t.get("tender_dir") or ""
+        files: list[str] = []
+        if tdir:
+            try:
+                p = Path(tdir)
+                if p.is_dir():
+                    files = sorted(
+                        x.name
+                        for x in p.iterdir()
+                        if x.is_file() and x.name != "overview.json"
+                    )[:8]
+            except Exception:
+                files = []
+        files_s = ", ".join(files) if files else "(нет файлов / только overview)"
+        lines.append(f"- DONE {tid}: files=[{files_s}]")
+    remain = ctx.max_new_tenders - ctx.new_tenders_processed
+    if remain > 0:
+        lines.append(
+            f"Осталось новых: {remain}. Продолжай: следующий new[] / пагинация / "
+            "save_tender_overview → documents → download → mark_tender_seen."
+        )
+    else:
+        lines.append("Лимит новых исчерпан → finish_platform_task(success=true).")
+    lines.append("")
+    lines.append(platform_notes_digest(ctx))
+    return "\n".join(lines)
+
+
+def _compact_messages_after_tender(messages: list[Any], ctx: PlatformAgentContext) -> list[Any]:
+    """
+    Оставляем system + исходный user-запрос + краткий прогресс.
+    Убираем накопившиеся AI/Tool/screenshot по уже закрытым тендерам.
+    """
+    if len(messages) < 2:
+        return messages
+    system = messages[0]
+    task = messages[1]
+    digest = HumanMessage(content=_progress_digest(ctx))
+    logger.info(
+        "context compacted after tender: messages %s → 3 (digest processed=%s)",
+        len(messages),
+        ctx.new_tenders_processed,
+    )
+    return [system, task, digest]
 
 
 def _screenshot_followup(ctx: PlatformAgentContext) -> HumanMessage | None:
@@ -231,18 +268,25 @@ async def run_multimodal_tool_loop(
             if joined:
                 last_text = joined
 
-        if config.AGENT_DEBUG_LOGS and last_text:
-            logger.info("LLM step=%s text=%s", step_i, last_text[:500])
+        if config.AGENT_DEBUG_LOGS:
+            if last_text:
+                logger.info("LLM step=%s text=%s", step_i, last_text)
+            # Полный dump только редко — иначе лог раздувается мегабайтами
+            if step_i == 0 or step_i % 10 == 0:
+                log_messages(step_i, messages, label="after_llm")
 
         tool_calls = getattr(ai, "tool_calls", None) or []
         if not tool_calls:
             logger.info("multimodal loop: no tool_calls at step=%s", step_i)
+            if config.AGENT_DEBUG_LOGS:
+                log_messages(step_i, messages, label="final")
             break
 
         names = [tc.get("name") for tc in tool_calls]
         logger.info("LLM step=%s tool_calls=%s", step_i, names)
 
         saw_screenshot = False
+        marked_seen = False
         for tc in tool_calls:
             name = tc.get("name") or ""
             args = tc.get("args") or {}
@@ -252,11 +296,20 @@ async def run_multimodal_tool_loop(
                 observation = f'{{"ok": false, "message": "unknown tool: {name}"}}'
             else:
                 if config.AGENT_DEBUG_LOGS:
-                    logger.info("tool_call step=%s name=%s args=%s", step_i, name, str(args)[:300])
+                    logger.info("tool_call step=%s name=%s args=%s", step_i, name, args)
                 observation = await _ainvoke_tool(tool, args if isinstance(args, dict) else {})
+                if config.AGENT_DEBUG_LOGS:
+                    logger.info(
+                        "tool_result step=%s name=%s observation=%s",
+                        step_i,
+                        name,
+                        observation[:2000],
+                    )
             messages.append(ToolMessage(content=observation, tool_call_id=tc_id))
             if name == "screenshot":
                 saw_screenshot = True
+            if name == "mark_tender_seen":
+                marked_seen = True
             if ctx.done:
                 break
 
@@ -271,8 +324,18 @@ async def run_multimodal_tool_loop(
                         config.AGENT_LLM_MODEL,
                     )
 
+        # После закрытия тендера — в LLM только прогресс, без пачки download/list
+        if marked_seen and not ctx.done:
+            messages[:] = _compact_messages_after_tender(messages, ctx)
+
+        if config.AGENT_DEBUG_LOGS and (marked_seen or step_i % 10 == 0):
+            log_messages(step_i, messages, label="after_tools")
+
         if ctx.done:
             break
+
+    if config.AGENT_DEBUG_LOGS:
+        log_messages(-1, messages, label="end_of_loop")
 
     return ctx.final_summary or last_text
 
@@ -323,11 +386,13 @@ async def run_platform_task(
     agent_log_path = setup_agent_file_logging(run_tag=session_name)
 
     user_input = (instruction or "").strip() or (
-        f"Перейди на платформу и найди НОВЫЕ тендеры по ключевым словам, "
+        f"Перейди на платформу и найди НОВЫЕ актуальные тендеры по ключевым словам, "
         f"скачай документацию. Лимит новых: {max_new}. "
-        f"Для каждого нового: extract_tender_id → save_tender_overview на карточке → "
-        f"скачай файлы в папку этого тендера → mark_tender_seen. "
-        f"В конце обязательно вызови finish_platform_task."
+        f"На выдаче: collect_card_urls → filter_unseen → при new=0 inspect_page_nav → "
+        f"navigate(exact href / suggested_next_url). Не выдумывай URL. "
+        f"looks_stale → mark_tender_seen(count_toward_limit=false). "
+        f"Иначе save_tender_overview → документы со страницы → mark_tender_seen. "
+        f"В конце finish_platform_task."
     )
     if "finish_platform_task" not in user_input:
         user_input += " В конце обязательно вызови finish_platform_task."

@@ -25,7 +25,8 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
             "отдельного VL-вызова нет: ты сам анализируешь экран.\n"
             "КОГДА: верификация после navigate/поиска/карточки/документов; найти поле/кнопку "
             "(координаты x,y); капча/логин/404.\n"
-            "АЛЬТЕРНАТИВА: get_page_text — только текст; eval_js — DOM/href без картинки.\n"
+            "АЛЬТЕРНАТИВА: get_page_text — дешёвая проверка текста; "
+            "inspect_page_nav / collect_card_urls — структура страницы без картинки.\n"
             "ВЕРНЁТ JSON: ok, url, width, height, has_image. "
             "Координаты для type_text/click_xy — только из свежего кадра (x < width, y < height)."
         ),

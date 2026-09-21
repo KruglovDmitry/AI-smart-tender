@@ -28,10 +28,10 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
         coroutine=check_tender_seen,
         name="check_tender_seen",
         description=(
-            "Проверить в SQLite, видели ли уже этот tender_id на площадке (без записи).\n"
-            "КОГДА: после extract_tender_id, ДО открытия/скачивания. Если is_seen=true — пропусти кандидата.\n"
-            "АЛЬТЕРНАТИВА: mark_tender_seen пишет в базу — вызывай его только после реальной обработки.\n"
-            "ВЕРНЁТ JSON: platform, tender_id, tender_url, is_seen, is_new (=не is_seen)."
+            "Проверить в SQLite, видели ли уже этот tender_id (без записи, без папки).\n"
+            "КОГДА: на выдаче, ДО navigate. Лучше пакетом через filter_unseen_tenders.\n"
+            "Если is_seen=true — сразу следующий URL, карточку НЕ открывай.\n"
+            "ВЕРНЁТ JSON: platform, tender_id, tender_url, is_seen, is_new."
         ),
         args_schema=TenderSeenInput,
     )

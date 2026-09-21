@@ -14,6 +14,7 @@ from langchain_core.tools import StructuredTool
 from ... import config
 from ...browser_tool import tools as browser_tools
 from ._common import PlatformAgentContext, ensure_tender_workspace, to_json, trace
+from .tender_id import resolve_tender_id
 
 # Базовый список полей (ссылка обязательна).
 OVERVIEW_FIELDS: list[str] = [
@@ -53,7 +54,7 @@ _PROMPT = """Ты извлекаешь структурированные дан
 Правила:
 - tender_url обязателен: каноническая ссылка на карточку (tender_url выше или page_url), не выдумывай.
 - tender_id — используй известный tender_id, если он есть.
-- price — НМЦК / начальная цена одной строкой как на сайте.
+- price — начальная/максимальная цена одной строкой как на сайте.
 - Не добавляй лишних ключей. Не пиши пояснений вне JSON.
 """
 
@@ -156,14 +157,55 @@ async def _llm_overview(
     return out
 
 
+def _looks_stale(payload: dict[str, Any]) -> tuple[bool, str]:
+    """Universal date/stage heuristic — not tied to a specific platform."""
+    year_now = datetime.now(timezone.utc).year
+    blob = " ".join(
+        str(payload.get(k) or "")
+        for k in ("deadline", "placed_at", "updated_at", "stage", "notes", "object")
+    )
+    years = [int(y) for y in re.findall(r"\b(19\d{2}|20\d{2})\b", blob)]
+    stage = str(payload.get("stage") or "").lower()
+    if years and max(years) <= year_now - 3:
+        return True, f"dates look old (max_year={max(years)}, now={year_now})"
+    if any(
+        x in stage
+        for x in (
+            "заверш",
+            "отмен",
+            "архив",
+            "completed",
+            "cancelled",
+            "canceled",
+            "closed",
+        )
+    ) and (not years or max(years) < year_now):
+        return True, f"stage suggests inactive: {payload.get('stage')!r}"
+    return False, ""
+
+
 def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
     async def save_tender_overview() -> str:
-        tender_id = ctx.current_tender_id
+        page_url = str(ctx.rt.page.url or "")
+        # Всегда берём id с ТЕКУЩЕЙ страницы — иначе после 1-го тендера
+        # ctx.current_tender_id залипает и всё пишется в одну папку.
+        resolved = resolve_tender_id(page_url, platform=ctx.platform)
+        page_tid = str(resolved.get("tender_id") or "").strip() or None
+        tender_id = page_tid or (str(ctx.current_tender_id or "").strip() or None)
+        if tender_id:
+            ctx.current_tender_id = tender_id
+            if page_tid:
+                ctx.current_tender_url = page_url
+            elif not ctx.current_tender_url:
+                ctx.current_tender_url = page_url
         if not tender_id:
             result = {
                 "ok": False,
                 "action": "save_tender_overview",
-                "message": "Сначала extract_tender_id (нет текущего tender_id)",
+                "message": (
+                    "Нет tender_id: вызови filter_unseen_tenders / extract_tender_id "
+                    "или открой карточку закупки с id в URL"
+                ),
             }
             trace(ctx, "save_tender_overview", {}, result)
             return to_json(result)
@@ -179,6 +221,13 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
             return to_json(result)
 
         page_url = str(page.get("url") or ctx.rt.page.url)
+        # Перечитать id после возможного редиректа
+        resolved2 = resolve_tender_id(page_url, platform=ctx.platform)
+        page_tid2 = str(resolved2.get("tender_id") or "").strip() or None
+        if page_tid2:
+            tender_id = page_tid2
+            ctx.current_tender_id = tender_id
+            ctx.current_tender_url = page_url
         tender_url = ctx.current_tender_url or page_url
         folder = ensure_tender_workspace(ctx, tender_id, tender_url)
 
@@ -222,8 +271,18 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
                 "deadline": payload.get("deadline"),
                 "method": payload.get("method"),
                 "stage": payload.get("stage"),
+                "placed_at": payload.get("placed_at"),
             },
         }
+        stale, reason = _looks_stale(payload)
+        if stale:
+            result["looks_stale"] = True
+            result["stale_reason"] = reason
+            result["hint"] = (
+                "Кандидат похож на устаревший/неактивный: не качай документы; "
+                "mark_tender_seen(..., count_toward_limit=false) и бери следующий new[]."
+            )
+            result["message"] += " | looks_stale=true"
         trace(ctx, "save_tender_overview", {}, result)
         return to_json(result)
 
@@ -234,8 +293,9 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
             "Один LLM-вызов: сохранить титульный overview.json в папку текущего тендера.\n"
             "Поля: tender_url (обязательная ссылка), tender_id, object, customer, price, "
             "currency, method, stage, law, placed_at, updated_at, deadline, region, notes.\n"
-            "КОГДА: на common-info / основной странице закупки, ДО download_url. "
-            "Нужен extract_tender_id. Без regex-fallback — при ошибке LLM вернёт ok=false.\n"
+            "КОГДА: на титульной/основной странице карточки закупки, ДО download_url. "
+            "Нужен известный tender_id (filter/extract или id в URL). "
+            "Без regex-fallback — при ошибке LLM вернёт ok=false.\n"
             "ВЕРНЁТ JSON: ok, tender_dir, overview_path, overview{...}."
         ),
     )

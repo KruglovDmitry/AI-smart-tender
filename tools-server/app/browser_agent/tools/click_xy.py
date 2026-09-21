@@ -48,15 +48,14 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
         name="click_xy",
         description=(
             "Клик мышью по координатам viewport (пиксели).\n"
-            "КОГДА: кнопка «Найти», вкладка «Документы», ссылка без удобного href, "
+            "КОГДА: кнопка поиска, вкладка документов, ссылка без удобного href, "
             "скачивание кнопкой без URL (expect_download=true).\n"
-            "АЛЬТЕРНАТИВА: navigate — если есть прямой URL карточки/страницы; "
-            "download_url — если list_download_links дал kind=file с url; "
-            "eval_js — программный click по селектору, если координаты нестабильны.\n"
-            "ОБЯЗАТЕЛЬНО: x,y только из последнего screenshot (иначе промах). "
-            "Выход за viewport будет clamped.\n"
-            "ВЕРНЁТ JSON: ok, message, url; при expect_download — сведения о файле/ошибке; "
-            "иногда clamped + requested."
+            "АЛЬТЕРНАТИВА: navigate — если есть прямой URL; "
+            "download_url — если list_download_links дал URL файла; "
+            "inspect_page_nav — если неясно, куда кликать для пагинации.\n"
+            "ОБЯЗАТЕЛЬНО: x,y только из последнего screenshot. "
+            "Если в ответе changed=false — клик мимо, не успех.\n"
+            "ВЕРНЁТ JSON: ok, url, changed, page_kind; …"
         ),
         args_schema=ClickXyInput,
     )

@@ -51,9 +51,9 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
             "Клик по полю (x,y) и ввод текста с клавиатуры.\n"
             "КОГДА: заполнить поиск/фильтр на UI площадки. После ввода обычно press_key Enter "
             "или click_xy по кнопке поиска; затем screenshot для проверки выдачи.\n"
-            "АЛЬТЕРНАТИВА: eval_js — заполнить input по CSS/селектору, если координаты плохие "
-            "или поле не фокусируется кликом.\n"
-            "ЗАПРЕЩЕНО: вызывать без x,y. Координаты — только из свежего screenshot/VL.\n"
+            "АЛЬТЕРНАТИВА: если поле не находится — новый screenshot и другие x,y; "
+            "inspect_page_nav подскажет, есть ли search_inputs на странице.\n"
+            "ЗАПРЕЩЕНО: вызывать без x,y. Координаты — только из свежего screenshot.\n"
             "ВЕРНЁТ JSON: ok, message, url; при clamp — clamped, x, y, requested."
         ),
         args_schema=TypeTextInput,

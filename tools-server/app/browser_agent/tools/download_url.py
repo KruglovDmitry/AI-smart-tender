@@ -1,64 +1,134 @@
-"""Tool: download_url."""
+"""Tool: download_url — skip duplicates / over limit."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
+from ... import config
 from ...browser_tool import tools as browser_tools
 from ._common import PlatformAgentContext, ensure_tender_workspace, to_json, trace
 
 
 class DownloadUrlInput(BaseModel):
-    url: str = Field(description="Прямой URL файла (из list_download_links kind=file)")
+    url: str = Field(description="Прямой URL файла (из list_download_links)")
     suggested_name: Optional[str] = Field(
         default=None,
-        description="Желаемое имя файла с страницы (лучше с расширением и кириллицей)",
+        description="Осмысленное имя файла с расширением из текста ссылки",
     )
+
+
+def _count_files_in_dir(folder: Path) -> int:
+    if not folder.exists():
+        return 0
+    return sum(1 for p in folder.iterdir() if p.is_file() and p.name != "overview.json")
+
+
+def _existing_match(folder: Path, suggested_name: str | None) -> Path | None:
+    if not folder.exists() or not suggested_name:
+        return None
+    want = Path(suggested_name).name.strip()
+    if not want:
+        return None
+    stem = Path(want).stem.lower()
+    for p in folder.iterdir():
+        if not p.is_file() or p.name == "overview.json":
+            continue
+        if p.name == want or p.stem.lower() == stem:
+            return p
+    return None
 
 
 def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
     async def download_url(url: str, suggested_name: str | None = None) -> str:
+        args = {"url": url, "suggested_name": suggested_name}
         if not ctx.current_tender_id:
             result = {
                 "ok": False,
                 "action": "download_url",
                 "message": (
-                    "Нет активного тендера: сначала extract_tender_id(url), "
-                    "чтобы создать папку session/<tender_id>/"
+                    "Нет активного тендера: сначала extract_tender_id / save_tender_overview"
                 ),
             }
-            trace(ctx, "download_url", {"url": url, "suggested_name": suggested_name}, result)
+            trace(ctx, "download_url", args, result)
             return to_json(result)
 
         folder = ensure_tender_workspace(
             ctx, ctx.current_tender_id, ctx.current_tender_url
         )
+        max_files = max(1, int(getattr(config, "PLATFORM_MAX_FILES_PER_TENDER", 5)))
+        already = _count_files_in_dir(folder)
+        if already >= max_files:
+            result = {
+                "ok": True,
+                "action": "download_url",
+                "skipped": True,
+                "reason": "limit",
+                "message": (
+                    f"Лимит файлов на тендер ({max_files}) уже достигнут "
+                    f"в {folder.name}; mark_tender_seen и следующий new."
+                ),
+                "tender_id": ctx.current_tender_id,
+                "tender_dir": str(folder),
+                "files_in_dir": already,
+            }
+            trace(ctx, "download_url", args, result)
+            return to_json(result)
+
+        if url in ctx.downloaded_urls:
+            result = {
+                "ok": True,
+                "action": "download_url",
+                "skipped": True,
+                "reason": "duplicate_url",
+                "message": f"URL уже скачивался в этом запуске: {suggested_name or url[:80]}",
+                "tender_id": ctx.current_tender_id,
+                "tender_dir": str(folder),
+            }
+            trace(ctx, "download_url", args, result)
+            return to_json(result)
+
+        existing = _existing_match(folder, suggested_name)
+        if existing is not None:
+            result = {
+                "ok": True,
+                "action": "download_url",
+                "skipped": True,
+                "reason": "exists",
+                "message": f"Уже есть на диске: {existing.name}",
+                "file": str(existing),
+                "tender_id": ctx.current_tender_id,
+                "tender_dir": str(folder),
+            }
+            ctx.downloaded_urls.add(url)
+            trace(ctx, "download_url", args, result)
+            return to_json(result)
+
         result = await browser_tools.download_url(ctx.rt, url, suggested_name)
         if isinstance(result, dict):
-            result = {**result, "tender_id": ctx.current_tender_id, "tender_dir": str(folder)}
-        trace(
-            ctx,
-            "download_url",
-            {"url": url, "suggested_name": suggested_name},
-            result,
-        )
+            result = {
+                **result,
+                "tender_id": ctx.current_tender_id,
+                "tender_dir": str(folder),
+            }
+            if result.get("ok"):
+                ctx.downloaded_urls.add(url)
+        trace(ctx, "download_url", args, result)
         return to_json(result)
 
     return StructuredTool.from_function(
         coroutine=download_url,
         name="download_url",
         description=(
-            "Скачать ФАЙЛ по прямому URL в папку ТЕКУЩЕГО тендера "
-            "(session/<tender_id>/), не в общую кучу.\n"
-            "КОГДА: после extract_tender_id + save_tender_overview + list_download_links "
-            "(kind=file).\n"
-            "АЛЬТЕРНАТИВА: click_xy(expect_download=true) для кнопки без URL "
-            "(тоже в папку текущего тендера).\n"
-            "НЕ передавать: HTML-страницы карточек, вкладки, футер, javascript:.\n"
-            "ВЕРНЁТ JSON: ok, message, file, tender_dir, bytes."
+            "Скачать файл по прямому URL в папку текущего тендера "
+            "(tenders/<platform>/<tender_id>/).\n"
+            f"Лимит: до {getattr(config, 'PLATFORM_MAX_FILES_PER_TENDER', 5)} файлов на тендер. "
+            "Авто-skip: уже скачанный URL или такое же имя на диске.\n"
+            "КОГДА: после save_tender_overview и list_download_links.\n"
+            "ВЕРНЁТ JSON: ok, skipped?, file, tender_dir, bytes."
         ),
         args_schema=DownloadUrlInput,
     )

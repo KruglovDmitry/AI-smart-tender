@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import importlib
+import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from .. import config
 
@@ -13,6 +15,9 @@ _logging = importlib.import_module("logging")
 
 _FILE_HANDLER: _logging.Handler | None = None
 _CURRENT_LOG_PATH: Path | None = None
+
+# Keys that blow up logs (base64 / huge blobs) — keep a size hint only.
+_BLOB_KEYS = frozenset({"image_b64", "vl", "screenshot_b64", "b64"})
 
 
 def agent_log_dir() -> Path:
@@ -78,18 +83,91 @@ def setup_agent_file_logging(run_tag: str | None = None) -> Path:
     return path
 
 
+def _safe_json(obj: Any) -> str:
+    try:
+        return json.dumps(obj, ensure_ascii=False, default=str)
+    except Exception:
+        return str(obj)
+
+
+def scrub_for_log(obj: Any) -> Any:
+    """Deep-copy-ish scrub: drop base64 blobs, keep everything else intact."""
+    if isinstance(obj, dict):
+        out: dict[str, Any] = {}
+        for k, v in obj.items():
+            if k in _BLOB_KEYS and isinstance(v, str) and len(v) > 200:
+                out[k] = f"[omitted len={len(v)}]"
+            else:
+                out[k] = scrub_for_log(v)
+        return out
+    if isinstance(obj, list):
+        return [scrub_for_log(x) for x in obj]
+    if isinstance(obj, str) and obj.startswith("data:image") and len(obj) > 200:
+        return f"[data:image omitted len={len(obj)}]"
+    return obj
+
+
 def log_tool_step(name: str, args: dict, result: object) -> None:
     if not config.AGENT_DEBUG_LOGS:
         return
     logger = _logging.getLogger("app.browser_agent.tools")
-    args_s = str(args)[:800]
-    if isinstance(result, dict):
-        slim = {k: v for k, v in result.items() if k not in {"vl", "image_b64", "text"}}
-        if "text" in result:
-            slim["text"] = str(result.get("text") or "")[:200]
-        if "value" in result:
-            slim["value"] = str(result.get("value"))[:400]
-        res_s = str(slim)[:1200]
-    else:
-        res_s = str(result)[:1200]
+    args_s = _safe_json(scrub_for_log(args if isinstance(args, dict) else {"_": args}))
+    res_s = _safe_json(scrub_for_log(result))
     logger.info("TOOL %s args=%s result=%s", name, args_s, res_s)
+
+
+def _content_for_log(content: Any) -> Any:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[Any] = []
+        for p in content:
+            if not isinstance(p, dict):
+                parts.append(scrub_for_log(p))
+                continue
+            ptype = p.get("type")
+            if ptype in {"image_url", "image"}:
+                url = ""
+                if isinstance(p.get("image_url"), dict):
+                    url = str(p["image_url"].get("url") or "")
+                elif isinstance(p.get("image_url"), str):
+                    url = p["image_url"]
+                parts.append({"type": ptype, "image_url": f"[omitted len={len(url)}]"})
+            else:
+                parts.append(scrub_for_log(p))
+        return parts
+    return scrub_for_log(content)
+
+
+def serialize_message_for_log(msg: Any) -> dict[str, Any]:
+    """LangChain message → JSON-friendly dict without image payloads."""
+    cls = type(msg).__name__
+    entry: dict[str, Any] = {
+        "type": cls,
+        "content": _content_for_log(getattr(msg, "content", None)),
+    }
+    tool_calls = getattr(msg, "tool_calls", None)
+    if tool_calls:
+        entry["tool_calls"] = scrub_for_log(tool_calls)
+    tc_id = getattr(msg, "tool_call_id", None)
+    if tc_id:
+        entry["tool_call_id"] = tc_id
+    name = getattr(msg, "name", None)
+    if name:
+        entry["name"] = name
+    return entry
+
+
+def log_messages(step_i: int, messages: list[Any], *, label: str = "messages") -> None:
+    """Dump full LangChain message list (images scrubbed) for one step."""
+    if not config.AGENT_DEBUG_LOGS:
+        return
+    logger = _logging.getLogger("app.browser_agent")
+    payload = [serialize_message_for_log(m) for m in messages]
+    logger.info(
+        "LANGCHAIN %s step=%s count=%s\n%s",
+        label,
+        step_i,
+        len(payload),
+        _safe_json(payload),
+    )

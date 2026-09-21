@@ -11,6 +11,7 @@ from urllib.parse import urljoin, urlparse
 
 from .. import config
 from .session import BrowserRuntime
+from .page_kind import detect_page_kind
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,17 @@ DOC_EXT_RE = re.compile(
 )
 DOC_HINT_RE = re.compile(
     r"(скачать|download|документ|файл|вложен|attach|documentation|спецификац)",
+    re.I,
+)
+DOC_PRIORITY_RE = re.compile(
+    r"контракт|договор|описан|технич|заявк|нмцк|обоснован|спецификац|"
+    r"тз\b|requirement|specification|proposal|contract|annex|приложен",
+    re.I,
+)
+# Generic noise (not platform-specific): analytics/traffic/legal chrome
+NOISE_LINK_RE = re.compile(
+    r"traffic|analytics|visit.?count|посещаем|cookie|mailto:|javascript:|"
+    r"user.?agreement|privacy|подписк|\brss\b|/rpt/",
     re.I,
 )
 
@@ -56,13 +68,31 @@ async def navigate(rt: BrowserRuntime, url: str) -> dict[str, Any]:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return _err("navigate", "URL must be http(s) with host")
     try:
-        await rt.page.goto(url, wait_until="domcontentloaded")
+        resp = await rt.page.goto(url, wait_until="domcontentloaded")
         await _settle(rt.page, short=False)
+        status = getattr(resp, "status", None) if resp is not None else None
+        kind_info = await detect_page_kind(rt)
+        title = kind_info.get("title") or ""
+        not_found = status == 404 or kind_info.get("page_kind") == "not_found"
+        if not_found:
+            return _err(
+                "navigate",
+                "Страница не найдена (404 / page_kind=not_found). "
+                "Не выдумывай URL — вернись на выдачу и navigate по exact href.",
+                url=rt.page.url,
+                title=title,
+                http_status=status,
+                not_found=True,
+                page_kind="not_found",
+                page_kind_reason=kind_info.get("page_kind_reason"),
+            )
         return _ok(
             "navigate",
-            f"Opened {rt.page.url}",
+            f"Opened {rt.page.url} (page_kind={kind_info.get('page_kind')})",
             url=rt.page.url,
-            title=await rt.page.title(),
+            title=title,
+            http_status=status,
+            **{k: v for k, v in kind_info.items() if k not in {"url", "title"}},
         )
     except Exception as e:
         return _err("navigate", str(e), url=rt.page.url)
@@ -112,6 +142,12 @@ async def click_xy(
 ) -> dict[str, Any]:
     page = rt.page
     try:
+        url_before = page.url
+        title_before = ""
+        try:
+            title_before = await page.title()
+        except Exception:
+            pass
         x, y, clamped = _clamp_xy(rt, x, y)
         clamp_note = f" (clamped to viewport)" if clamped else ""
         if expect_download:
@@ -124,6 +160,7 @@ async def click_xy(
             rel = str(dest)
             rt.downloaded_files.append(rel)
             await _settle(page)
+            kind_info = await detect_page_kind(rt)
             return _ok(
                 "click_xy",
                 f"Clicked ({x:.0f},{y:.0f}){clamp_note} and downloaded {fname}",
@@ -132,6 +169,8 @@ async def click_xy(
                 clamped=clamped,
                 file=rel,
                 url=page.url,
+                changed=True,
+                page_kind=kind_info.get("page_kind"),
             )
 
         ctx = page.context
@@ -154,6 +193,7 @@ async def click_xy(
                 pass
             rt.adopt(new_page)
             await _settle(rt.page)
+            kind_info = await detect_page_kind(rt)
             return _ok(
                 "click_xy",
                 f"Clicked ({x:.0f},{y:.0f}){clamp_note} -> new tab",
@@ -162,16 +202,25 @@ async def click_xy(
                 clamped=clamped,
                 url=rt.page.url,
                 new_tab=True,
+                changed=True,
+                page_kind=kind_info.get("page_kind"),
             )
 
         await _settle(page)
+        kind_info = await detect_page_kind(rt)
+        url_after = page.url
+        title_after = kind_info.get("title") or ""
+        changed = (url_after != url_before) or (title_after != title_before)
         return _ok(
             "click_xy",
-            f"Clicked ({x:.0f},{y:.0f}){clamp_note}",
+            f"Clicked ({x:.0f},{y:.0f}){clamp_note}"
+            + ("" if changed else " (URL/title unchanged — possible miss)"),
             x=x,
             y=y,
             clamped=clamped,
-            url=page.url,
+            url=url_after,
+            changed=changed,
+            page_kind=kind_info.get("page_kind"),
         )
     except Exception as e:
         return _err("click_xy", str(e), x=x, y=y, url=page.url)
@@ -322,23 +371,32 @@ async def list_download_links(rt: BrowserRuntime, limit: int = 40) -> dict[str, 
                 href = urljoin(base, href)
             score = 0
             if href and DOC_EXT_RE.search(href):
-                score += 3
+                score += 4
             if DOC_HINT_RE.search(text) or (href and DOC_HINT_RE.search(href)):
                 score += 2
+            if DOC_PRIORITY_RE.search(text):
+                score += 3
             if not href and DOC_HINT_RE.search(text):
                 score += 1
+            blob = f"{href} {text}"
+            if NOISE_LINK_RE.search(blob):
+                score -= 10
             if score <= 0:
                 continue
             key = href or f"text:{text}"
             if key in seen:
                 continue
             seen.add(key)
+            kind = "file" if (href and (DOC_EXT_RE.search(href) or "download" in href.lower() or "filestore" in href.lower() or "uid=" in href.lower())) else "other"
+            if NOISE_LINK_RE.search(blob):
+                kind = "noise"
             links.append(
                 {
                     "href": href or None,
                     "text": text,
                     "tag": item.get("tag"),
                     "score": score,
+                    "kind": kind,
                 }
             )
         links.sort(key=lambda x: (-x["score"], x.get("text") or ""))

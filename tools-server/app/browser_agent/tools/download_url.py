@@ -46,15 +46,29 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
     async def download_url(url: str, suggested_name: str | None = None) -> str:
         args = {"url": url, "suggested_name": suggested_name}
         if not ctx.current_tender_id:
-            result = {
-                "ok": False,
-                "action": "download_url",
-                "message": (
-                    "Нет активного тендера: сначала extract_tender_id / save_tender_overview"
-                ),
-            }
-            trace(ctx, "download_url", args, result)
-            return to_json(result)
+            # Browser-mode / без extract: взять id с текущего URL страницы
+            from .tender_id import resolve_tender_id
+
+            try:
+                page_url = str(ctx.rt.page.url or "")
+            except Exception:
+                page_url = ""
+            info = resolve_tender_id(page_url, platform=ctx.platform)
+            tid = str(info.get("tender_id") or "").strip()
+            if tid:
+                ctx.current_tender_id = tid
+                ctx.current_tender_url = page_url or ctx.current_tender_url
+            else:
+                result = {
+                    "ok": False,
+                    "action": "download_url",
+                    "message": (
+                        "Нет активного тендера: открой карточку (navigate) "
+                        "или вызови extract_tender_id / save_tender_overview"
+                    ),
+                }
+                trace(ctx, "download_url", args, result)
+                return to_json(result)
 
         folder = ensure_tender_workspace(
             ctx, ctx.current_tender_id, ctx.current_tender_url

@@ -127,6 +127,13 @@ class PlatformTaskBody(BaseModel):
             "(used by debug/integration scripts)."
         ),
     )
+    tools_mode: str | None = Field(
+        None,
+        description=(
+            "Tool set: 'full' (domain helpers) or 'browser' (low-level browser only, A/B). "
+            f"Default from PLATFORM_AGENT_MODE ({getattr(config, 'PLATFORM_AGENT_MODE', 'full')})."
+        ),
+    )
 
 
 class BrowserTaskBody(BaseModel):
@@ -294,6 +301,7 @@ async def api_run_platform_task(body: PlatformTaskBody):
             max_steps=body.max_steps,
             download_subdir=body.download_subdir,
             instruction=body.instruction,
+            tools_mode=body.tools_mode,
         )
     except ImportError as e:
         raise HTTPException(

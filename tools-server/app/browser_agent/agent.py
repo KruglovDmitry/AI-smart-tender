@@ -15,7 +15,13 @@ from .. import config
 from ..browser_tool import tools as browser_tools
 from ..browser_tool.session import browser_runtime
 from .logging import current_agent_log_path, log_messages, setup_agent_file_logging
-from .tools import SeenTenderStore, build_langchain_tools, make_context, platform_from_url
+from .tools import (
+    SeenTenderStore,
+    build_langchain_tools,
+    make_context,
+    normalize_tools_mode,
+    platform_from_url,
+)
 from .tools._common import PlatformAgentContext, platform_notes_digest
 
 logger = logging.getLogger(__name__)
@@ -66,6 +72,30 @@ navigate, screenshot, click_xy, type_text, press_key, scroll, wait,
 get_page_text, inspect_page_nav, list_download_links, download_url, collect_card_urls,
 extract_tender_id, check_tender_seen, filter_unseen_tenders, save_tender_overview,
 mark_tender_seen, finish_platform_task.
+"""
+
+SYSTEM_PROMPT_BROWSER = """Ты — агент, который управляет браузером ТОЛЬКО низкоуровневыми действиями.
+
+Режим оценки: доменных helpers (collect_card_urls, filter_unseen, inspect_page_nav,
+save_tender_overview, mark_tender_seen и т.п.) НЕТ. Всё делаешь сам через клики, ввод, scroll,
+navigate по URL, которые видишь в get_page_text / list_download_links / screenshot.
+
+Ты multimodal: после screenshot картинка приходит тебе в следующем сообщении.
+
+**ПРАВИЛА:**
+- Не выдумывай URL. Копируй href из tool results / текста страницы как есть.
+- Имея href — navigate(href), не собирай путь из id.
+- screenshot — перед type_text/click_xy; для проверки текста предпочитай get_page_text.
+- click_xy: если changed=false — промах.
+- finish_platform_task — один раз в конце (tool call).
+
+**ЗАДАЧА (типично):** поиск по keywords на platform_url → открыть несколько карточек →
+скачать документы (list_download_links / download_url или click expect_download) →
+finish с summary (сколько обработал, пути файлов).
+
+**ИНСТРУМЕНТЫ:**
+navigate, screenshot, click_xy, type_text, press_key, scroll, wait,
+get_page_text, list_download_links, download_url, finish_platform_task.
 """
 
 
@@ -224,6 +254,7 @@ async def run_multimodal_tool_loop(
     keywords: str,
     max_new: int,
     max_steps: int,
+    system_prompt: str | None = None,
 ) -> str:
     """
     Один multimodal ChatOpenAI + tools.
@@ -231,9 +262,10 @@ async def run_multimodal_tool_loop(
     """
     llm = _build_llm().bind_tools(tools)
     tools_by_name = {t.name: t for t in tools}
+    sys_text = system_prompt or SYSTEM_PROMPT
 
     messages: list[Any] = [
-        SystemMessage(content=SYSTEM_PROMPT),
+        SystemMessage(content=sys_text),
         HumanMessage(
             content=(
                 "ТЕХНИЧЕСКАЯ ИНФОРМАЦИЯ:\n"
@@ -347,12 +379,12 @@ async def run_platform_task(
     max_steps: int | None = None,
     download_subdir: str | None = None,
     instruction: str | None = None,
+    tools_mode: str | None = None,
 ) -> dict[str, Any]:
     """
     Multimodal tool-calling loop:
     - AGENT_LLM_MODEL вызывает tools и сам смотрит screenshot (image в messages)
-    - отдельный AGENT_VL_MODEL / analyze_screenshot не используется
-    - SQLite dedup
+    - tools_mode: full (доменные helpers) | browser (только низкоуровневые browser tools)
     - instruction — опциональный override user-запроса
     """
     platform_url = (platform_url or "").strip()
@@ -366,6 +398,9 @@ async def run_platform_task(
 
     max_new = max_new_tenders or config.PLATFORM_MAX_NEW_TENDERS
     max_steps = max_steps or config.PLATFORM_MAX_STEPS
+    mode = normalize_tools_mode(
+        tools_mode if tools_mode is not None else getattr(config, "PLATFORM_AGENT_MODE", "full")
+    )
 
     # Подсессия = имя площадки (host), напр. tenders/zakupki_gov_ru/<tender_id>/
     plat = "".join(
@@ -383,17 +418,27 @@ async def run_platform_task(
 
     store = SeenTenderStore(config.SEEN_TENDERS_DB)
 
-    agent_log_path = setup_agent_file_logging(run_tag=session_name)
+    agent_log_path = setup_agent_file_logging(run_tag=f"{session_name}-{mode}")
 
-    user_input = (instruction or "").strip() or (
-        f"Перейди на платформу и найди НОВЫЕ актуальные тендеры по ключевым словам, "
-        f"скачай документацию. Лимит новых: {max_new}. "
-        f"На выдаче: collect_card_urls → filter_unseen → при new=0 inspect_page_nav → "
-        f"navigate(exact href / suggested_next_url). Не выдумывай URL. "
-        f"looks_stale → mark_tender_seen(count_toward_limit=false). "
-        f"Иначе save_tender_overview → документы со страницы → mark_tender_seen. "
-        f"В конце finish_platform_task."
-    )
+    if mode == "browser":
+        user_input = (instruction or "").strip() or (
+            f"Режим browser-only. Найди и обработай до {max_new} закупок по «{keywords}»: "
+            f"поиск на UI, открой карточки через navigate(exact href из get_page_text/"
+            f"list_download_links), скачай документы, finish_platform_task. "
+            f"Без доменных helpers — только клики/ввод/navigate/download."
+        )
+        system_prompt = SYSTEM_PROMPT_BROWSER
+    else:
+        user_input = (instruction or "").strip() or (
+            f"Перейди на платформу и найди НОВЫЕ актуальные тендеры по ключевым словам, "
+            f"скачай документацию. Лимит новых: {max_new}. "
+            f"На выдаче: collect_card_urls → filter_unseen → при new=0 inspect_page_nav → "
+            f"navigate(exact href / suggested_next_url). Не выдумывай URL. "
+            f"looks_stale → mark_tender_seen(count_toward_limit=false). "
+            f"Иначе save_tender_overview → документы со страницы → mark_tender_seen. "
+            f"В конце finish_platform_task."
+        )
+        system_prompt = SYSTEM_PROMPT
     if "finish_platform_task" not in user_input:
         user_input += " В конце обязательно вызови finish_platform_task."
 
@@ -410,14 +455,17 @@ async def run_platform_task(
         )
         ctx.trace.append({"tool": "navigate", "args": {"url": platform_url}, "result": nav})
 
-        tools = build_langchain_tools(ctx)
+        tools = build_langchain_tools(ctx, mode=mode)
 
         logger.info(
-            "platform multimodal loop start platform=%s keywords=%s max_iter=%s model=%s",
+            "platform multimodal loop start platform=%s keywords=%s max_iter=%s "
+            "model=%s tools_mode=%s tools=%s",
             ctx.platform,
             keywords,
             max_steps,
             config.AGENT_LLM_MODEL,
+            mode,
+            [t.name for t in tools],
         )
 
         output_text = await run_multimodal_tool_loop(
@@ -428,6 +476,7 @@ async def run_platform_task(
             keywords=keywords,
             max_new=max_new,
             max_steps=max_steps,
+            system_prompt=system_prompt,
         )
 
         files = list(rt.downloaded_files)
@@ -460,6 +509,8 @@ async def run_platform_task(
         "vl_enabled": config.AGENT_VL_ENABLED,
         "vl_mode": "inline_multimodal",
         "agent_framework": "langchain.multimodal_tool_loop",
+        "tools_mode": mode,
+        "tools": [t.name for t in tools],
         "agent_log_path": str(agent_log_path or current_agent_log_path() or ""),
         "max_steps": max_steps,
     }

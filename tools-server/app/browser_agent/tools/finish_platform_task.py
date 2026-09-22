@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
@@ -21,54 +23,53 @@ class FinishInput(BaseModel):
     )
 
 
+def _is_search_only(task_hint: str) -> bool:
+    hint_l = (task_hint or "").lower()
+    return any(
+        x in hint_l
+        for x in ("сценарий 2", "не открывай карточ", "не открывай карточки", "только поиск")
+    )
+
+
+def resolve_finish_success(
+    requested_success: bool,
+    *,
+    processed_tenders: list[Any] | None,
+    downloaded_files: list[Any] | None,
+    task_hint: str = "",
+    summary: str = "",
+) -> tuple[bool, str]:
+    """
+    Structural success gate: success=True only with facts or search_only hint.
+    Never upgrades success=False to True. Does not parse summary prose for claims.
+    """
+    summary = summary or ""
+    if not requested_success:
+        return False, summary
+
+    has_facts = bool(processed_tenders) or bool(downloaded_files)
+    if has_facts:
+        return True, summary
+    if _is_search_only(task_hint):
+        return True, summary
+
+    rejected = (
+        "ОТКЛОНЕНО авто-проверкой: success=true без processed_tenders и без downloaded_files. "
+        f"Было: {summary}"
+    )
+    return False, rejected
+
+
 def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
     async def finish_platform_task(summary: str, success: bool = True) -> str:
         current_url = ctx.rt.page.url or ""
-        url_l = current_url.lower()
-        sum_l = (summary or "").lower()
-        hint_l = (ctx.task_hint or "").lower()
-        on_listing = "results.html" in url_l or "extendedsearch" in url_l
-        # сценарий «только поиск» — finish на выдаче нормален
-        search_only = any(
-            x in hint_l
-            for x in ("сценарий 2", "не открывай карточ", "не открывай карточки", "только поиск")
+        success, summary = resolve_finish_success(
+            success,
+            processed_tenders=ctx.processed_tenders,
+            downloaded_files=list(ctx.rt.downloaded_files),
+            task_hint=ctx.task_hint or "",
+            summary=summary,
         )
-        denies_opening = any(
-            x in sum_l
-            for x in (
-                "не открыв",
-                "не открывал",
-                "карточки не",
-                "карточку не",
-                "без открыт",
-                "не качал",
-                "не скачив",
-            )
-        )
-        # ловим только явную претензию, что карточка уже открыта/обработана
-        claims_opened_card = (not denies_opening) and any(
-            x in sum_l
-            for x in (
-                "notice/",
-                "открыта карточ",
-                "открыл карточ",
-                "открыта первая",
-                "обработана карточ",
-                "обработан тендер",
-            )
-        )
-        if (
-            success
-            and on_listing
-            and claims_opened_card
-            and not search_only
-            and "notice" not in url_l
-        ):
-            success = False
-            summary = (
-                f"ОТКЛОНЕНО авто-проверкой: success=true при URL выдачи ({current_url}). "
-                f"Сначала navigate на карточку и подтверди смену URL. Было: {summary}"
-            )
 
         ctx.done = True
         ctx.final_summary = summary
@@ -96,9 +97,8 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
             "(не пиши «готово» текстом без вызова).\n"
             "КОГДА: лимит новых обработан ИЛИ кандидаты исчерпаны ИЛИ блокер (login/captcha/403). "
             "Вызывай ОДИН раз.\n"
-            "success=true — только при подтверждённых критериях (URL выдачи/карточки, файлы, "
-            "processed_tenders). Иначе success=false с причиной. "
-            "Нельзя success=true про карточку, если url в ответе всё ещё выдача/поиск.\n"
+            "success=true — только при подтверждённых фактах: processed_tenders и/или "
+            "downloaded_files (или явный search-only сценарий). Иначе success=false.\n"
             "АЛЬТЕРНАТИВА: нет. Не заменяет mark_tender_seen / download_url.\n"
             "ВЕРНЁТ JSON: success, message, new_tenders_processed, processed_tenders, "
             "downloaded_files, url, done=true. return_direct — цикл агента останавливается."

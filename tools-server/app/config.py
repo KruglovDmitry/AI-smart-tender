@@ -66,6 +66,8 @@ PLATFORM_MAX_STEPS = int(os.getenv("PLATFORM_MAX_STEPS", "90"))
 PLATFORM_MAX_NEW_TENDERS = int(os.getenv("PLATFORM_MAX_NEW_TENDERS", "3"))
 # Max document files to download per tender (priority docs; skip junk/wrappers)
 PLATFORM_MAX_FILES_PER_TENDER = int(os.getenv("PLATFORM_MAX_FILES_PER_TENDER", "5"))
+# full = domain helpers (collect/filter/overview/…); browser = only low-level browser tools
+PLATFORM_AGENT_MODE = os.getenv("PLATFORM_AGENT_MODE", "full").strip().lower()
 SEEN_TENDERS_DB = Path(
     os.getenv("SEEN_TENDERS_DB", str(DATA_ROOT / "_state" / "seen_tenders.sqlite3"))
 ).resolve()

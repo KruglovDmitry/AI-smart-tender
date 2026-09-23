@@ -47,6 +47,12 @@ async def browser_runtime(
             headless=config.BROWSER_HEADLESS,
             accept_downloads=True,
             locale="ru-RU",
+            # Modern Chrome UA — Rosatom SPA rejects "outdated" Playwright default.
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            ),
             viewport={
                 "width": config.BROWSER_VIEWPORT_WIDTH,
                 "height": config.BROWSER_VIEWPORT_HEIGHT,

@@ -528,6 +528,30 @@ def _guess_ext_from_bytes(body: bytes, content_type: str = "") -> str:
     return ""
 
 
+def _host_allowed_for_download(rt: BrowserRuntime, url: str) -> bool:
+    """SSRF: only same registrable host as current page (or its subdomains / filestore)."""
+    target = (urlparse(url).netloc or "").lower()
+    if target.startswith("www."):
+        target = target[4:]
+    if not target:
+        return False
+    try:
+        page_host = (urlparse(rt.page.url or "").netloc or "").lower()
+    except Exception:
+        page_host = ""
+    if page_host.startswith("www."):
+        page_host = page_host[4:]
+    if not page_host:
+        return True  # no page context yet — allow (caller should navigate first)
+    if target == page_host or target.endswith("." + page_host):
+        return True
+    # common filestore / CDN pattern for same brand
+    base = page_host.split(".", 1)[-1] if page_host.count(".") >= 1 else page_host
+    if base and (target == base or target.endswith("." + base)):
+        return True
+    return False
+
+
 async def download_url(
     rt: BrowserRuntime,
     url: str,
@@ -538,6 +562,12 @@ async def download_url(
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"}:
         return _err("download_url", "Only http(s) URLs allowed")
+    if not _host_allowed_for_download(rt, url):
+        return _err(
+            "download_url",
+            f"SSRF blocked: host {parsed.netloc!r} not allowed for current page",
+            url=url,
+        )
     try:
         # Prefer browser context cookies/auth
         resp = await rt.page.request.get(url, timeout=120_000)

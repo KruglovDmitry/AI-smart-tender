@@ -24,8 +24,11 @@ class DownloadUrlInput(BaseModel):
 def _count_files_in_dir(folder: Path) -> int:
     if not folder.exists():
         return 0
-    return sum(1 for p in folder.iterdir() if p.is_file() and p.name != "overview.json")
-
+    return sum(
+        1
+        for p in folder.iterdir()
+        if p.is_file() and p.name not in {"overview.json", "manifest.json"}
+    )
 
 def _existing_match(folder: Path, suggested_name: str | None) -> Path | None:
     if not folder.exists() or not suggested_name:
@@ -130,6 +133,24 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
             }
             if result.get("ok"):
                 ctx.downloaded_urls.add(url)
+                try:
+                    from ...domain import manifest as manifest_mod
+
+                    file_path = str(result.get("file") or "")
+                    manifest_mod.append_file(
+                        folder,
+                        name=Path(file_path).name if file_path else (suggested_name or "document"),
+                        sha256=str(result.get("sha256") or ""),
+                        bytes_count=int(result.get("bytes") or 0),
+                        source_url=str(result.get("source_url") or url),
+                        content_type=str(result.get("content_type") or ""),
+                        tender_id=str(ctx.current_tender_id or ""),
+                        platform=ctx.platform,
+                        tender_url=str(ctx.current_tender_url or ""),
+                    )
+                    result["manifest"] = str(manifest_mod.manifest_path(folder))
+                except Exception as e:
+                    result["manifest_error"] = str(e)[:200]
         trace(ctx, "download_url", args, result)
         return to_json(result)
 

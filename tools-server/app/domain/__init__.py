@@ -1,1 +1,5 @@
-"""Tender domain: dedup, workspace, overview, manifest (Phase 3+)."""
+"""Tender domain package."""
+
+from . import dedup, manifest, workspace
+
+__all__ = ["dedup", "manifest", "workspace"]

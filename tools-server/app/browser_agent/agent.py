@@ -428,18 +428,29 @@ async def run_platform_task(
             f"Без доменных helpers — только клики/ввод/navigate/download."
         )
         system_prompt = SYSTEM_PROMPT_BROWSER
+    elif mode == "platform":
+        from ..agent.prompt import SYSTEM_PROMPT_PLATFORM
+
+        user_input = (instruction or "").strip() or (
+            f"Площадка {platform_url}. Keywords: «{keywords}». Лимит новых: {max_new}. "
+            f"Happy-path: open_platform_search → list_new_cards → open_tender → "
+            f"save_overview → list_tender_documents → download_document → mark_processed → "
+            f"finish. DOM-first; locate_on_screen только если DOM пуст."
+        )
+        system_prompt = SYSTEM_PROMPT_PLATFORM
+        if "finish" not in user_input.lower():
+            user_input += " В конце вызови finish или finish_platform_task."
     else:
         user_input = (instruction or "").strip() or (
             f"Перейди на платформу и найди НОВЫЕ актуальные тендеры по ключевым словам, "
             f"скачай документацию. Лимит новых: {max_new}. "
-            f"На выдаче: collect_card_urls → filter_unseen → при new=0 inspect_page_nav → "
-            f"navigate(exact href / suggested_next_url). Не выдумывай URL. "
-            f"looks_stale → mark_tender_seen(count_toward_limit=false). "
-            f"Иначе save_tender_overview → документы со страницы → mark_tender_seen. "
+            f"Предпочитай high-level: open_platform_search / list_new_cards / open_tender / "
+            f"list_tender_documents / download_document / mark_processed. "
+            f"Или legacy: collect_card_urls → filter_unseen. Не выдумывай URL. "
             f"В конце finish_platform_task."
         )
         system_prompt = SYSTEM_PROMPT
-    if "finish_platform_task" not in user_input:
+    if mode != "platform" and "finish_platform_task" not in user_input:
         user_input += " В конце обязательно вызови finish_platform_task."
 
     async with browser_runtime(downloads_dir=downloads) as rt:

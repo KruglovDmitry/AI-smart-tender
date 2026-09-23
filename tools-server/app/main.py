@@ -24,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from . import config
+from .api.routes import router as api_router
 from .document_tool import list_directory, read_document, read_folder_documents
 from .web_tool import fetch_page
 
@@ -53,6 +54,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(api_router)
 
 
 class ReadDocumentBody(BaseModel):
@@ -130,8 +133,8 @@ class PlatformTaskBody(BaseModel):
     tools_mode: str | None = Field(
         None,
         description=(
-            "Tool set: 'full' (domain helpers) or 'browser' (low-level browser only, A/B). "
-            f"Default from PLATFORM_AGENT_MODE ({getattr(config, 'PLATFORM_AGENT_MODE', 'full')})."
+            "Tool set: 'full' | 'browser' | 'platform' (adapter high-level). "
+            f"Default PLATFORM_AGENT_MODE ({getattr(config, 'PLATFORM_AGENT_MODE', 'full')})."
         ),
     )
 
@@ -161,31 +164,7 @@ class BrowserTaskBody(BaseModel):
     )
 
 
-@app.get("/health", summary="Health check")
-def health():
-    return {
-        "status": "ok",
-        "data_root": str(config.DATA_ROOT),
-        "browser_agent": {
-            "llm_configured": bool(
-                config.AGENT_LLM_BASE_URL and config.AGENT_LLM_API_KEY
-            ),
-            "model": config.AGENT_LLM_MODEL,
-            "vl_model": config.AGENT_VL_MODEL,
-            "vl_enabled": config.AGENT_VL_ENABLED,
-            "headless": config.BROWSER_HEADLESS,
-        },
-        "platform_agent": {
-            "llm_configured": bool(
-                config.AGENT_LLM_BASE_URL and config.AGENT_LLM_API_KEY
-            ),
-            "model": config.AGENT_LLM_MODEL,
-            "vl_model": config.AGENT_VL_MODEL,
-            "max_steps": config.PLATFORM_MAX_STEPS,
-            "max_new_tenders": config.PLATFORM_MAX_NEW_TENDERS,
-            "seen_tenders_db": str(config.SEEN_TENDERS_DB),
-        },
-    }
+
 
 
 @app.get(
@@ -279,41 +258,6 @@ def api_fetch_url(body: FetchUrlBody):
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Fetch failed: {e}") from e
-
-
-@app.post(
-    "/run_platform_task",
-    summary="Monitor a tender platform by keywords (LangChain agent)",
-    description=(
-        "LangChain agent: navigate platform, search by keywords, deduplicate via SQLite, "
-        "open new tender cards and download documentation. Uses one multimodal model "
-        "(AGENT_LLM_MODEL) for tool-calling; screenshots are attached inline (no separate VL call)."
-    ),
-)
-async def api_run_platform_task(body: PlatformTaskBody):
-    try:
-        from .browser_agent.agent import run_platform_task
-
-        return await run_platform_task(
-            platform_url=body.platform_url,
-            keywords=body.keywords,
-            max_new_tenders=body.max_new_tenders,
-            max_steps=body.max_steps,
-            download_subdir=body.download_subdir,
-            instruction=body.instruction,
-            tools_mode=body.tools_mode,
-        )
-    except ImportError as e:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Platform agent dependencies missing: {e}",
-        ) from e
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e)) from e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Platform agent failed: {e}") from e
 
 
 @app.post(

@@ -6,9 +6,11 @@ from urllib.parse import urlparse
 
 from .base import GenericAdapter, PlatformAdapter, host_of
 from .zakupki_gov_ru import ZakupkiGovRuAdapter
+from .zakupki_rosatom_ru import ZakupkiRosatomRuAdapter
 
 _ADAPTERS: list[PlatformAdapter] = [
     ZakupkiGovRuAdapter(),
+    ZakupkiRosatomRuAdapter(),
 ]
 _GENERIC = GenericAdapter()
 

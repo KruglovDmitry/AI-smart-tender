@@ -215,6 +215,19 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        try:
+            from ...domain import manifest as manifest_mod
+
+            manifest_mod.upsert_overview_fields(
+                folder,
+                {
+                    **payload,
+                    "platform": ctx.platform,
+                    "tender_id": tender_id,
+                },
+            )
+        except Exception:
+            pass
         result = {
             "ok": True,
             "action": "save_tender_overview",

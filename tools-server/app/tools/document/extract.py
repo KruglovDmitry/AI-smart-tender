@@ -13,7 +13,7 @@ from typing import Any
 
 import ftfy
 
-from ..config import ALLOWED_EXTENSIONS
+from ...config import ALLOWED_EXTENSIONS
 
 log = logging.getLogger(__name__)
 

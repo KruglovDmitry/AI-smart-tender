@@ -1,0 +1,25 @@
+[
+  {"id": "h01_normal_btn", "scenario": "ordinary_button", "source": "fixture", "fixture": "hard_cases.html", "goal": "Кнопка Документы", "selector": "#normal-btn", "expected_element": "button#normal-btn Документы"},
+  {"id": "h02_tiny_btn", "scenario": "tiny_button", "source": "fixture", "fixture": "hard_cases.html", "goal": "Маленькая кнопка закрытия ×", "selector": "#tiny", "expected_element": "button#tiny"},
+  {"id": "h03_icon_only", "scenario": "icon_no_text", "source": "fixture", "fixture": "hard_cases.html", "goal": "Иконка уведомлений (колокольчик)", "selector": "#icon-only", "expected_element": "button#icon-only"},
+  {"id": "h04_link", "scenario": "link", "source": "fixture", "fixture": "hard_cases.html", "goal": "Ссылка Скачать PDF", "selector": "#dl-link", "expected_element": "a#dl-link"},
+  {"id": "h05_checkbox", "scenario": "checkbox", "source": "fixture", "fixture": "hard_cases.html", "goal": "Чекбокс Только актуальные", "selector": "#chk", "expected_element": "input#chk"},
+  {"id": "h06_dropdown", "scenario": "dropdown", "source": "fixture", "fixture": "hard_cases.html", "goal": "Выпадающий список Статус", "selector": "#dropdown", "expected_element": "select#dropdown"},
+  {"id": "h07_pagination_next", "scenario": "pagination_next", "source": "fixture", "fixture": "hard_cases.html", "goal": "Кнопка Следующая", "selector": "#page-next", "expected_element": "button#page-next"},
+  {"id": "h08_download_ambiguous", "scenario": "ambiguous_similar", "source": "fixture", "fixture": "hard_cases.html", "goal": "Кнопка Скачать (первая основная, не ссылка PDF)", "selector": "#dl-main", "expected_element": "button#dl-main"},
+  {"id": "h09_table_row", "scenario": "table_cell_action", "source": "fixture", "fixture": "hard_cases.html", "goal": "Кнопка Открыть в первой строке таблицы", "selector": "#row-action-1", "expected_element": "button#row-action-1"},
+  {"id": "h10_long_table", "scenario": "long_table_scroll", "source": "fixture", "fixture": "hard_cases.html", "goal": "Кнопка Выбрать строку 20 в длинной таблице", "selector": "#long-row-20", "expected_element": "button#long-row-20", "setup_js": "document.getElementById('long-row-20').scrollIntoView({block:'center'})"},
+  {"id": "h11_below_fold", "scenario": "after_scroll", "source": "fixture", "fixture": "hard_cases.html", "goal": "Кнопка после scroll", "selector": "#late-btn", "expected_element": "button#late-btn", "setup_js": "document.getElementById('late-btn').scrollIntoView({block:'center'})"},
+  {"id": "h12_modal", "scenario": "modal", "source": "fixture", "fixture": "hard_cases.html", "goal": "Кнопка Да, удалить в модальном окне", "selector": "#modal-ok", "expected_element": "button#modal-ok", "setup_js": "document.getElementById('modal-backdrop').classList.add('open')"},
+  {"id": "h13_toolbar", "scenario": "complex_toolbar", "source": "fixture", "fixture": "hard_cases.html", "goal": "Кнопка Экспорт в тулбаре", "selector": "#tb-export", "expected_element": "button#tb-export"},
+  {"id": "h14_spa_dynamic", "scenario": "spa_after_load", "source": "fixture", "fixture": "hard_cases.html", "goal": "Динамическая кнопка SPA", "selector": "#spa-dyn", "expected_element": "button#spa-dyn", "setup_js": "document.getElementById('load-spa').click();", "wait_ms": 700},
+  {"id": "h15_not_found", "scenario": "element_absent", "source": "fixture", "fixture": "hard_cases.html", "goal": "Кнопка Оплатить счёт (такой нет на экране)", "expect_not_found": true, "expected_element": null},
+
+  {"id": "e01_search_btn", "scenario": "ordinary_button", "source": "fixture", "fixture": "eis_like.html", "goal": "Кнопка Найти", "selector": "#search-btn", "expected_element": "button#search-btn"},
+  {"id": "e02_tab_docs", "scenario": "tab", "source": "fixture", "fixture": "eis_like.html", "goal": "Вкладка Документы", "selector": "#tab-docs", "expected_element": "button#tab-docs"},
+  {"id": "e03_next", "scenario": "pagination_next", "source": "fixture", "fixture": "eis_like.html", "goal": "Кнопка Следующая", "selector": "#page-next", "expected_element": "button#page-next"},
+  {"id": "e04_download", "scenario": "download", "source": "fixture", "fixture": "eis_like.html", "goal": "Ссылка Скачать документацию", "selector": "#download", "expected_element": "a#download", "setup_js": "document.getElementById('docs-panel').classList.add('visible')"},
+  {"id": "r01_search", "scenario": "ordinary_button", "source": "fixture", "fixture": "rosatom_like.html", "goal": "Кнопка Искать", "selector": "#rosatom-search", "expected_element": "button#rosatom-search"},
+
+  {"id": "live_eis_next", "scenario": "real_eis_pagination", "source": "live", "platform": "zakupki.gov.ru", "url": "https://zakupki.gov.ru/epz/order/extendedsearch/results.html?searchString=%D0%BA%D0%B0%D0%BD%D1%86%D1%82%D0%BE%D0%B2%D0%B0%D1%80%D1%8B&pageNumber=1&recordsPerPage=_10", "goal": "Кнопка или ссылка следующей страницы", "selector_candidates": ["a.paginator-button-next", "a:has-text('Следующая')"], "expected_element": "paginator next", "optional": true}
+]

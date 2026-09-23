@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..config import ALLOWED_EXTENSIONS, DATA_ROOT
+from ...config import ALLOWED_EXTENSIONS, DATA_ROOT
 from .extract import TEXT_EXTENSIONS, extract_file
 
 

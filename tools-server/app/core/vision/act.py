@@ -118,6 +118,49 @@ async def click_on_screen(
     nav_or_click_ok = False
     note = grounded.note or ""
 
+    # Model explicitly said element absent — do not click a guessed point
+    if getattr(grounded, "action", None) == "not_found" and not candidates:
+        result = {
+            "ok": False,
+            "action": "not_found",
+            "validation": None,
+            "element": None,
+            "changed": False,
+            "url": url_before,
+            "page_kind": kind_before,
+            "note": note or "vision: not_found",
+            "backend": grounded.backend,
+            "model": grounded.model,
+            "latency_ms": grounded.latency_ms,
+        }
+        if run_id:
+            step = next_step(run_id)
+            if step is not None:
+                write_sample(
+                    run_id=run_id,
+                    step=step,
+                    image_b64=image_b64,
+                    meta={
+                        "platform": platform,
+                        "url": url_before,
+                        "page_kind": kind_before,
+                        "goal": goal,
+                        "backend": grounded.backend,
+                        "model": grounded.model,
+                        "viewport": list(vp),
+                        "candidates": [],
+                        "chosen": None,
+                        "validation": None,
+                        "action": "not_found",
+                        "changed": False,
+                        "latency_ms": grounded.latency_ms,
+                        "auto_label": None,
+                        "label": None,
+                        "raw_response": getattr(grounded, "raw_response", "") or "",
+                    },
+                )
+        return result
+
     for cand in candidates:
         validation = await validate_point(rt, cand.x, cand.y, goal)
         status = validation.get("status")

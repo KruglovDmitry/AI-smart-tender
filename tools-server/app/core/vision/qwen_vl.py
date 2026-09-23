@@ -212,12 +212,14 @@ class QwenVLBackend:
             found = True
         return GroundingResult(
             found=found,
+            action="click" if found and candidates else "none",
             candidates=candidates,
             backend=self.name,
             model=model,
             note=str(raw.get("note") or ""),
             latency_ms=latency_ms,
             raw=raw if isinstance(raw, dict) else None,
+            raw_response=content if isinstance(content, str) else "",
         )
 
     async def inspect(

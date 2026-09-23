@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>Росатом-подобная SPA фикстура</title>
+  <style>
+    body { margin: 0; font-family: "Segoe UI", sans-serif; background: #0b1e33; color: #e8eef5; }
+    .top { background: #123150; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; }
+    .brand { font-size: 18px; font-weight: 600; }
+    .search { margin: 40px auto; width: 640px; background: #1a3a5c; padding: 24px; border-radius: 8px; }
+    .search label { display: block; margin-bottom: 8px; color: #9bb; }
+    #rosatom-q { width: 100%; height: 42px; padding: 0 12px; border: 1px solid #3a6; border-radius: 4px; font-size: 15px; }
+    #rosatom-search { margin-top: 12px; height: 42px; width: 100%; background: #00a3e0; border: none; color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; border-radius: 4px; }
+    .list { width: 720px; margin: 0 auto 40px; }
+    .item { background: #152a42; margin-top: 10px; padding: 14px 16px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }
+    .item a { color: #7ec8ff; text-decoration: none; font-weight: 600; }
+    #rosatom-next { margin: 16px auto; display: block; padding: 10px 20px; background: #2a4; border: none; color: #fff; cursor: pointer; border-radius: 4px; }
+    #status { position: fixed; left: 12px; bottom: 12px; background: #000a; padding: 6px 10px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <div class="brand" id="rosatom-logo">Закупки Росатома</div>
+    <button type="button" id="rosatom-login" style="background:#456;color:#fff;border:none;padding:8px 14px;cursor:pointer;border-radius:4px;">Войти</button>
+  </div>
+  <div class="search">
+    <label for="rosatom-q">Поиск закупок</label>
+    <input id="rosatom-q" placeholder="Например: канцтовары" />
+    <button type="button" id="rosatom-search">Искать</button>
+  </div>
+  <div class="list" id="rosatom-list">
+    <div class="item">
+      <a id="rosatom-card-1" href="#card1">Поставка СИЗ для АЭС</a>
+      <span>до 15.10.2026</span>
+    </div>
+    <div class="item">
+      <a id="rosatom-card-2" href="#card2">Офисная мебель</a>
+      <span>до 01.11.2026</span>
+    </div>
+    <button type="button" id="rosatom-next">Показать ещё</button>
+  </div>
+  <div id="status">idle</div>
+  <script>
+    document.getElementById('rosatom-search').onclick = () => {
+      document.getElementById('status').textContent = 'search:' + document.getElementById('rosatom-q').value;
+    };
+    document.getElementById('rosatom-next').onclick = () => {
+      document.getElementById('status').textContent = 'more';
+    };
+    document.getElementById('rosatom-card-1').onclick = (e) => {
+      e.preventDefault();
+      document.getElementById('status').textContent = 'card1';
+    };
+    document.getElementById('rosatom-login').onclick = () => {
+      document.getElementById('status').textContent = 'login';
+    };
+  </script>
+</body>
+</html>

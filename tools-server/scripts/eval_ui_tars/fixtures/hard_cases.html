@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>Hard grounding cases</title>
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; background: #f0f2f5; }
+    .toolbar { background: #1a2b4a; color: #fff; padding: 8px 12px; display: flex; gap: 8px; align-items: center; }
+    .toolbar button, .toolbar .icon-btn { background: #345; border: 1px solid #567; color: #fff; padding: 4px 8px; cursor: pointer; }
+    .icon-btn { width: 28px; height: 28px; padding: 0; font-size: 14px; }
+    .row { display: flex; gap: 16px; padding: 16px; }
+    .panel { background: #fff; border: 1px solid #ccd; padding: 12px; flex: 1; }
+    #tiny { font-size: 10px; padding: 1px 4px; height: 16px; line-height: 14px; }
+    #icon-only { background: none; border: none; cursor: pointer; font-size: 18px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border: 1px solid #ccd; padding: 6px 8px; text-align: left; }
+    #long-wrap { height: 220px; overflow: auto; border: 1px solid #ccd; background: #fff; }
+    #long-table tr:nth-child(20) td { background: #ffe8a3; }
+    #below-fold { margin-top: 900px; padding: 20px; background: #fff; border: 1px solid #99a; }
+    #modal-backdrop { display: none; position: fixed; inset: 0; background: #0008; align-items: center; justify-content: center; }
+    #modal-backdrop.open { display: flex; }
+    #modal { background: #fff; padding: 20px; width: 360px; border-radius: 6px; }
+    #spa-slot { min-height: 40px; margin-top: 8px; }
+    #status { position: fixed; right: 8px; bottom: 8px; background: #222; color: #fff; padding: 4px 8px; font-size: 11px; }
+    .lookalike { display: flex; gap: 12px; margin-top: 8px; }
+    .lookalike button { padding: 8px 14px; }
+  </style>
+</head>
+<body>
+  <div class="toolbar" id="toolbar">
+    <span>Toolbar</span>
+    <button type="button" id="tb-save">Сохранить</button>
+    <button type="button" id="tb-export">Экспорт</button>
+    <button type="button" id="tb-settings" class="icon-btn" title="Настройки">⚙</button>
+    <button type="button" id="icon-only" title="Уведомления">🔔</button>
+  </div>
+
+  <div class="row">
+    <div class="panel">
+      <h3>Обычные / мелкие</h3>
+      <button type="button" id="normal-btn">Документы</button>
+      <button type="button" id="tiny">×</button>
+      <label><input type="checkbox" id="chk" /> Только актуальные</label>
+      <div>
+        <label>Статус
+          <select id="dropdown">
+            <option>Все</option>
+            <option>Подача заявок</option>
+            <option id="opt-done">Завершено</option>
+          </select>
+        </label>
+      </div>
+      <div class="lookalike">
+        <button type="button" id="dl-main">Скачать</button>
+        <button type="button" id="dl-alt">Скачать</button>
+        <a id="dl-link" href="https://example.com/a.pdf">Скачать PDF</a>
+      </div>
+      <button type="button" id="open-modal">Открыть модалку</button>
+      <button type="button" id="load-spa">Загрузить блок SPA</button>
+      <div id="spa-slot"></div>
+    </div>
+    <div class="panel">
+      <h3>Пагинация</h3>
+      <button type="button" id="page-prev">Назад</button>
+      <button type="button" id="page-next">Следующая</button>
+      <h3>Таблица (короткая)</h3>
+      <table>
+        <tr><th>№</th><th>Объект</th><th></th></tr>
+        <tr><td>1</td><td>Канцтовары</td><td><button type="button" id="row-action-1">Открыть</button></td></tr>
+        <tr><td>2</td><td>Бумага</td><td><button type="button" id="row-action-2">Открыть</button></td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div style="padding: 0 16px;">
+    <h3>Длинная таблица (скролл)</h3>
+    <div id="long-wrap">
+      <table id="long-table">
+        <thead><tr><th>#</th><th>Название</th><th>Действие</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="below-fold">
+    <p>Контент ниже fold</p>
+    <button type="button" id="late-btn">Кнопка после scroll</button>
+  </div>
+
+  <div id="modal-backdrop">
+    <div id="modal">
+      <h3>Подтверждение</h3>
+      <p>Удалить файл?</p>
+      <button type="button" id="modal-ok">Да, удалить</button>
+      <button type="button" id="modal-cancel">Отмена</button>
+    </div>
+  </div>
+
+  <div id="status">idle</div>
+  <script>
+    const tb = document.querySelector('#long-table tbody');
+    for (let i = 1; i <= 40; i++) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${i}</td><td>Строка ${i}</td><td>${
+        i === 20
+          ? '<button type="button" id="long-row-20">Выбрать строку 20</button>'
+          : '<button type="button">Выбрать</button>'
+      }</td>`;
+      tb.appendChild(tr);
+    }
+    const st = (t) => document.getElementById('status').textContent = t;
+    document.getElementById('normal-btn').onclick = () => st('docs');
+    document.getElementById('tiny').onclick = () => st('tiny');
+    document.getElementById('icon-only').onclick = () => st('bell');
+    document.getElementById('page-next').onclick = () => st('next');
+    document.getElementById('dl-main').onclick = () => st('dl-main');
+    document.getElementById('dl-alt').onclick = () => st('dl-alt');
+    document.getElementById('open-modal').onclick = () => {
+      document.getElementById('modal-backdrop').classList.add('open');
+      st('modal-open');
+    };
+    document.getElementById('modal-cancel').onclick = () => {
+      document.getElementById('modal-backdrop').classList.remove('open');
+      st('modal-cancel');
+    };
+    document.getElementById('modal-ok').onclick = () => st('modal-ok');
+    document.getElementById('load-spa').onclick = () => {
+      setTimeout(() => {
+        document.getElementById('spa-slot').innerHTML =
+          '<button type="button" id="spa-dyn">Динамическая кнопка SPA</button>';
+        document.getElementById('spa-dyn').onclick = () => st('spa-dyn');
+        st('spa-loaded');
+      }, 400);
+    };
+    document.getElementById('late-btn').onclick = () => st('late');
+    document.getElementById('long-row-20')?.addEventListener('click', () => st('row20'));
+  </script>
+</body>
+</html>

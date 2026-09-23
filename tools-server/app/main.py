@@ -25,8 +25,7 @@ from pydantic import BaseModel, Field
 
 from . import config
 from .api.routes import router as api_router
-from .document_tool import list_directory, read_document, read_folder_documents
-from .web_tool import fetch_page
+from .tools import fetch_page, list_directory, read_document, read_folder_documents
 
 _handler = logging.StreamHandler(sys.stdout)
 _handler.setFormatter(

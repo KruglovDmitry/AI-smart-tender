@@ -11,15 +11,17 @@ from .base import (
     VisionBackend,
 )
 from .qwen_vl import QwenVLBackend
-from .validator import validate_point
+from .ui_tars import UiTarsBackend
+from .validators import validate_point
 
 _BACKENDS: dict[str, type] = {
     "qwen_vl": QwenVLBackend,
+    "ui_tars": UiTarsBackend,
 }
 
 
 def get_vision_backend(name: str | None = None) -> VisionBackend:
-    key = (name or getattr(config, "AGENT_VISION_BACKEND", None) or "qwen_vl").strip().lower()
+    key = (name or getattr(config, "AGENT_VISION_BACKEND", None) or "ui_tars").strip().lower()
     cls = _BACKENDS.get(key)
     if cls is None:
         raise ValueError(
@@ -34,6 +36,7 @@ __all__ = [
     "InspectionResult",
     "VisionBackend",
     "QwenVLBackend",
+    "UiTarsBackend",
     "get_vision_backend",
     "validate_point",
     "click_on_screen",

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>ЕИС-подобная фикстура для UI-TARS eval</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, sans-serif; background: #f5f5f5; color: #222; }
+    header { background: #003399; color: #fff; padding: 12px 24px; display: flex; gap: 24px; align-items: center; }
+    header .logo { font-weight: bold; font-size: 18px; }
+    header a { color: #cde; text-decoration: none; margin-right: 16px; }
+    .search-bar { background: #fff; padding: 20px 24px; border-bottom: 1px solid #ddd; display: flex; gap: 8px; align-items: center; }
+    #q { width: 420px; height: 36px; padding: 0 10px; border: 1px solid #99a; font-size: 14px; }
+    #search-btn { height: 36px; padding: 0 18px; background: #e87722; color: #fff; border: none; cursor: pointer; font-weight: bold; }
+    .tabs { background: #fff; padding: 0 24px; border-bottom: 1px solid #ccc; }
+    .tabs button { background: none; border: none; padding: 12px 16px; cursor: pointer; border-bottom: 3px solid transparent; }
+    .tabs button.active { border-bottom-color: #003399; color: #003399; font-weight: bold; }
+    .content { padding: 16px 24px; }
+    .card { background: #fff; border: 1px solid #ddd; margin-bottom: 12px; padding: 12px 16px; }
+    .card a.title { color: #003399; font-size: 15px; font-weight: bold; text-decoration: none; }
+    .meta { color: #666; font-size: 12px; margin-top: 6px; }
+    .pager { margin-top: 16px; display: flex; gap: 8px; align-items: center; }
+    .pager a, .pager button { padding: 6px 12px; border: 1px solid #99a; background: #fff; cursor: pointer; text-decoration: none; color: #222; }
+    #docs-panel { display: none; background: #fff; border: 1px solid #ddd; padding: 16px; }
+    #docs-panel.visible { display: block; }
+    #download { display: inline-block; margin-top: 8px; padding: 8px 14px; background: #228833; color: #fff; text-decoration: none; }
+    #status { position: fixed; right: 12px; bottom: 12px; background: #222; color: #fff; padding: 6px 10px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo" id="logo">ЕИС Закупки</div>
+    <nav>
+      <a href="#home" id="nav-home">Главная</a>
+      <a href="#search" id="nav-search">Поиск</a>
+      <a href="#help" id="nav-help">Помощь</a>
+    </nav>
+  </header>
+
+  <div class="search-bar" id="search-bar">
+    <input id="q" type="search" placeholder="Введите ключевые слова" value="" />
+    <button type="button" id="search-btn">Найти</button>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <button type="button" class="active" id="tab-info" data-tab="info">Общая информация</button>
+    <button type="button" id="tab-docs" data-tab="docs">Документы</button>
+    <button type="button" id="tab-journal" data-tab="journal">Журнал событий</button>
+  </div>
+
+  <div class="content" id="results">
+    <div class="card" id="card-1">
+      <a class="title" id="card-link-1" href="https://zakupki.gov.ru/epz/order/notice/ea20/view/common-info.html?regNumber=0123456789012345678">Поставка канцтоваров для нужд учреждения</a>
+      <div class="meta">№ 0123456789012345678 · НМЦК 1 200 000 ₽</div>
+    </div>
+    <div class="card" id="card-2">
+      <a class="title" id="card-link-2" href="https://zakupki.gov.ru/epz/order/notice/ea20/view/common-info.html?regNumber=0123456789012345679">Поставка бумаги А4</a>
+      <div class="meta">№ 0123456789012345679 · НМЦК 350 000 ₽</div>
+    </div>
+    <div class="pager">
+      <button type="button" id="page-prev" disabled>Назад</button>
+      <span>стр. 1</span>
+      <button type="button" id="page-next">Следующая</button>
+    </div>
+  </div>
+
+  <div id="docs-panel">
+    <p>Файлы извещения</p>
+    <a id="download" href="https://example.com/docs/spec.zip">Скачать документацию.zip</a>
+  </div>
+
+  <div id="status">idle</div>
+
+  <script>
+    document.getElementById('search-btn').onclick = () => {
+      document.getElementById('status').textContent = 'search:' + document.getElementById('q').value;
+    };
+    document.getElementById('page-next').onclick = () => {
+      document.getElementById('status').textContent = 'next-page';
+    };
+    document.getElementById('tab-docs').onclick = () => {
+      document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
+      document.getElementById('tab-docs').classList.add('active');
+      document.getElementById('docs-panel').classList.add('visible');
+      document.getElementById('status').textContent = 'tab-docs';
+    };
+    document.getElementById('tab-info').onclick = () => {
+      document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
+      document.getElementById('tab-info').classList.add('active');
+      document.getElementById('docs-panel').classList.remove('visible');
+      document.getElementById('status').textContent = 'tab-info';
+    };
+    document.getElementById('card-link-1').onclick = (e) => {
+      e.preventDefault();
+      document.getElementById('status').textContent = 'open-card-1';
+    };
+  </script>
+</body>
+</html>

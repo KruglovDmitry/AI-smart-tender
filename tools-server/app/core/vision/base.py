@@ -22,6 +22,9 @@ class GroundingResult:
     note: str = ""
     latency_ms: int = 0
     raw: dict[str, Any] | None = None
+    # Stable outward contract for VL backends
+    action: str = "none"  # click | not_found | none
+    raw_response: str = ""
 
 
 @dataclass

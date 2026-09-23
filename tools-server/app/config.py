@@ -50,17 +50,21 @@ AGENT_LOG_DIR = Path(
 # OpenAI-compatible chat API for the browser agent
 # AGENT_PRIMARY_MODEL — text tool-caller (preferred); falls back to AGENT_LLM_MODEL
 # AGENT_VL_MODEL — vision grounding/inspect model (click_on_screen / inspect_screen)
-# AGENT_VISION_BACKEND — registry key (qwen_vl)
+# AGENT_VISION_BACKEND — registry key (qwen_vl | ui_tars)
 # AGENT_PRIMARY_MULTIMODAL — if true AND tools_mode=browser, primary gets inline screenshots
 AGENT_LLM_BASE_URL = os.getenv("AGENT_LLM_BASE_URL", "").rstrip("/")
 AGENT_LLM_API_KEY = os.getenv("AGENT_LLM_API_KEY", "")
 AGENT_LLM_MODEL = os.getenv("AGENT_LLM_MODEL", "qwen3.7-plus")
 AGENT_PRIMARY_MODEL = os.getenv("AGENT_PRIMARY_MODEL", "") or AGENT_LLM_MODEL
 AGENT_VL_MODEL = os.getenv("AGENT_VL_MODEL", "qwen3-vl-plus")
-AGENT_VISION_BACKEND = os.getenv("AGENT_VISION_BACKEND", "qwen_vl").strip().lower()
+AGENT_VISION_BACKEND = os.getenv("AGENT_VISION_BACKEND", "ui_tars").strip().lower()
 # pixel — model returns PNG/viewport pixels; norm1000 — 0..1000 grid over PNG
 _AGENT_VL_COORDS = os.getenv("AGENT_VL_COORDS", "pixel").strip().lower()
 AGENT_VL_COORDS = _AGENT_VL_COORDS if _AGENT_VL_COORDS in {"pixel", "norm1000"} else "pixel"
+# UI-TARS-1.5 via OpenAI-compatible vLLM (Mode A GROUNDING fallback)
+UI_TARS_BASE_URL = os.getenv("UI_TARS_BASE_URL", "http://10.127.0.41:8000").rstrip("/")
+UI_TARS_MODEL = os.getenv("UI_TARS_MODEL", "ui-tars")
+UI_TARS_API_KEY = os.getenv("UI_TARS_API_KEY", "EMPTY")
 AGENT_PRIMARY_MULTIMODAL = os.getenv("AGENT_PRIMARY_MULTIMODAL", "false").lower() in {
     "1",
     "true",

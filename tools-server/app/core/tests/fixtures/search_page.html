@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>DOM fixture</title>
+</head>
+<body>
+  <h1>Поиск тендеров</h1>
+  <form id="search-form" action="/results" method="get" onsubmit="event.preventDefault(); document.getElementById('status').textContent='submitted:'+document.getElementById('q').value;">
+    <label for="q">Запрос</label>
+    <input id="q" name="q" type="search" role="searchbox" placeholder="Введите ключевые слова" />
+    <button type="submit" id="search-btn">Найти</button>
+  </form>
+  <ul id="cards">
+    <li><a id="card-1" href="/tender/111/view">Карточка А</a></li>
+    <li><a id="card-2" href="/tender/222/view">Карточка Б</a></li>
+  </ul>
+  <p id="status">idle</p>
+  <script>
+    document.getElementById('card-1').addEventListener('click', function (e) {
+      e.preventDefault();
+      document.getElementById('status').textContent = 'opened:111';
+    });
+  </script>
+</body>
+</html>

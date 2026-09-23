@@ -48,18 +48,28 @@ AGENT_LOG_DIR = Path(
 ).resolve()
 
 # OpenAI-compatible chat API for the browser agent
-# AGENT_LLM_MODEL — multimodal tool-calling brain (also sees screenshots)
-# AGENT_VL_ENABLED — attach screenshot images into the same model context (no separate VL call)
-# AGENT_VL_MODEL — legacy/unused when vl_mode=inline_multimodal (kept for env compat)
+# AGENT_PRIMARY_MODEL — text tool-caller (preferred); falls back to AGENT_LLM_MODEL
+# AGENT_VL_MODEL — narrow locate_on_screen vision model
+# AGENT_PRIMARY_MULTIMODAL — if true, primary also receives inline screenshots
 AGENT_LLM_BASE_URL = os.getenv("AGENT_LLM_BASE_URL", "").rstrip("/")
 AGENT_LLM_API_KEY = os.getenv("AGENT_LLM_API_KEY", "")
 AGENT_LLM_MODEL = os.getenv("AGENT_LLM_MODEL", "qwen3.7-plus")
-AGENT_VL_MODEL = os.getenv("AGENT_VL_MODEL", "qwen3.7-plus")
-AGENT_VL_ENABLED = os.getenv("AGENT_VL_ENABLED", "true").lower() in {
+AGENT_PRIMARY_MODEL = os.getenv("AGENT_PRIMARY_MODEL", "") or AGENT_LLM_MODEL
+AGENT_VL_MODEL = os.getenv("AGENT_VL_MODEL", "qwen3-vl-plus")
+AGENT_PRIMARY_MULTIMODAL = os.getenv("AGENT_PRIMARY_MULTIMODAL", "false").lower() in {
     "1",
     "true",
     "yes",
 }
+# Legacy inline-screenshot flag: default true until Phase 3 switches primary to text-only.
+# Explicit AGENT_PRIMARY_MULTIMODAL=true forces inline screenshots on.
+_vl_env = os.getenv("AGENT_VL_ENABLED")
+if _vl_env is None:
+    AGENT_VL_ENABLED = True
+else:
+    AGENT_VL_ENABLED = _vl_env.lower() in {"1", "true", "yes"}
+if AGENT_PRIMARY_MULTIMODAL:
+    AGENT_VL_ENABLED = True
 
 # Platform monitoring agent (LangChain + SQLite dedup)
 PLATFORM_MAX_STEPS = int(os.getenv("PLATFORM_MAX_STEPS", "90"))

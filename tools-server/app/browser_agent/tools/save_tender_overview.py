@@ -8,11 +8,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import httpx
 from langchain_core.tools import StructuredTool
 
 from ... import config
 from ...browser_tool import tools as browser_tools
+from ...core.llm.client import chat_text, extract_json_object
 from ._common import PlatformAgentContext, ensure_tender_workspace, to_json, trace
 from .tender_id import resolve_tender_id
 
@@ -59,32 +59,6 @@ _PROMPT = """Ты извлекаешь структурированные дан
 """
 
 
-def _chat_url() -> str:
-    base = config.AGENT_LLM_BASE_URL
-    if base.endswith("/chat/completions"):
-        return base
-    return f"{base}/chat/completions"
-
-
-def _extract_json(text: str) -> dict[str, Any]:
-    text = (text or "").strip()
-    if not text:
-        return {}
-    try:
-        data = json.loads(text)
-        return data if isinstance(data, dict) else {}
-    except json.JSONDecodeError:
-        pass
-    m = re.search(r"\{[\s\S]*\}", text)
-    if not m:
-        return {}
-    try:
-        data = json.loads(m.group(0))
-        return data if isinstance(data, dict) else {}
-    except json.JSONDecodeError:
-        return {}
-
-
 async def _llm_overview(
     *,
     tender_id: str,
@@ -94,9 +68,6 @@ async def _llm_overview(
     page_text: str,
     platform: str,
 ) -> dict[str, Any]:
-    if not config.AGENT_LLM_BASE_URL or not config.AGENT_LLM_API_KEY:
-        raise RuntimeError("AGENT_LLM_* not configured")
-
     prompt = _PROMPT.format(
         tender_id=tender_id,
         platform=platform,
@@ -106,32 +77,20 @@ async def _llm_overview(
         page_text=(page_text or "")[:12000],
         fields_json=json.dumps(OVERVIEW_FIELDS, ensure_ascii=False),
     )
-    payload = {
-        "model": config.AGENT_LLM_MODEL,
-        "messages": [
+    content = await chat_text(
+        [
             {
                 "role": "system",
                 "content": "Ты извлекаешь поля карточки закупки. Отвечай только валидным JSON.",
             },
             {"role": "user", "content": prompt},
         ],
-        "temperature": 0,
-        "max_tokens": 1500,
-    }
-    headers = {
-        "Authorization": f"Bearer {config.AGENT_LLM_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    async with httpx.AsyncClient(timeout=90.0) as client:
-        resp = await client.post(_chat_url(), headers=headers, json=payload)
-        if resp.status_code >= 400:
-            raise RuntimeError(f"LLM HTTP {resp.status_code}: {resp.text[:400]}")
-        data = resp.json()
-
-    content = (
-        ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+        model=config.AGENT_PRIMARY_MODEL,
+        temperature=0,
+        max_tokens=1500,
+        timeout=90.0,
     )
-    raw = _extract_json(content)
+    raw = extract_json_object(content)
     if not raw:
         raise RuntimeError("LLM returned no JSON object")
 

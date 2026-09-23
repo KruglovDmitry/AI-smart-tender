@@ -43,11 +43,21 @@ def test_documents() -> None:
 
 def test_card() -> None:
     info = classify_page_kind(
-        "https://zakupki.gov.ru/epz/order/notice/ea20/view/common-info.html?regNumber=1",
-        title="Извещение",
+        "https://example.com/epz/order/notice/ea20/view/info.html?id=1",
+        title="Card",
         body="",
     )
     assert info["page_kind"] == "card"
+
+
+def test_card_not_by_eis_query_alone() -> None:
+    # Site-specific query keys alone must not force "card"
+    info = classify_page_kind(
+        "https://example.com/other.html?regNumber=1&common-info=1",
+        title="Other",
+        body="",
+    )
+    assert info["page_kind"] != "card"
 
 
 def test_home() -> None:

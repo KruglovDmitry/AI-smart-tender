@@ -1,4 +1,4 @@
-"""Browser session, primitives, page kind, DOM helpers."""
+"""Browser package exports."""
 
 from .session import BrowserRuntime, browser_runtime
 

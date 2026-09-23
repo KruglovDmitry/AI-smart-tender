@@ -19,8 +19,10 @@ _SEARCH = re.compile(
     r"result|search|выдач|найден[оа]|searchstring|query=|q=|pageNumber|page=",
     re.I,
 )
+# Generic card signals only — no site-specific query keys / EIS path segments.
 _CARD = re.compile(
-    r"notice|purchase|tender|извещ|закупк|common-info|regNumber|reg_number",
+    r"/notice/|/purchase/|/tender/|/lot/|/procedure/|/trade/|"
+    r"\bnotice\b|\bpurchase\b|\btender\b|\blot\b",
     re.I,
 )
 

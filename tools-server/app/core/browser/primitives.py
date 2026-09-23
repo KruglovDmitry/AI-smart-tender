@@ -100,34 +100,29 @@ async def navigate(rt: BrowserRuntime, url: str) -> dict[str, Any]:
 
 
 async def screenshot(rt: BrowserRuntime) -> dict[str, Any]:
+    """Capture viewport PNG; image kept on runtime for vision/locate fallback."""
     try:
-        await rt.page.set_viewport_size(
-            {
-                "width": rt.page.viewport_size["width"]
-                if rt.page.viewport_size
-                else 1280,
-                "height": rt.page.viewport_size["height"]
-                if rt.page.viewport_size
-                else 900,
-            }
-        )
-    except Exception:
-        pass
-    try:
+        vp = rt.page.viewport_size or {}
+        width = int(vp.get("width") or config.BROWSER_VIEWPORT_WIDTH)
+        height = int(vp.get("height") or config.BROWSER_VIEWPORT_HEIGHT)
         png = await rt.page.screenshot(type="png", full_page=False)
         b64 = base64.b64encode(png).decode("ascii")
+        try:
+            title = await rt.page.title()
+        except Exception:
+            title = ""
         meta = {
-            "width": (rt.page.viewport_size or {}).get("width", 1280),
-            "height": (rt.page.viewport_size or {}).get("height", 900),
+            "width": width,
+            "height": height,
             "url": rt.page.url,
-            "title": await rt.page.title(),
+            "title": title,
         }
         rt.last_screenshot_b64 = b64
         rt.last_screenshot_meta = meta
         return _ok(
             "screenshot",
-            "Screenshot captured. Coordinates are in viewport pixels "
-            f"({meta['width']}x{meta['height']}). Image attached for vision.",
+            f"Screenshot captured ({width}x{height}). Prefer DOM tools; "
+            "coordinates only via locate_on_screen / click_xy fallback.",
             **meta,
             has_image=True,
         )
@@ -141,7 +136,7 @@ async def click_xy(
     y: float,
     expect_download: bool = False,
 ) -> dict[str, Any]:
-    """Coordinate click — fallback when DOM-by-id is unavailable."""
+    """Fallback coordinate click — prefer click_by_id / DOM when possible."""
     page = rt.page
     try:
         url_before = page.url

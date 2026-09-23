@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from urllib.parse import urldefrag, urlparse
 
 from ..browser import dom as browser_dom
 from ..browser.page_kind import detect_page_kind
@@ -22,10 +23,19 @@ async def _dom_fingerprint(rt: Any) -> str:
     try:
         snap = await browser_dom.snapshot_interactive(rt)
         els = snap.get("elements") or []
-        text_len = sum(len(str(e.get("name") or "")) for e in els)
-        return f"{len(els)}:{text_len}"
+        name_len = sum(len(str(e.get("name") or "")) for e in els)
+        try:
+            body_len = int(
+                await rt.page.evaluate(
+                    "() => (document.body && (document.body.innerText || '') || '').length"
+                )
+                or 0
+            )
+        except Exception:
+            body_len = 0
+        return f"{len(els)}:{name_len}:{body_len}"
     except Exception:
-        return "0:0"
+        return "0:0:0"
 
 
 async def _page_kind_safe(rt: Any) -> str:
@@ -36,13 +46,31 @@ async def _page_kind_safe(rt: Any) -> str:
         return ""
 
 
-def _href_http(element: dict[str, Any] | None) -> str | None:
+def _url_no_fragment(url: str) -> str:
+    base, _frag = urldefrag(url or "")
+    return base
+
+
+def _href_http(
+    element: dict[str, Any] | None,
+    current_url: str = "",
+) -> str | None:
+    """
+    Return href for navigate only when it is a real http(s) navigation target
+    that differs from the current page (ignoring #fragment).
+    Same-page anchors like href="#" → None (caller should mouse-click).
+    """
     if not element:
         return None
     href = str(element.get("href") or "").strip()
-    if href.startswith("http://") or href.startswith("https://"):
-        return href
-    return None
+    if not href:
+        return None
+    parsed = urlparse(href)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    if _url_no_fragment(href) == _url_no_fragment(current_url):
+        return None
+    return href
 
 
 async def click_on_screen(
@@ -97,7 +125,10 @@ async def click_on_screen(
             continue
         chosen = cand
         element = validation.get("element")
-        href = _href_http(element if isinstance(element, dict) else None)
+        href = _href_http(
+            element if isinstance(element, dict) else None,
+            current_url=url_before,
+        )
 
         if href:
             nav = await core_navigate(rt, href)
@@ -159,7 +190,6 @@ async def click_on_screen(
         "latency_ms": grounded.latency_ms,
     }
 
-    # Dataset (coords only in sample files, not in tool result)
     if run_id:
         step = next_step(run_id)
         if step is not None:

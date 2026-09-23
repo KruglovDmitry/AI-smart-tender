@@ -16,6 +16,11 @@
       width: 140px; height: 40px; line-height: 40px; text-align: center;
       display: inline-block; background: #228833; color: #fff; text-decoration: none;
     }
+    #hash-link {
+      position: absolute; left: 380px; top: 100px;
+      width: 120px; height: 40px; line-height: 40px; text-align: center;
+      display: inline-block; background: #aa44aa; color: #fff; text-decoration: none;
+    }
     #empty { position: absolute; left: 500px; top: 400px; width: 20px; height: 20px; }
     #status { position: absolute; left: 40px; top: 160px; }
   </style>
@@ -24,11 +29,16 @@
   <div id="pad"></div>
   <button id="docs" type="button">Документы</button>
   <a id="download" href="https://example.com/file.pdf">Скачать</a>
+  <a id="hash-link" href="#">Открыть меню</a>
   <div id="empty"></div>
   <p id="status">idle</p>
   <script>
     document.getElementById('docs').addEventListener('click', function () {
       document.getElementById('status').textContent = 'docs-clicked';
+    });
+    document.getElementById('hash-link').addEventListener('click', function (e) {
+      e.preventDefault();
+      document.getElementById('status').textContent = 'hash-clicked';
     });
   </script>
 </body>

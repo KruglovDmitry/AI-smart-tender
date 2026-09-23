@@ -69,6 +69,55 @@ def test_png_pixel_size_and_scale() -> None:
     assert y == 50
 
 
+def test_parse_candidates_clamp_png_then_remap() -> None:
+    """PNG 2560×1800, viewport 1280×900, raw (2000,1400) → CSS (1000,700)."""
+    from app.core.vision.qwen_vl import _parse_candidates, finalize_candidates
+
+    png = _minimal_png(2560, 1800)
+    b64 = base64.b64encode(png).decode("ascii")
+    raw = {"found": True, "x": 2000, "y": 1400, "elements": [], "note": ""}
+    cands = _parse_candidates(raw, (2560, 1800))
+    assert cands[0].x == 2000 and cands[0].y == 1400  # not clamped to 1280
+    finalize_candidates(
+        cands,
+        image_b64=b64,
+        viewport=(1280, 900),
+        image_size=(2560, 1800),
+        coords_mode="pixel",
+    )
+    assert cands[0].x == 1000
+    assert cands[0].y == 700
+
+
+def test_norm1000_before_remap(monkeypatch) -> None:
+    from app.core.vision.qwen_vl import _parse_candidates, finalize_candidates
+
+    png = _minimal_png(2000, 1000)
+    b64 = base64.b64encode(png).decode("ascii")
+    # 500/1000 * 2000 = 1000 image px → CSS with vp 1000x500 → 500
+    raw = {"found": True, "x": 500, "y": 500, "elements": []}
+    cands = _parse_candidates(raw, (2000, 1000))
+    finalize_candidates(
+        cands,
+        image_b64=b64,
+        viewport=(1000, 500),
+        image_size=(2000, 1000),
+        coords_mode="norm1000",
+    )
+    assert cands[0].x == 500
+    assert cands[0].y == 250
+
+
+def test_href_http_skips_hash_and_same_page() -> None:
+    from app.core.vision.act import _href_http
+
+    cur = "https://example.com/page"
+    assert _href_http({"href": "https://example.com/other"}, cur) == "https://example.com/other"
+    assert _href_http({"href": "https://example.com/page#section"}, cur) is None
+    assert _href_http({"href": "#"}, cur) is None
+    assert _href_http({"href": "javascript:void(0)"}, cur) is None
+
+
 @pytest.mark.asyncio
 async def test_validate_point_statuses(vision_rt) -> None:
     # Button «Документы» center ~ (40+80, 100+20) = (120, 120)
@@ -146,6 +195,23 @@ async def test_click_on_screen_navigate_vs_click(vision_rt, tmp_path, monkeypatc
     assert clk["action"] == "click"
     status = await vision_rt.page.inner_text("#status")
     assert status == "docs-clicked"
+
+    # href="#" → click (not navigate), onclick fires
+    html = FIXTURE.read_text(encoding="utf-8")
+    await vision_rt.page.set_content(html, wait_until="domcontentloaded")
+    # hash-link center ~ (380+60, 100+20) = (440, 120)
+    hash_backend = _MockBackend(
+        [GroundingCandidate(x=440, y=120, label="Открыть меню")]
+    )
+    hash_res = await vision_act.click_on_screen(
+        vision_rt,
+        "ссылка Открыть меню",
+        backend=hash_backend,
+        run_id="test-run",
+    )
+    assert hash_res["action"] == "click"
+    status = await vision_rt.page.inner_text("#status")
+    assert status == "hash-clicked"
 
     # All rejected → none
     miss_backend = _MockBackend(

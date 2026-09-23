@@ -58,6 +58,9 @@ AGENT_LLM_MODEL = os.getenv("AGENT_LLM_MODEL", "qwen3.7-plus")
 AGENT_PRIMARY_MODEL = os.getenv("AGENT_PRIMARY_MODEL", "") or AGENT_LLM_MODEL
 AGENT_VL_MODEL = os.getenv("AGENT_VL_MODEL", "qwen3-vl-plus")
 AGENT_VISION_BACKEND = os.getenv("AGENT_VISION_BACKEND", "qwen_vl").strip().lower()
+# pixel — model returns PNG/viewport pixels; norm1000 — 0..1000 grid over PNG
+_AGENT_VL_COORDS = os.getenv("AGENT_VL_COORDS", "pixel").strip().lower()
+AGENT_VL_COORDS = _AGENT_VL_COORDS if _AGENT_VL_COORDS in {"pixel", "norm1000"} else "pixel"
 AGENT_PRIMARY_MULTIMODAL = os.getenv("AGENT_PRIMARY_MULTIMODAL", "false").lower() in {
     "1",
     "true",

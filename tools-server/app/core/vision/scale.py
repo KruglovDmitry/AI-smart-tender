@@ -26,6 +26,32 @@ def png_pixel_size(image_b64: str) -> tuple[int, int] | None:
     return int(w), int(h)
 
 
+def clamp_xy(x: int, y: int, size: tuple[int, int]) -> tuple[int, int]:
+    """Clamp to [0, w-1] × [0, h-1] for any size box (PNG or viewport)."""
+    w, h = int(size[0]), int(size[1])
+    return (
+        max(0, min(int(x), max(0, w - 1))),
+        max(0, min(int(y), max(0, h - 1))),
+    )
+
+
+def clamp_css(x: int, y: int, viewport: tuple[int, int]) -> tuple[int, int]:
+    return clamp_xy(x, y, viewport)
+
+
+def norm1000_to_image_px(
+    x: float,
+    y: float,
+    image_size: tuple[int, int],
+) -> tuple[int, int]:
+    """Map normalized 0..1000 coords onto PNG pixel space."""
+    iw, ih = int(image_size[0]), int(image_size[1])
+    return (
+        int(round(float(x) * iw / 1000.0)),
+        int(round(float(y) * ih / 1000.0)),
+    )
+
+
 def image_to_css(
     x: float,
     y: float,
@@ -48,25 +74,19 @@ def image_to_css(
     return clamp_css(cx, cy, viewport)
 
 
-def clamp_css(x: int, y: int, viewport: tuple[int, int]) -> tuple[int, int]:
-    vw, vh = int(viewport[0]), int(viewport[1])
-    return (
-        max(0, min(int(x), max(0, vw - 1))),
-        max(0, min(int(y), max(0, vh - 1))),
-    )
-
-
 def remap_candidates_to_css(
     candidates: list[Any],
     *,
     image_b64: str,
     viewport: tuple[int, int],
+    image_size: tuple[int, int] | None = None,
 ) -> list[Any]:
     """
     If PNG pixel size differs from CSS viewport, rescale each candidate's x,y.
     Mutates candidate objects that have .x/.y attributes; also accepts dicts.
+    Does NOT clamp — caller clamps to viewport after remap.
     """
-    img = png_pixel_size(image_b64)
+    img = image_size or png_pixel_size(image_b64)
     if img is None:
         return candidates
     iw, ih = img
@@ -76,16 +96,17 @@ def remap_candidates_to_css(
     out = []
     for c in candidates:
         if hasattr(c, "x") and hasattr(c, "y"):
-            nx, ny = image_to_css(c.x, c.y, image_size=img, viewport=viewport)
+            # image_to_css clamps; we want unclamped scale then final clamp outside —
+            # use raw scale here to avoid double semantics
+            nx = int(round(float(c.x) * (vw / iw))) if iw else int(c.x)
+            ny = int(round(float(c.y) * (vh / ih))) if ih else int(c.y)
             c.x, c.y = nx, ny
             out.append(c)
         elif isinstance(c, dict):
-            nx, ny = image_to_css(
-                c.get("x") or 0,
-                c.get("y") or 0,
-                image_size=img,
-                viewport=viewport,
-            )
+            x = c.get("x") or 0
+            y = c.get("y") or 0
+            nx = int(round(float(x) * (vw / iw))) if iw else int(x)
+            ny = int(round(float(y) * (vh / ih))) if ih else int(y)
             c = {**c, "x": nx, "y": ny}
             out.append(c)
         else:

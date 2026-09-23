@@ -9,7 +9,13 @@ from typing import Any
 from ... import config
 from ..llm.client import chat_completions, extract_json_object, message_text, require_llm
 from .base import GroundingCandidate, GroundingResult, InspectionResult
-from .scale import clamp_css, remap_candidates_to_css
+from .scale import (
+    clamp_css,
+    clamp_xy,
+    norm1000_to_image_px,
+    png_pixel_size,
+    remap_candidates_to_css,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +63,13 @@ def _dedupe_near(
 
 def _parse_candidates(
     raw: dict[str, Any],
-    viewport: tuple[int, int],
+    image_size: tuple[int, int],
 ) -> list[GroundingCandidate]:
-    width, height = int(viewport[0]), int(viewport[1])
+    """
+    Parse model JSON into candidates. Clamp to PNG pixel bounds only —
+    do NOT clamp to CSS viewport before scale remapping.
+    """
+    iw, ih = int(image_size[0]), int(image_size[1])
     items: list[GroundingCandidate] = []
 
     try:
@@ -67,7 +77,7 @@ def _parse_candidates(
         y = int(raw.get("y") or 0)
     except (TypeError, ValueError):
         x, y = 0, 0
-    x, y = clamp_css(x, y, viewport)
+    x, y = clamp_xy(x, y, (iw, ih))
     if raw.get("found") or (x or y):
         items.append(GroundingCandidate(x=x, y=y, label="primary"))
 
@@ -80,11 +90,41 @@ def _parse_candidates(
             ey = int(el.get("y") or 0)
         except (TypeError, ValueError):
             continue
-        ex, ey = clamp_css(ex, ey, (width, height))
+        ex, ey = clamp_xy(ex, ey, (iw, ih))
         label = str(el.get("label") or "")[:120]
         items.append(GroundingCandidate(x=ex, y=ey, label=label))
 
     return _dedupe_near(items)
+
+
+def finalize_candidates(
+    candidates: list[GroundingCandidate],
+    *,
+    image_b64: str,
+    viewport: tuple[int, int],
+    image_size: tuple[int, int] | None = None,
+    coords_mode: str | None = None,
+) -> list[GroundingCandidate]:
+    """
+    norm1000→PNG (optional) → remap PNG→CSS → clamp to viewport.
+    """
+    mode = (coords_mode or getattr(config, "AGENT_VL_COORDS", "pixel") or "pixel").lower()
+    img = image_size or png_pixel_size(image_b64) or (int(viewport[0]), int(viewport[1]))
+
+    if mode == "norm1000":
+        for c in candidates:
+            nx, ny = norm1000_to_image_px(c.x, c.y, img)
+            c.x, c.y = clamp_xy(nx, ny, img)
+
+    remap_candidates_to_css(
+        candidates,
+        image_b64=image_b64,
+        viewport=viewport,
+        image_size=img,
+    )
+    for c in candidates:
+        c.x, c.y = clamp_css(c.x, c.y, viewport)
+    return candidates
 
 
 class QwenVLBackend:
@@ -159,8 +199,14 @@ class QwenVLBackend:
             )
         latency_ms = int((time.perf_counter() - t0) * 1000)
 
-        candidates = _parse_candidates(raw, viewport)
-        remap_candidates_to_css(candidates, image_b64=image_b64, viewport=viewport)
+        img = png_pixel_size(image_b64) or (width, height)
+        candidates = _parse_candidates(raw, img)
+        finalize_candidates(
+            candidates,
+            image_b64=image_b64,
+            viewport=viewport,
+            image_size=img,
+        )
         found = bool(raw.get("found")) and bool(candidates)
         if not found and candidates:
             found = True

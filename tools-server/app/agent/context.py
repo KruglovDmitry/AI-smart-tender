@@ -39,6 +39,8 @@ class PlatformAgentContext:
     final_summary: str = ""
     final_success: bool = False
     trace: list[dict[str, Any]] = field(default_factory=list)
+    vision_run_id: str = ""
+    inject_screenshots: bool = False
 
 
 def note_results_url(ctx: PlatformAgentContext, url: str | None) -> None:

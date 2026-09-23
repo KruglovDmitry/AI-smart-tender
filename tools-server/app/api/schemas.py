@@ -16,7 +16,7 @@ class PlatformTaskBody(BaseModel):
     instruction: str | None = None
     tools_mode: str | None = Field(
         None,
-        description="full | browser | platform (adapter high-level tools)",
+        description="platform (default) | browser (ablation only). full removed.",
     )
 
 

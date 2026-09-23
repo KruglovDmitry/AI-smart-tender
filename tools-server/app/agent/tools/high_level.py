@@ -1,14 +1,27 @@
-"""High-level platform tools — delegate to adapters + domain."""
+"""High-level platform tools — exactly 15 tools for mode=platform."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from . import save_tender_overview as overview_tool
+from ...core.browser import dom as browser_dom
+from ...core.browser.primitives import download_url as core_download
+from ...core.browser.primitives import get_page_text as core_get_page_text
+from ...core.browser.primitives import navigate as core_navigate
+from ...core.vision import click_on_screen as vision_click
+from ...core.vision import get_vision_backend
+from ...core.vision import inspect_screen as vision_inspect
+from ...domain import finish as finish_mod
+from ...domain import manifest as manifest_mod
+from ...domain import overview as overview_mod
+from ...domain.tender_id import resolve_tender_id
+from ...platforms.base import CardRef, SearchSpec
+from ...platforms.registry import get_adapter
 from ..context import (
     PlatformAgentContext,
     ensure_tender_workspace,
@@ -18,15 +31,24 @@ from ..context import (
     to_json,
     trace,
 )
-from .finish_platform_task import resolve_finish_success
-from ...core.browser import dom as browser_dom
-from ...core.browser.primitives import download_url as core_download
-from ...core.browser.primitives import navigate as core_navigate
-from ...core.browser.primitives import screenshot as core_screenshot
-from ...core.llm import vision as vision_mod
-from ...domain import manifest as manifest_mod
-from ...platforms.base import CardRef, SearchSpec
-from ...platforms.registry import get_adapter
+
+PLATFORM_TOOL_NAMES: tuple[str, ...] = (
+    "open_platform_search",
+    "list_new_cards",
+    "open_tender",
+    "list_tender_documents",
+    "download_document",
+    "save_overview",
+    "mark_processed",
+    "goto_next_page",
+    "finish",
+    "dom_snapshot",
+    "click_element",
+    "fill_element",
+    "navigate",
+    "click_on_screen",
+    "inspect_screen",
+)
 
 
 class KeywordsInput(BaseModel):
@@ -48,17 +70,32 @@ class MarkProcessedInput(BaseModel):
     count_toward_limit: bool = Field(default=True)
 
 
-class LocateInput(BaseModel):
-    goal: str = Field(description="Что найти на экране (на русском)")
+class GoalInput(BaseModel):
+    goal: str = Field(description="Что кликнуть на экране (на русском, без координат)")
+
+
+class QuestionInput(BaseModel):
+    question: str = Field(description="Вопрос по скриншоту (капча? логин? таблица?)")
+
+
+class DomSnapshotInput(BaseModel):
+    query: str | None = Field(
+        default=None,
+        description="Фильтр по тексту/placeholder/role; без query — до 150 приоритетных",
+    )
 
 
 class DomIdInput(BaseModel):
-    el_id: int = Field(description="id из dom_snapshot / query")
+    el_id: int = Field(description="id из dom_snapshot")
 
 
 class FillInput(BaseModel):
     el_id: int
     text: str
+    submit: bool = Field(
+        default=False,
+        description="True — нажать Enter после ввода (отправка формы/поиска)",
+    )
 
 
 class NavigateInput(BaseModel):
@@ -76,7 +113,6 @@ def _adapter(ctx: PlatformAgentContext):
         url = ctx.rt.page.url or ""
     except Exception:
         url = ""
-    # Prefer platform from context host if page not ready
     seed = url or f"https://{ctx.platform}/"
     return get_adapter(seed)
 
@@ -105,7 +141,7 @@ def build_high_level_tools(ctx: PlatformAgentContext) -> list[StructuredTool]:
         StructuredTool.from_function(
             coroutine=open_platform_search,
             name="open_platform_search",
-            description="Открыть поиск на площадке (URL-шаблон или UI). ВЕРНЁТ page_kind/url.",
+            description="Открыть поиск на площадке. ВЕРНЁТ page_kind/url.",
             args_schema=KeywordsInput,
         )
     )
@@ -188,7 +224,7 @@ def build_high_level_tools(ctx: PlatformAgentContext) -> list[StructuredTool]:
         StructuredTool.from_function(
             coroutine=open_tender,
             name="open_tender",
-            description="Открыть карточку по exact URL (adapter знает 44/223 и SPA).",
+            description="Открыть карточку по exact URL.",
             args_schema=CardUrlInput,
         )
     )
@@ -216,7 +252,7 @@ def build_high_level_tools(ctx: PlatformAgentContext) -> list[StructuredTool]:
         StructuredTool.from_function(
             coroutine=list_tender_documents,
             name="list_tender_documents",
-            description="Список документов текущей карточки (детерминированно через adapter).",
+            description="Список документов текущей карточки (adapter).",
         )
     )
 
@@ -254,18 +290,112 @@ def build_high_level_tools(ctx: PlatformAgentContext) -> list[StructuredTool]:
         )
     )
 
-    # Overview: keep legacy name + plan alias
-    ov_tool = overview_tool.make_tool(ctx)
-    tools.append(ov_tool)
-
     async def save_overview() -> str:
-        return await ov_tool.ainvoke({})
+        page_url = str(ctx.rt.page.url or "")
+        resolved = resolve_tender_id(page_url, platform=ctx.platform)
+        page_tid = str(resolved.get("tender_id") or "").strip() or None
+        tender_id = page_tid or (str(ctx.current_tender_id or "").strip() or None)
+        if tender_id:
+            ctx.current_tender_id = tender_id
+            if page_tid:
+                ctx.current_tender_url = page_url
+            elif not ctx.current_tender_url:
+                ctx.current_tender_url = page_url
+        if not tender_id:
+            result = {
+                "ok": False,
+                "action": "save_overview",
+                "message": "Нет tender_id: сначала open_tender(card_url).",
+            }
+            trace(ctx, "save_overview", {}, result)
+            return to_json(result)
+
+        page = await core_get_page_text(ctx.rt, 14000)
+        if not page.get("ok"):
+            result = {
+                "ok": False,
+                "action": "save_overview",
+                "message": page.get("message") or "get_page_text failed",
+            }
+            trace(ctx, "save_overview", {}, result)
+            return to_json(result)
+
+        page_url = str(page.get("url") or ctx.rt.page.url)
+        resolved2 = resolve_tender_id(page_url, platform=ctx.platform)
+        page_tid2 = str(resolved2.get("tender_id") or "").strip() or None
+        if page_tid2:
+            tender_id = page_tid2
+            ctx.current_tender_id = tender_id
+            ctx.current_tender_url = page_url
+        tender_url = ctx.current_tender_url or page_url
+        folder = ensure_tender_workspace(ctx, tender_id, tender_url)
+
+        try:
+            payload = await overview_mod.extract_overview(
+                tender_id=tender_id,
+                tender_url=tender_url,
+                page_url=page_url,
+                page_title=str(page.get("title") or ""),
+                page_text=str(page.get("text") or ""),
+                platform=ctx.platform,
+            )
+        except Exception as e:
+            result = {
+                "ok": False,
+                "action": "save_overview",
+                "message": f"LLM overview failed: {e}",
+                "tender_id": tender_id,
+                "tender_dir": str(folder),
+            }
+            trace(ctx, "save_overview", {}, result)
+            return to_json(result)
+
+        out_path = Path(folder) / "overview.json"
+        out_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        try:
+            manifest_mod.upsert_overview_fields(
+                folder,
+                {**payload, "platform": ctx.platform, "tender_id": tender_id},
+            )
+        except Exception:
+            pass
+        result = {
+            "ok": True,
+            "action": "save_overview",
+            "message": f"Saved {out_path.name} into {folder}",
+            "tender_id": tender_id,
+            "tender_dir": str(folder),
+            "overview_path": str(out_path),
+            "overview": {
+                "tender_url": payload.get("tender_url"),
+                "object": payload.get("object"),
+                "customer": payload.get("customer"),
+                "price": payload.get("price"),
+                "deadline": payload.get("deadline"),
+                "method": payload.get("method"),
+                "stage": payload.get("stage"),
+                "placed_at": payload.get("placed_at"),
+            },
+        }
+        stale, reason = overview_mod.looks_stale(payload)
+        if stale:
+            result["looks_stale"] = True
+            result["stale_reason"] = reason
+            result["hint"] = (
+                "Устаревший/неактивный: mark_processed(..., count_toward_limit=false)."
+            )
+            result["message"] += " | looks_stale=true"
+        trace(ctx, "save_overview", {}, result)
+        return to_json(result)
 
     tools.append(
         StructuredTool.from_function(
             coroutine=save_overview,
             name="save_overview",
-            description="Сохранить overview.json (+ поля в manifest). Синоним save_tender_overview.",
+            description="Сохранить overview.json (+ поля в manifest).",
         )
     )
 
@@ -332,33 +462,12 @@ def build_high_level_tools(ctx: PlatformAgentContext) -> list[StructuredTool]:
         StructuredTool.from_function(
             coroutine=goto_next_page,
             name="goto_next_page",
-            description="Следующая страница выдачи (adapter / vision fallback).",
-        )
-    )
-
-    async def locate_on_screen(goal: str) -> str:
-        shot = await core_screenshot(ctx.rt)
-        if not shot.get("ok") or not ctx.rt.last_screenshot_b64:
-            result = {"ok": False, "action": "locate_on_screen", "message": "screenshot failed"}
-            trace(ctx, "locate_on_screen", {"goal": goal}, result)
-            return to_json(result)
-        vp = (int(shot.get("width") or 1280), int(shot.get("height") or 900))
-        loc = await vision_mod.locate(ctx.rt.last_screenshot_b64, goal, vp)
-        result = {"ok": True, "action": "locate_on_screen", **loc, "viewport": list(vp)}
-        trace(ctx, "locate_on_screen", {"goal": goal}, result)
-        return to_json(result)
-
-    tools.append(
-        StructuredTool.from_function(
-            coroutine=locate_on_screen,
-            name="locate_on_screen",
-            description="VL-fallback: найти элемент на скрине по goal → {found,x,y}.",
-            args_schema=LocateInput,
+            description="Следующая страница выдачи (adapter).",
         )
     )
 
     async def finish(summary: str, success: bool = True) -> str:
-        success, summary = resolve_finish_success(
+        success, summary = finish_mod.resolve_finish_success(
             success,
             processed_tenders=ctx.processed_tenders,
             downloaded_files=list(ctx.rt.downloaded_files),
@@ -386,70 +495,119 @@ def build_high_level_tools(ctx: PlatformAgentContext) -> list[StructuredTool]:
         StructuredTool.from_function(
             coroutine=finish,
             name="finish",
-            description="Завершить задачу (структурный success). Синоним finish_platform_task.",
+            description="Завершить задачу (структурный success).",
             args_schema=FinishInput,
             return_direct=True,
         )
     )
 
-    # Escape hatches
-    async def dom_snapshot() -> str:
-        result = await browser_dom.snapshot_interactive(ctx.rt)
-        trace(ctx, "dom_snapshot", {}, result)
+    async def dom_snapshot(query: str | None = None) -> str:
+        result = await browser_dom.snapshot_for_agent(ctx.rt, query)
+        trace(ctx, "dom_snapshot", {"query": query}, result)
         return to_json(result)
+
+    tools.append(
+        StructuredTool.from_function(
+            coroutine=dom_snapshot,
+            name="dom_snapshot",
+            description=(
+                "DOM interactive elements (data-agent-id). "
+                "query фильтрует; без query — до 150 (inputs→buttons→links)."
+            ),
+            args_schema=DomSnapshotInput,
+        )
+    )
 
     async def click_element(el_id: int) -> str:
         result = await browser_dom.click_by_id(ctx.rt, el_id)
         trace(ctx, "click_element", {"el_id": el_id}, result)
         return to_json(result)
 
-    async def fill_element(el_id: int, text: str) -> str:
-        result = await browser_dom.fill_by_id(ctx.rt, el_id, text)
-        trace(ctx, "fill_element", {"el_id": el_id, "text": text}, result)
+    tools.append(
+        StructuredTool.from_function(
+            coroutine=click_element,
+            name="click_element",
+            description="Клик по id из dom_snapshot (scroll into view).",
+            args_schema=DomIdInput,
+        )
+    )
+
+    async def fill_element(el_id: int, text: str, submit: bool = False) -> str:
+        result = await browser_dom.fill_by_id(ctx.rt, el_id, text, submit=submit)
+        trace(
+            ctx,
+            "fill_element",
+            {"el_id": el_id, "text": text, "submit": submit},
+            result,
+        )
         return to_json(result)
+
+    tools.append(
+        StructuredTool.from_function(
+            coroutine=fill_element,
+            name="fill_element",
+            description="Ввод в элемент по id; submit=True → Enter.",
+            args_schema=FillInput,
+        )
+    )
 
     async def navigate(url: str) -> str:
         result = await core_navigate(ctx.rt, url)
         trace(ctx, "navigate", {"url": url}, result)
         return to_json(result)
 
-    async def screenshot() -> str:
-        result = await core_screenshot(ctx.rt)
-        slim = {k: v for k, v in result.items() if k != "image_b64"}
-        trace(ctx, "screenshot", {}, slim)
-        return to_json(slim)
-
-    tools.extend(
-        [
-            StructuredTool.from_function(
-                coroutine=dom_snapshot,
-                name="dom_snapshot",
-                description="DOM snapshot interactive elements (data-agent-id).",
-            ),
-            StructuredTool.from_function(
-                coroutine=click_element,
-                name="click_element",
-                description="Клик по id из dom_snapshot.",
-                args_schema=DomIdInput,
-            ),
-            StructuredTool.from_function(
-                coroutine=fill_element,
-                name="fill_element",
-                description="Ввод текста в элемент по id.",
-                args_schema=FillInput,
-            ),
-            StructuredTool.from_function(
-                coroutine=navigate,
-                name="navigate",
-                description="Прямой переход по URL.",
-                args_schema=NavigateInput,
-            ),
-            StructuredTool.from_function(
-                coroutine=screenshot,
-                name="screenshot",
-                description="Скриншот viewport (для locate_on_screen).",
-            ),
-        ]
+    tools.append(
+        StructuredTool.from_function(
+            coroutine=navigate,
+            name="navigate",
+            description="Прямой переход по URL.",
+            args_schema=NavigateInput,
+        )
     )
 
+    async def click_on_screen(goal: str) -> str:
+        backend = get_vision_backend()
+        result = await vision_click(
+            ctx.rt,
+            goal,
+            backend=backend,
+            run_id=ctx.vision_run_id or None,
+            platform=ctx.platform,
+        )
+        # Never expose coordinates to the agent
+        for k in ("x", "y", "candidates", "chosen"):
+            result.pop(k, None)
+        trace(ctx, "click_on_screen", {"goal": goal}, result)
+        return to_json(result)
+
+    tools.append(
+        StructuredTool.from_function(
+            coroutine=click_on_screen,
+            name="click_on_screen",
+            description=(
+                "Vision-fallback: найти цель на скрине, провалидировать DOM и "
+                "navigate|click. Без координат в ответе. Когда DOM пуст/не помогает."
+            ),
+            args_schema=GoalInput,
+        )
+    )
+
+    async def inspect_screen(question: str) -> str:
+        backend = get_vision_backend()
+        result = await vision_inspect(ctx.rt, question, backend=backend)
+        trace(ctx, "inspect_screen", {"question": question}, result)
+        return to_json(result)
+
+    tools.append(
+        StructuredTool.from_function(
+            coroutine=inspect_screen,
+            name="inspect_screen",
+            description="Вопрос по скриншоту (капча/логин/таблица результатов?).",
+            args_schema=QuestionInput,
+        )
+    )
+
+    assert len(tools) == 15, f"expected 15 platform tools, got {len(tools)}"
+    names = [t.name for t in tools]
+    assert names == list(PLATFORM_TOOL_NAMES), names
     return tools

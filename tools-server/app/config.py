@@ -49,35 +49,46 @@ AGENT_LOG_DIR = Path(
 
 # OpenAI-compatible chat API for the browser agent
 # AGENT_PRIMARY_MODEL — text tool-caller (preferred); falls back to AGENT_LLM_MODEL
-# AGENT_VL_MODEL — narrow locate_on_screen vision model
-# AGENT_PRIMARY_MULTIMODAL — if true, primary also receives inline screenshots
+# AGENT_VL_MODEL — vision grounding/inspect model (click_on_screen / inspect_screen)
+# AGENT_VISION_BACKEND — registry key (qwen_vl)
+# AGENT_PRIMARY_MULTIMODAL — if true AND tools_mode=browser, primary gets inline screenshots
 AGENT_LLM_BASE_URL = os.getenv("AGENT_LLM_BASE_URL", "").rstrip("/")
 AGENT_LLM_API_KEY = os.getenv("AGENT_LLM_API_KEY", "")
 AGENT_LLM_MODEL = os.getenv("AGENT_LLM_MODEL", "qwen3.7-plus")
 AGENT_PRIMARY_MODEL = os.getenv("AGENT_PRIMARY_MODEL", "") or AGENT_LLM_MODEL
 AGENT_VL_MODEL = os.getenv("AGENT_VL_MODEL", "qwen3-vl-plus")
+AGENT_VISION_BACKEND = os.getenv("AGENT_VISION_BACKEND", "qwen_vl").strip().lower()
 AGENT_PRIMARY_MULTIMODAL = os.getenv("AGENT_PRIMARY_MULTIMODAL", "false").lower() in {
     "1",
     "true",
     "yes",
 }
-# Legacy inline-screenshot flag: default true until Phase 3 switches primary to text-only.
-# Explicit AGENT_PRIMARY_MULTIMODAL=true forces inline screenshots on.
+# Inline screenshot injection into primary context (browser ablation only).
 _vl_env = os.getenv("AGENT_VL_ENABLED")
 if _vl_env is None:
-    AGENT_VL_ENABLED = True
+    AGENT_VL_ENABLED = AGENT_PRIMARY_MULTIMODAL
 else:
     AGENT_VL_ENABLED = _vl_env.lower() in {"1", "true", "yes"}
 if AGENT_PRIMARY_MULTIMODAL:
     AGENT_VL_ENABLED = True
+
+VISION_SAMPLES_ENABLED = os.getenv("VISION_SAMPLES_ENABLED", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+VISION_SAMPLES_DIR = Path(
+    os.getenv("VISION_SAMPLES_DIR", str(DATA_ROOT / "vision_samples"))
+).resolve()
+VISION_SAMPLES_MAX_PER_RUN = int(os.getenv("VISION_SAMPLES_MAX_PER_RUN", "200"))
 
 # Platform monitoring agent (LangChain + SQLite dedup)
 PLATFORM_MAX_STEPS = int(os.getenv("PLATFORM_MAX_STEPS", "90"))
 PLATFORM_MAX_NEW_TENDERS = int(os.getenv("PLATFORM_MAX_NEW_TENDERS", "3"))
 # Max document files to download per tender (priority docs; skip junk/wrappers)
 PLATFORM_MAX_FILES_PER_TENDER = int(os.getenv("PLATFORM_MAX_FILES_PER_TENDER", "5"))
-# full | browser | platform (adapter high-level tools)
-PLATFORM_AGENT_MODE = os.getenv("PLATFORM_AGENT_MODE", "full").strip().lower()
+# platform (default) | browser (ablation only). "full" is rejected.
+PLATFORM_AGENT_MODE = os.getenv("PLATFORM_AGENT_MODE", "platform").strip().lower()
 SEEN_TENDERS_DB = Path(
     os.getenv("SEEN_TENDERS_DB", str(DATA_ROOT / "_state" / "seen_tenders.sqlite3"))
 ).resolve()

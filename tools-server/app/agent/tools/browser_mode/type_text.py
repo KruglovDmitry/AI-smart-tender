@@ -5,9 +5,9 @@ from __future__ import annotations
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from ... import config
-from ...core.browser import primitives as browser_tools
-from ..context import PlatformAgentContext, to_json, trace
+from .... import config
+from ....core.browser import primitives as browser_tools
+from ...context import PlatformAgentContext, to_json, trace
 
 
 def _clamp_xy(ctx: PlatformAgentContext, x: float, y: float) -> tuple[float, float]:

@@ -100,13 +100,16 @@ async def navigate(rt: BrowserRuntime, url: str) -> dict[str, Any]:
 
 
 async def screenshot(rt: BrowserRuntime) -> dict[str, Any]:
-    """Capture viewport PNG; image kept on runtime for vision/locate fallback."""
+    """Capture viewport PNG; image kept on runtime for vision grounding."""
     try:
+        from ..vision.scale import png_pixel_size
+
         vp = rt.page.viewport_size or {}
         width = int(vp.get("width") or config.BROWSER_VIEWPORT_WIDTH)
         height = int(vp.get("height") or config.BROWSER_VIEWPORT_HEIGHT)
         png = await rt.page.screenshot(type="png", full_page=False)
         b64 = base64.b64encode(png).decode("ascii")
+        img_wh = png_pixel_size(b64)
         try:
             title = await rt.page.title()
         except Exception:
@@ -114,6 +117,8 @@ async def screenshot(rt: BrowserRuntime) -> dict[str, Any]:
         meta = {
             "width": width,
             "height": height,
+            "image_width": img_wh[0] if img_wh else width,
+            "image_height": img_wh[1] if img_wh else height,
             "url": rt.page.url,
             "title": title,
         }
@@ -121,8 +126,13 @@ async def screenshot(rt: BrowserRuntime) -> dict[str, Any]:
         rt.last_screenshot_meta = meta
         return _ok(
             "screenshot",
-            f"Screenshot captured ({width}x{height}). Prefer DOM tools; "
-            "coordinates only via locate_on_screen / click_xy fallback.",
+            f"Screenshot captured ({width}x{height} CSS"
+            + (
+                f", png {img_wh[0]}x{img_wh[1]}"
+                if img_wh and img_wh != (width, height)
+                else ""
+            )
+            + ").",
             **meta,
             has_image=True,
         )

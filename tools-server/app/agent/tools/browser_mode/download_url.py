@@ -8,9 +8,9 @@ from typing import Optional
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from ... import config
-from ...core.browser import primitives as browser_tools
-from ..context import PlatformAgentContext, ensure_tender_workspace, to_json, trace
+from .... import config
+from ....core.browser import primitives as browser_tools
+from ...context import PlatformAgentContext, ensure_tender_workspace, to_json, trace
 
 
 class DownloadUrlInput(BaseModel):
@@ -50,7 +50,7 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
         args = {"url": url, "suggested_name": suggested_name}
         if not ctx.current_tender_id:
             # Browser-mode / без extract: взять id с текущего URL страницы
-            from ...domain.tender_id import resolve_tender_id
+            from ....domain.tender_id import resolve_tender_id
 
             try:
                 page_url = str(ctx.rt.page.url or "")
@@ -134,7 +134,7 @@ def make_tool(ctx: PlatformAgentContext) -> StructuredTool:
             if result.get("ok"):
                 ctx.downloaded_urls.add(url)
                 try:
-                    from ...domain import manifest as manifest_mod
+                    from ....domain import manifest as manifest_mod
 
                     file_path = str(result.get("file") or "")
                     manifest_mod.append_file(

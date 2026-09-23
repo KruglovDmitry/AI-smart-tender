@@ -28,7 +28,8 @@ def health():
             "model": config.AGENT_LLM_MODEL,
             "max_steps": config.PLATFORM_MAX_STEPS,
             "max_new_tenders": config.PLATFORM_MAX_NEW_TENDERS,
-            "mode_default": getattr(config, "PLATFORM_AGENT_MODE", "full"),
+            "mode_default": getattr(config, "PLATFORM_AGENT_MODE", "platform"),
+            "vision_backend": getattr(config, "AGENT_VISION_BACKEND", "qwen_vl"),
         },
     }
 

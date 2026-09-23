@@ -1,5 +1,5 @@
 """Tender domain package."""
 
-from . import dedup, manifest, workspace
+from . import dedup, finish, manifest, overview, workspace
 
-__all__ = ["dedup", "manifest", "workspace"]
+__all__ = ["dedup", "finish", "manifest", "overview", "workspace"]

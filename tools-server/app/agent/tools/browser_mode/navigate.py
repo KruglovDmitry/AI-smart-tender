@@ -5,9 +5,9 @@ from __future__ import annotations
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from ...core.browser import primitives as browser_tools
-from ..context import PlatformAgentContext, note_results_url, to_json, trace
-from ...domain.tender_id import resolve_tender_id
+from ....core.browser import primitives as browser_tools
+from ...context import PlatformAgentContext, note_results_url, to_json, trace
+from ....domain.tender_id import resolve_tender_id
 
 
 class NavigateInput(BaseModel):

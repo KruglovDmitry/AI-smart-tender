@@ -77,8 +77,8 @@ async def test_platform_scenario(scenario_id: int, require_agent_llm: None) -> N
     if scenario_id == 1:
         assert data.get("success") is True, data.get("summary")
         assert "zakupki.gov.ru" in url
-        assert "get_page_text" in tools or "screenshot" in tools
-        assert "finish_platform_task" in tools
+        assert "dom_snapshot" in tools or "open_platform_search" in tools or "navigate" in tools
+        assert "finish" in tools
         return
 
     if scenario_id == 2:
@@ -94,7 +94,7 @@ async def test_platform_scenario(scenario_id: int, require_agent_llm: None) -> N
         assert "notice" in url or "regNumber" in url or data.get("processed_tenders"), (
             f"expected tender card, got url={url!r} processed={data.get('processed_tenders')}"
         )
-        assert "extract_tender_id" in tools or data.get("processed_tenders")
+        assert "open_tender" in tools or data.get("processed_tenders")
         return
 
     if scenario_id == 4:

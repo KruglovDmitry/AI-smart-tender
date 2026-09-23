@@ -5,8 +5,8 @@ from __future__ import annotations
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from ...core.browser import primitives as browser_tools
-from ..context import PlatformAgentContext, to_json, trace
+from ....core.browser import primitives as browser_tools
+from ...context import PlatformAgentContext, to_json, trace
 
 
 class GetPageTextInput(BaseModel):

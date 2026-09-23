@@ -12,8 +12,8 @@ SCENARIOS: dict[int, dict[str, Any]] = {
         "max_new_tenders": 1,
         "instruction": (
             "СЦЕНАРИЙ 1 (только открытие). Платформа уже открыта или открой platform_url. "
-            "Проверь загрузку (get_page_text). НЕ ищи, НЕ кликай поиск. "
-            "finish_platform_task(success=true) с URL и title."
+            "Проверь загрузку (dom_snapshot или inspect_screen). НЕ ищи. "
+            "finish(success=true) с URL и title."
         ),
     },
     2: {
@@ -22,9 +22,7 @@ SCENARIOS: dict[int, dict[str, Any]] = {
         "max_steps": 20,
         "max_new_tenders": 1,
         "instruction": (
-            "СЦЕНАРИЙ 2 (поиск). Предпочтительно navigate сразу на "
-            "https://zakupki.gov.ru/epz/order/extendedsearch/results.html?searchString=<urlencoded keywords>. "
-            "Либо screenshot→type_text с обязательными x,y→Enter. "
+            "СЦЕНАРИЙ 2 (поиск). open_platform_search(keywords) или navigate на results URL. "
             "НЕ вызывай finish пока URL не содержит results.html или searchString. "
             "НЕ открывай карточки, НЕ качай. finish: URL выдачи."
         ),
@@ -35,12 +33,9 @@ SCENARIOS: dict[int, dict[str, Any]] = {
         "max_steps": 30,
         "max_new_tenders": 1,
         "instruction": (
-            "СЦЕНАРИЙ 3 (первая карточка). Поиск по keywords → collect_card_urls → "
-            "filter_unseen_tenders → navigate(первый new[].tender_url). "
-            "НЕ click_xy вместо navigate, если href уже есть. "
-            "Успех ТОЛЬКО если текущий URL после navigate — карточка (не results/search). "
-            "Если после клика/перехода всё ещё выдача — НЕ finish(success=true), повтори navigate. "
-            "extract_tender_id + check_tender_seen; seen → следующий href по порядку. "
+            "СЦЕНАРИЙ 3 (первая карточка). open_platform_search → list_new_cards → "
+            "open_tender(первый new[].tender_url). "
+            "Успех ТОЛЬКО если URL — карточка (не results/search). "
             "НЕ качай документы. finish: реальные URL и tender_id из tool results."
         ),
     },
@@ -50,10 +45,9 @@ SCENARIOS: dict[int, dict[str, Any]] = {
         "max_steps": 40,
         "max_new_tenders": 1,
         "instruction": (
-            "СЦЕНАРИЙ 4 (документы). Поиск → карточка → extract_tender_id → "
-            "save_tender_overview на common-info → вкладка Документы → "
-            "скачай 1–3 файла kind=file в папку тендера (не футер). mark_tender_seen. "
-            "finish_platform_task: что скачал и путь папки."
+            "СЦЕНАРИЙ 4 (документы). open_platform_search → list_new_cards → open_tender → "
+            "save_overview → list_tender_documents → download_document (1–3 файла) → "
+            "mark_processed. finish: что скачал и путь папки."
         ),
     },
 }

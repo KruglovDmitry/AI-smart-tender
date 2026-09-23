@@ -114,6 +114,11 @@ async def click_by_id(rt: BrowserRuntime, el_id: int) -> dict[str, Any]:
         if handle is None:
             return _err("click_by_id", f"No element with data-agent-id={el_id}", id=el_id)
 
+        try:
+            await handle.scroll_into_view_if_needed(timeout=5_000)
+        except Exception:
+            pass
+
         ctx = page.context
         pages_before = list(ctx.pages)
         await handle.click(timeout=10_000)
@@ -161,7 +166,13 @@ async def click_by_id(rt: BrowserRuntime, el_id: int) -> dict[str, Any]:
         return _err("click_by_id", str(e), id=el_id, url=page.url)
 
 
-async def fill_by_id(rt: BrowserRuntime, el_id: int, text: str) -> dict[str, Any]:
+async def fill_by_id(
+    rt: BrowserRuntime,
+    el_id: int,
+    text: str,
+    *,
+    submit: bool = False,
+) -> dict[str, Any]:
     """Focus + fill text into element tagged by snapshot_interactive."""
     page = rt.page
     el_id = int(el_id)
@@ -170,6 +181,11 @@ async def fill_by_id(rt: BrowserRuntime, el_id: int, text: str) -> dict[str, Any
         handle = await page.query_selector(f'[data-agent-id="{el_id}"]')
         if handle is None:
             return _err("fill_by_id", f"No element with data-agent-id={el_id}", id=el_id)
+
+        try:
+            await handle.scroll_into_view_if_needed(timeout=5_000)
+        except Exception:
+            pass
 
         tag = (await handle.evaluate("el => (el.tagName || '').toLowerCase()")).lower()
         await handle.click(timeout=5_000)
@@ -181,6 +197,10 @@ async def fill_by_id(rt: BrowserRuntime, el_id: int, text: str) -> dict[str, Any
             await page.keyboard.press("Backspace")
             await page.keyboard.type(text, delay=15)
 
+        if submit:
+            await page.keyboard.press("Enter")
+            await page.wait_for_timeout(250)
+
         value = await handle.evaluate(
             """el => {
               if (el.value != null) return String(el.value);
@@ -189,10 +209,12 @@ async def fill_by_id(rt: BrowserRuntime, el_id: int, text: str) -> dict[str, Any
         )
         return _ok(
             "fill_by_id",
-            f"Filled element id={el_id} ({len(text)} chars)",
+            f"Filled element id={el_id} ({len(text)} chars)"
+            + (" + Enter" if submit else ""),
             id=el_id,
             text=text,
             value=value,
+            submit=bool(submit),
             url=page.url,
         )
     except Exception as e:
@@ -206,9 +228,11 @@ async def query(
     text: str | None = None,
     placeholder: str | None = None,
     href_re: str | None = None,
+    query: str | None = None,
 ) -> list[dict[str, Any]]:
     """
-    Filter last snapshot (or take a fresh one) by role/text/placeholder/href_re.
+    Filter last snapshot (or take a fresh one) by role/text/placeholder/href_re/query.
+    `query` matches against name/placeholder/role/tag (case-insensitive substring).
     Returns matching element dicts (same shape as snapshot items).
     """
     snap = await snapshot_interactive(rt)
@@ -217,6 +241,7 @@ async def query(
     role_l = (role or "").strip().lower() or None
     text_l = (text or "").strip().lower() or None
     ph_l = (placeholder or "").strip().lower() or None
+    q_l = (query or "").strip().lower() or None
 
     out: list[dict[str, Any]] = []
     for el in elements:
@@ -239,5 +264,71 @@ async def query(
             href = el.get("href") or ""
             if not href_pat.search(href):
                 continue
+        if q_l:
+            blob = " ".join(
+                [
+                    str(el.get("name") or ""),
+                    str(el.get("placeholder") or ""),
+                    str(el.get("role") or ""),
+                    str(el.get("tag") or ""),
+                    str(el.get("href") or ""),
+                ]
+            ).lower()
+            if q_l not in blob:
+                continue
         out.append(el)
     return out
+
+
+def prioritize_elements(elements: list[dict[str, Any]], *, limit: int = 150) -> list[dict[str, Any]]:
+    """inputs → buttons/tabs → links with text; cap at limit."""
+
+    def rank(el: dict[str, Any]) -> tuple[int, int]:
+        tag = (el.get("tag") or "").lower()
+        role = (el.get("role") or "").lower()
+        name = (el.get("name") or "").strip()
+        if tag in {"input", "textarea"} or role in {"textbox", "searchbox", "combobox"}:
+            return (0, el.get("id") or 0)
+        if tag == "button" or role in {"button", "tab", "menuitem"}:
+            return (1, el.get("id") or 0)
+        if tag == "a" or role == "link":
+            return (2 if name else 3, el.get("id") or 0)
+        return (4, el.get("id") or 0)
+
+    ordered = sorted(elements, key=rank)
+    return ordered[: max(1, int(limit))]
+
+
+async def snapshot_for_agent(
+    rt: BrowserRuntime,
+    query_str: str | None = None,
+    *,
+    limit: int = 150,
+) -> dict[str, Any]:
+    """
+    Agent-facing DOM snapshot: optional query filter; without query — prioritized ≤ limit.
+    """
+    q = (query_str or "").strip() or None
+    if q:
+        elements = await query(rt, query=q)
+        return _ok(
+            "dom_snapshot",
+            f"query={q!r}: {len(elements)} matches",
+            url=rt.page.url,
+            query=q,
+            elements=elements,
+            count=len(elements),
+        )
+    snap = await snapshot_interactive(rt)
+    if not snap.get("ok"):
+        return snap
+    full = list(snap.get("elements") or [])
+    elements = prioritize_elements(full, limit=limit)
+    return _ok(
+        "dom_snapshot",
+        f"{len(elements)}/{len(full)} interactive elements (prioritized)",
+        url=snap.get("url") or rt.page.url,
+        elements=elements,
+        count=len(elements),
+        total=len(full),
+    )

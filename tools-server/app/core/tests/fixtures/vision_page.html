@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>Vision fixture</title>
+  <style>
+    body { margin: 0; font-family: sans-serif; }
+    #pad { height: 80px; }
+    #docs {
+      position: absolute; left: 40px; top: 100px;
+      width: 160px; height: 40px; line-height: 40px; text-align: center;
+      background: #3366cc; color: #fff; border: none; cursor: pointer;
+    }
+    #download {
+      position: absolute; left: 220px; top: 100px;
+      width: 140px; height: 40px; line-height: 40px; text-align: center;
+      display: inline-block; background: #228833; color: #fff; text-decoration: none;
+    }
+    #empty { position: absolute; left: 500px; top: 400px; width: 20px; height: 20px; }
+    #status { position: absolute; left: 40px; top: 160px; }
+  </style>
+</head>
+<body>
+  <div id="pad"></div>
+  <button id="docs" type="button">Документы</button>
+  <a id="download" href="https://example.com/file.pdf">Скачать</a>
+  <div id="empty"></div>
+  <p id="status">idle</p>
+  <script>
+    document.getElementById('docs').addEventListener('click', function () {
+      document.getElementById('status').textContent = 'docs-clicked';
+    });
+  </script>
+</body>
+</html>

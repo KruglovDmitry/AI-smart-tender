@@ -61,8 +61,9 @@ AGENT_VISION_BACKEND = os.getenv("AGENT_VISION_BACKEND", "ui_tars").strip().lowe
 # pixel — model returns PNG/viewport pixels; norm1000 — 0..1000 grid over PNG
 _AGENT_VL_COORDS = os.getenv("AGENT_VL_COORDS", "pixel").strip().lower()
 AGENT_VL_COORDS = _AGENT_VL_COORDS if _AGENT_VL_COORDS in {"pixel", "norm1000"} else "pixel"
-# UI-TARS-1.5 via OpenAI-compatible vLLM (Mode A GROUNDING fallback)
-UI_TARS_BASE_URL = os.getenv("UI_TARS_BASE_URL", "http://10.127.0.41:8000").rstrip("/")
+# UI-TARS-1.5 via OpenAI-compatible vLLM (Mode A GROUNDING fallback).
+# Leave empty in defaults — set UI_TARS_BASE_URL in .env (e.g. http://host:8000).
+UI_TARS_BASE_URL = os.getenv("UI_TARS_BASE_URL", "").rstrip("/")
 UI_TARS_MODEL = os.getenv("UI_TARS_MODEL", "ui-tars")
 UI_TARS_API_KEY = os.getenv("UI_TARS_API_KEY", "EMPTY")
 AGENT_PRIMARY_MULTIMODAL = os.getenv("AGENT_PRIMARY_MULTIMODAL", "false").lower() in {

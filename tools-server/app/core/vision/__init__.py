@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ... import config
-from .act import click_on_screen, inspect_screen
+from .act import click_on_screen, ground_validated, inspect_screen
 from .base import (
     GroundingCandidate,
     GroundingResult,
@@ -40,5 +40,6 @@ __all__ = [
     "get_vision_backend",
     "validate_point",
     "click_on_screen",
+    "ground_validated",
     "inspect_screen",
 ]

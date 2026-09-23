@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import logging
-import time
-
-import httpx
 
 from ..base import GroundingCandidate, GroundingResult, InspectionResult
 from ..scale import png_pixel_size
@@ -35,6 +32,16 @@ class UiTarsBackend:
         viewport: tuple[int, int],
     ) -> GroundingResult:
         model = self.client.model
+        if not self.client.configured:
+            return GroundingResult(
+                found=False,
+                action="none",
+                candidates=[],
+                backend=self.name,
+                model=model,
+                note="UI_TARS_BASE_URL is not set",
+                raw_response="",
+            )
         if not image_b64:
             return GroundingResult(
                 found=False,
@@ -46,7 +53,7 @@ class UiTarsBackend:
                 raw_response="",
             )
 
-        api = self.client.ground(image_b64, target)
+        api = await self.client.ground(image_b64, target)
         latency = int(api.get("latency_ms") or 0)
         content = str(api.get("content") or "")
         if not api.get("ok"):
@@ -122,47 +129,28 @@ class UiTarsBackend:
             "Look at the screenshot. Answer briefly in Russian (1–3 sentences). "
             f"No coordinates.\nQuestion: {(question or '')[:800]}"
         )
-        payload = {
-            "model": self.client.model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{image_b64}"
-                            },
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{image_b64}"
                         },
-                    ],
-                }
-            ],
-            "temperature": 0,
-            "max_tokens": 300,
-        }
-        t0 = time.perf_counter()
-        try:
-            r = httpx.post(
-                f"{self.client.base_url}/v1/chat/completions",
-                json=payload,
-                headers={
-                    "Authorization": f"Bearer {self.client.api_key}",
-                    "Content-Type": "application/json",
-                },
-                timeout=self.client.timeout,
-            )
-            data = r.json() if r.status_code < 400 else {}
-            answer = (
-                ((data.get("choices") or [{}])[0].get("message") or {}).get("content")
-                or r.text[:300]
-            )
-        except Exception as e:
-            logger.warning("UiTarsBackend.inspect failed: %s", e)
-            answer = f"inspect error: {e}"
+                    },
+                ],
+            }
+        ]
+        api = await self.client.chat(messages, max_tokens=300)
+        answer = str(api.get("content") or "")
+        if not api.get("ok"):
+            answer = f"inspect error: {api.get('error') or 'request failed'}"
+            logger.warning("UiTarsBackend.inspect failed: %s", api.get("error"))
         return InspectionResult(
             answer=(answer or "").strip() or "(empty)",
             backend=self.name,
             model=self.client.model,
-            latency_ms=int((time.perf_counter() - t0) * 1000),
+            latency_ms=int(api.get("latency_ms") or 0),
         )

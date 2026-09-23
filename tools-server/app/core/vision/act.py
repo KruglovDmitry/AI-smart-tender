@@ -19,6 +19,175 @@ logger = logging.getLogger(__name__)
 _ACCEPT_STATUSES = frozenset({"accepted", "iframe", "weak_match"})
 
 
+async def ground_validated(
+    rt: Any,
+    goal: str,
+    *,
+    backend: VisionBackend | None = None,
+    run_id: str | None = None,
+    platform: str = "",
+) -> dict[str, Any]:
+    """
+    Screenshot → ground → validate_point. Does NOT click.
+
+    For platform adapters that need a verified point before click_xy / type_text.
+    Writes a vision sample when run_id is set (same dataset as click_on_screen).
+    """
+    from . import get_vision_backend
+
+    goal = (goal or "").strip()
+    shot = await core_screenshot(rt)
+    if not shot.get("ok") or not getattr(rt, "last_screenshot_b64", None):
+        return {
+            "ok": False,
+            "x": None,
+            "y": None,
+            "validation": None,
+            "element": None,
+            "note": "screenshot failed",
+            "action": "none",
+        }
+
+    image_b64 = rt.last_screenshot_b64
+    vp = (
+        int(shot.get("width") or 1280),
+        int(shot.get("height") or 900),
+    )
+    be = backend or get_vision_backend()
+    grounded = await be.ground(image_b64, goal, vp)
+
+    if getattr(grounded, "action", None) == "not_found" or not grounded.candidates:
+        note = grounded.note or (
+            "not_found" if grounded.action == "not_found" else "grounding found nothing"
+        )
+        if run_id:
+            step = next_step(run_id)
+            if step is not None:
+                write_sample(
+                    run_id=run_id,
+                    step=step,
+                    image_b64=image_b64,
+                    meta={
+                        "platform": platform,
+                        "url": getattr(rt.page, "url", ""),
+                        "goal": goal,
+                        "backend": grounded.backend,
+                        "model": grounded.model,
+                        "viewport": list(vp),
+                        "candidates": [],
+                        "chosen": None,
+                        "validation": None,
+                        "action": grounded.action or "none",
+                        "source": "ground_validated",
+                        "latency_ms": grounded.latency_ms,
+                        "raw_response": getattr(grounded, "raw_response", "") or "",
+                    },
+                )
+        return {
+            "ok": False,
+            "x": None,
+            "y": None,
+            "validation": None,
+            "element": None,
+            "note": note,
+            "action": grounded.action or "none",
+            "backend": grounded.backend,
+            "model": grounded.model,
+            "latency_ms": grounded.latency_ms,
+        }
+
+    chosen: GroundingCandidate | None = None
+    validation: dict[str, Any] | None = None
+    for cand in grounded.candidates[:3]:
+        validation = await validate_point(rt, cand.x, cand.y, goal)
+        if validation.get("status") in _ACCEPT_STATUSES:
+            chosen = cand
+            break
+
+    if chosen is None:
+        note = "all candidates rejected by validate_point"
+        if validation:
+            note = f"{note}: {validation.get('status')}"
+        if run_id:
+            step = next_step(run_id)
+            if step is not None:
+                write_sample(
+                    run_id=run_id,
+                    step=step,
+                    image_b64=image_b64,
+                    meta={
+                        "platform": platform,
+                        "url": getattr(rt.page, "url", ""),
+                        "goal": goal,
+                        "backend": grounded.backend,
+                        "model": grounded.model,
+                        "viewport": list(vp),
+                        "candidates": [
+                            {"x": c.x, "y": c.y, "label": c.label}
+                            for c in grounded.candidates[:3]
+                        ],
+                        "chosen": None,
+                        "validation": validation,
+                        "action": "rejected",
+                        "source": "ground_validated",
+                        "latency_ms": grounded.latency_ms,
+                        "raw_response": getattr(grounded, "raw_response", "") or "",
+                    },
+                )
+        return {
+            "ok": False,
+            "x": None,
+            "y": None,
+            "validation": (validation or {}).get("status") if validation else None,
+            "element": (validation or {}).get("element") if validation else None,
+            "note": note,
+            "action": "rejected",
+            "backend": grounded.backend,
+            "model": grounded.model,
+            "latency_ms": grounded.latency_ms,
+        }
+
+    if run_id:
+        step = next_step(run_id)
+        if step is not None:
+            write_sample(
+                run_id=run_id,
+                step=step,
+                image_b64=image_b64,
+                meta={
+                    "platform": platform,
+                    "url": getattr(rt.page, "url", ""),
+                    "goal": goal,
+                    "backend": grounded.backend,
+                    "model": grounded.model,
+                    "viewport": list(vp),
+                    "candidates": [
+                        {"x": c.x, "y": c.y, "label": c.label}
+                        for c in grounded.candidates[:3]
+                    ],
+                    "chosen": {"x": chosen.x, "y": chosen.y, "label": chosen.label},
+                    "validation": validation,
+                    "action": "validated",
+                    "source": "ground_validated",
+                    "latency_ms": grounded.latency_ms,
+                    "raw_response": getattr(grounded, "raw_response", "") or "",
+                },
+            )
+
+    return {
+        "ok": True,
+        "x": chosen.x,
+        "y": chosen.y,
+        "validation": (validation or {}).get("status"),
+        "element": (validation or {}).get("element"),
+        "note": grounded.note or "",
+        "action": "click",
+        "backend": grounded.backend,
+        "model": grounded.model,
+        "latency_ms": grounded.latency_ms,
+    }
+
+
 async def _dom_fingerprint(rt: Any) -> str:
     try:
         snap = await browser_dom.snapshot_interactive(rt)

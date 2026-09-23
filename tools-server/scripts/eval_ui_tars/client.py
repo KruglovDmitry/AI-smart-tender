@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import sys
 import time
 from pathlib import Path
@@ -36,8 +37,8 @@ not_found()
 {instruction}
 """
 
-DEFAULT_BASE = "http://10.127.0.41:8000"
-DEFAULT_MODEL = "ui-tars"
+DEFAULT_BASE = os.environ.get("UI_TARS_BASE_URL", "").rstrip("/") or "http://127.0.0.1:8000"
+DEFAULT_MODEL = os.environ.get("UI_TARS_MODEL", "ui-tars")
 
 
 class UiTarsClient:

@@ -10,12 +10,15 @@ from urllib.parse import parse_qs, quote, urlencode, urljoin, urlparse, urlunpar
 
 from ..core.browser import dom as browser_dom
 from ..core.browser.page_kind import detect_page_kind
-from ..core.browser.primitives import list_download_links, navigate, screenshot
+from ..core.browser.primitives import list_download_links, navigate
 from ..core.browser.url_utils import bump_page_url
-from ..core.llm import vision as vision_mod
+from ..core.vision.act import ground_validated
 from .base import CardRef, DocRef, SearchSpec, StepResult
 
 logger = logging.getLogger(__name__)
+
+# Heuristic SPA adapter — selectors/URL patterns are unconfirmed without a live
+# platform log. Prefer URL search template; DOM/vision paths are fallbacks.
 
 HOST = "zakupki.rosatom.ru"
 
@@ -261,28 +264,38 @@ class ZakupkiRosatomRuAdapter:
             await _human_pause(rt, 2.0)
             return {"ok": True, "note": "dom_fill"}
 
-        # Vision fallback when DOM empty (SPA / anti-bot)
-        shot = await screenshot(rt)
-        if not shot.get("ok") or not rt.last_screenshot_b64:
-            return {"ok": False, "note": "no_dom_no_screenshot"}
-        vp = (
-            int(shot.get("width") or 1280),
-            int(shot.get("height") or 900),
+        # Vision fallback when DOM empty (SPA / anti-bot) — always validate_point
+        goal = (
+            "Поле поиска закупок (input/searchbox с placeholder Поиск) "
+            f"для ввода: {keywords}"
         )
-        loc = await vision_mod.locate(
-            rt.last_screenshot_b64,
-            f"Найди поле поиска закупок и кликни в него, чтобы ввести: {keywords}",
-            vp,
+        run_id = getattr(rt, "vision_run_id", None) or None
+        gv = await ground_validated(
+            rt,
+            goal,
+            run_id=run_id,
+            platform=HOST,
         )
-        if loc.get("found"):
-            from ..core.browser.primitives import click_xy, type_text
+        if not gv.get("ok"):
+            return {
+                "ok": False,
+                "note": f"vision_rejected:{gv.get('note')}:{gv.get('validation')}",
+            }
 
-            await click_xy(rt, float(loc["x"]), float(loc["y"]))
-            await type_text(rt, keywords, x=float(loc["x"]), y=float(loc["y"]))
-            await rt.page.keyboard.press("Enter")
-            await _human_pause(rt, 2.0)
-            return {"ok": True, "note": f"vision_locate:{loc.get('note')}"}
-        return {"ok": False, "note": f"vision_miss:{loc.get('note')}"}
+        from ..core.browser.primitives import click_xy, type_text
+
+        x, y = float(gv["x"]), float(gv["y"])
+        await click_xy(rt, x, y)
+        await type_text(rt, keywords, x=x, y=y)
+        await rt.page.keyboard.press("Enter")
+        await _human_pause(rt, 2.0)
+        return {
+            "ok": True,
+            "note": (
+                f"vision_validated:{gv.get('validation')}:"
+                f"{gv.get('backend')}:{gv.get('note')}"
+            ),
+        }
 
     async def collect_cards(self, rt: Any) -> list[CardRef]:
         await _human_pause(rt, 0.8)
@@ -412,18 +425,19 @@ class ZakupkiRosatomRuAdapter:
             await _human_pause(rt, 1.5)
             return bool(res.get("ok"))
 
-        # Vision fallback for pagination
-        shot = await screenshot(rt)
-        if shot.get("ok") and rt.last_screenshot_b64:
-            loc = await vision_mod.locate(
-                rt.last_screenshot_b64,
-                "Кнопка следующей страницы пагинации (далее / > / next)",
-                (int(shot.get("width") or 1280), int(shot.get("height") or 900)),
-            )
-            if loc.get("found"):
-                from ..core.browser.primitives import click_xy
+        # Vision fallback for pagination — validate before click
+        goal = "Кнопка следующей страницы пагинации (далее / Следующая / next / >)"
+        run_id = getattr(rt, "vision_run_id", None) or None
+        gv = await ground_validated(
+            rt,
+            goal,
+            run_id=run_id,
+            platform=HOST,
+        )
+        if not gv.get("ok"):
+            return False
+        from ..core.browser.primitives import click_xy
 
-                await click_xy(rt, float(loc["x"]), float(loc["y"]))
-                await _human_pause(rt, 1.5)
-                return True
-        return False
+        await click_xy(rt, float(gv["x"]), float(gv["y"]))
+        await _human_pause(rt, 1.5)
+        return True

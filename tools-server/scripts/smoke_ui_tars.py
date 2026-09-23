@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import struct
 import time
@@ -11,8 +12,8 @@ from pathlib import Path
 
 import httpx
 
-BASE = "http://10.127.0.41:8000"
-MODEL = "ui-tars"
+BASE = os.environ.get("UI_TARS_BASE_URL", "").rstrip("/") or "http://127.0.0.1:8000"
+MODEL = os.environ.get("UI_TARS_MODEL", "ui-tars")
 
 GROUNDING = """You are a GUI agent. You are given a task and your action history, with screenshots. You need to perform the next action to complete the task.
 

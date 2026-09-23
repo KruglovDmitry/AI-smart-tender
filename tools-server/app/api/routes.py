@@ -15,15 +15,18 @@ router = APIRouter()
 
 
 @router.get("/health")
-def health():
+async def health():
+    vision = await _vision_health()
+    status = "ok" if vision.get("ok") or not vision.get("required") else "degraded"
     return {
-        "status": "ok",
+        "status": status,
         "data_root": str(config.DATA_ROOT),
         "agent_llm_configured": bool(
             config.AGENT_LLM_BASE_URL and config.AGENT_LLM_API_KEY
         ),
         "primary_model": getattr(config, "AGENT_PRIMARY_MODEL", config.AGENT_LLM_MODEL),
         "vl_model": config.AGENT_VL_MODEL,
+        "vision": vision,
         "platform_agent": {
             "model": config.AGENT_LLM_MODEL,
             "max_steps": config.PLATFORM_MAX_STEPS,
@@ -32,6 +35,61 @@ def health():
             "vision_backend": getattr(config, "AGENT_VISION_BACKEND", "ui_tars"),
         },
     }
+
+
+async def _vision_health() -> dict:
+    """Probe the configured vision backend so /health fails loudly if GPU/vLLM is down."""
+    backend = getattr(config, "AGENT_VISION_BACKEND", "ui_tars")
+    if backend == "ui_tars":
+        from ..core.vision.ui_tars.client import UiTarsClient
+
+        probe = await UiTarsClient().probe()
+        return {
+            "backend": "ui_tars",
+            "required": True,
+            "ok": bool(probe.get("ok")),
+            "configured": bool(probe.get("configured")),
+            "base_url": probe.get("base_url") or config.UI_TARS_BASE_URL or None,
+            "model": probe.get("model") or config.UI_TARS_MODEL,
+            "latency_ms": probe.get("latency_ms"),
+            "note": probe.get("note"),
+        }
+    # qwen_vl uses the same OpenAI-compatible LLM gateway
+    base = (config.AGENT_LLM_BASE_URL or "").rstrip("/")
+    if not base or not config.AGENT_LLM_API_KEY:
+        return {
+            "backend": backend,
+            "required": True,
+            "ok": False,
+            "configured": False,
+            "note": "AGENT_LLM_BASE_URL / AGENT_LLM_API_KEY not set",
+        }
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(
+                f"{base}/v1/models",
+                headers={"Authorization": f"Bearer {config.AGENT_LLM_API_KEY}"},
+            )
+        return {
+            "backend": backend,
+            "required": True,
+            "ok": r.status_code < 400,
+            "configured": True,
+            "base_url": base,
+            "model": config.AGENT_VL_MODEL,
+            "note": None if r.status_code < 400 else f"HTTP {r.status_code}",
+        }
+    except Exception as e:
+        return {
+            "backend": backend,
+            "required": True,
+            "ok": False,
+            "configured": True,
+            "base_url": base,
+            "note": str(e)[:200],
+        }
 
 
 @router.post("/run_platform_task")

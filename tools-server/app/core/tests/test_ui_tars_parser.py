@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.core.vision import get_vision_backend
 from app.core.vision.ui_tars.parser import (
     parse_grounding_response,
@@ -46,3 +48,22 @@ def test_parse_to_css_identity_viewport() -> None:
 def test_registry_has_ui_tars() -> None:
     b = get_vision_backend("ui_tars")
     assert b.name == "ui_tars"
+
+
+def test_ui_tars_client_requires_base_url(monkeypatch) -> None:
+    from app.core.vision.ui_tars.client import UiTarsClient
+
+    monkeypatch.setattr("app.config.UI_TARS_BASE_URL", "")
+    c = UiTarsClient(base_url="")
+    assert not c.configured
+
+
+@pytest.mark.asyncio
+async def test_ui_tars_ground_empty_url() -> None:
+    from app.core.vision.ui_tars.backend import UiTarsBackend
+    from app.core.vision.ui_tars.client import UiTarsClient
+
+    be = UiTarsBackend(client=UiTarsClient(base_url=""))
+    r = await be.ground("abc", "кнопка", (1280, 900))
+    assert not r.found
+    assert "UI_TARS_BASE_URL" in (r.note or "")

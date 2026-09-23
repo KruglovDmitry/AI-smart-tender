@@ -383,6 +383,11 @@ async def run_platform_task(
             downloads_root=downloads,
         )
         ctx.vision_run_id = run_id
+        # Adapters (Rosatom vision fallback) read samples run_id from the runtime
+        try:
+            rt.vision_run_id = run_id  # type: ignore[attr-defined]
+        except Exception:
+            pass
         ctx.inject_screenshots = mode == "browser" and config.AGENT_PRIMARY_MULTIMODAL
         ctx.trace.append(
             {"tool": "navigate", "args": {"url": platform_url}, "result": nav}

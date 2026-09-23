@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.browser_agent.tools.tender_id import resolve_tender_id
+from app.domain.tender_id import resolve_tender_id
 
 
 def test_reg_number_query() -> None:

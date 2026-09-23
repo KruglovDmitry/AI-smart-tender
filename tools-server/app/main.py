@@ -99,71 +99,6 @@ class FetchUrlBody(BaseModel):
     )
 
 
-class PlatformTaskBody(BaseModel):
-    platform_url: str = Field(
-        ...,
-        description="Tender platform base URL, e.g. https://zakupki.gov.ru/",
-    )
-    keywords: str = Field(
-        ...,
-        description="Search keywords for new tenders on the platform.",
-    )
-    max_new_tenders: int | None = Field(
-        None,
-        description=f"Max NEW tenders to process (default {config.PLATFORM_MAX_NEW_TENDERS}).",
-    )
-    max_steps: int | None = Field(
-        None,
-        description=f"Max agent steps (default {config.PLATFORM_MAX_STEPS}).",
-    )
-    download_subdir: str | None = Field(
-        None,
-        description=(
-            "Optional override of session folder under data/tenders/. "
-            "Default: platform host, e.g. zakupki_gov_ru."
-        ),
-    )
-    instruction: str | None = Field(
-        None,
-        description=(
-            "Optional override of the agent user request "
-            "(used by debug/integration scripts)."
-        ),
-    )
-    tools_mode: str | None = Field(
-        None,
-        description=(
-            "Tool set: 'full' | 'browser' | 'platform' (adapter high-level). "
-            f"Default PLATFORM_AGENT_MODE ({getattr(config, 'PLATFORM_AGENT_MODE', 'full')})."
-        ),
-    )
-
-
-class BrowserTaskBody(BaseModel):
-    task: str = Field(
-        ...,
-        description=(
-            "Natural-language task for the browser agent, e.g. "
-            "'Скачай все документы со страницы тендера и кратко опиши лот'."
-        ),
-    )
-    url: str | None = Field(
-        None,
-        description="Optional starting URL (agent will navigate here first).",
-    )
-    max_steps: int | None = Field(
-        None,
-        description=f"Max tool steps (default {config.BROWSER_MAX_STEPS}).",
-    )
-    download_subdir: str | None = Field(
-        None,
-        description=(
-            "Optional folder name under data/tenders/ for downloads "
-            "(default data/tenders/_browser)."
-        ),
-    )
-
-
 
 
 
@@ -258,36 +193,3 @@ def api_fetch_url(body: FetchUrlBody):
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Fetch failed: {e}") from e
-
-
-@app.post(
-    "/run_browser_task",
-    summary="Run browser agent on a tender URL / task",
-    description=(
-        "Starts an internal browser agent with tools: navigate, screenshot, "
-        "click_xy, type_text, list_download_links, download_url, get_page_text, finish. "
-        "The agent itself chooses DOM vs vision path — no fixed grounding stage. "
-        "Requires AGENT_LLM_* env (prefer a VL-capable OpenAI-compatible model)."
-    ),
-)
-async def api_run_browser_task(body: BrowserTaskBody):
-    try:
-        from .browser_tool.agent import run_browser_task
-
-        return await run_browser_task(
-            task=body.task,
-            url=body.url,
-            max_steps=body.max_steps,
-            download_subdir=body.download_subdir,
-        )
-    except ImportError as e:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Playwright is not installed in the container: {e}",
-        ) from e
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e)) from e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Browser agent failed: {e}") from e

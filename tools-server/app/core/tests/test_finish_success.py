@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.browser_agent.tools.finish_platform_task import resolve_finish_success
+from app.agent.tools.finish_platform_task import resolve_finish_success
 
 
 def test_success_with_processed() -> None:

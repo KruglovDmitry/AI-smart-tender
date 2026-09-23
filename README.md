@@ -57,7 +57,7 @@ Swagger: [http://localhost:8000/docs](http://localhost:8000/docs).
 
 **Навсегда для модели (рекомендуется):**
 1. Рабочее пространство → **Модели** → **Тендер агент** (или deepseek) → ✎
-2. Секция **Tools** — отметь `list_documents`, `read_document`, `read_folder`, `fetch_url`, `run_browser_task`, `run_platform_task`
+2. Секция **Tools** — отметь `list_documents`, `read_document`, `read_folder`, `fetch_url`, `run_platform_task`, `run_tender_download`
 3. Advanced → **Function Calling = Native**
 4. Сохранить
 
@@ -74,7 +74,7 @@ Swagger: [http://localhost:8000/docs](http://localhost:8000/docs).
 
 > Покажи файлы в папке tenders и прочитай sample-tender.txt вместе с каталогом catalogs/sample-catalog.csv. Подбери аналоги.
 
-> Через browser-агент обработай тендер https://… — скачай документацию и кратко опиши лот.
+> Через run_tender_download обработай карточку https://… — скачай документацию и кратко опиши лот.
 
 > Открой ссылку https://example.com и кратко перескажи, о чём страница.
 
@@ -85,7 +85,7 @@ Swagger: [http://localhost:8000/docs](http://localhost:8000/docs).
 ## Platform agent (`run_platform_task`)
 
 LangChain-агент в стиле **AI-booking**: `create_openai_tools_agent` + `AgentExecutor`
-(системный промпт в `browser_agent/agent.py`).
+(системный промпт в `agent/loop.py`).
 
 - ищет тендеры на платформе (`platform_url` + `keywords`)
 - дедуплицирует через SQLite (`data/_state/seen_tenders.sqlite3`)
@@ -101,22 +101,21 @@ curl -X POST http://localhost:8000/run_platform_task `
   -d '{"platform_url":"https://zakupki.gov.ru/","keywords":"счётчик газа","max_new_tenders":2}'
 ```
 
-## Browser agent (`run_browser_task`)
+## Single tender download (`run_tender_download`)
 
-Внутри tools-server крутится **агент с tools** (без фиксированного grounding):
-`navigate`, `screenshot`, `click_xy`, `type_text`, `list_download_links`, `download_url`, `get_page_text`, `finish`.
+Тонкий вход: adapter `open_card` → `collect_documents` → `download` в `data/tenders/<host>/<tender_id>/` + `manifest.json`.
 
-Агент сам решает: DOM, vision или оба. Нужны переменные:
+Замена старого `run_browser_task` (удалён). Нужны те же `AGENT_LLM_*` / Playwright, что и для platform agent.
 
-```env
-AGENT_LLM_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
-AGENT_LLM_API_KEY=sk-...
-AGENT_LLM_MODEL=qwen-max
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/run_tender_download `
+  -Method POST -ContentType "application/json" `
+  -Body '{"tender_url":"https://zakupki.gov.ru/epz/order/notice/.../common-info.html?regNumber=..."}'
 ```
 
-> `qwen-vl-max` на intl часто **не** делает function calling. Для агента с tools берите `qwen-max` / `qwen-plus`. Endpoint для intl-ключа: `dashscope-intl.aliyuncs.com`.
+## Platform agent notes
 
-Скачивания: `data/tenders/_browser/`.
+Режимы `tools_mode`: `full` | `browser` | `platform` (high-level adapter tools).
 
 ## Как устроено чтение документов
 

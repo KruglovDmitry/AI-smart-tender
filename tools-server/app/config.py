@@ -17,6 +17,12 @@ BROWSER_VIEWPORT_WIDTH = int(os.getenv("BROWSER_VIEWPORT_WIDTH", "1280"))
 BROWSER_VIEWPORT_HEIGHT = int(os.getenv("BROWSER_VIEWPORT_HEIGHT", "900"))
 BROWSER_MAX_STEPS = int(os.getenv("BROWSER_MAX_STEPS", "20"))
 BROWSER_NAV_TIMEOUT_MS = int(os.getenv("BROWSER_NAV_TIMEOUT_MS", "60000"))
+# Off by default on VPS (no access to tender platforms). Set true to enable.
+BROWSER_AGENT_ENABLED = os.getenv("BROWSER_AGENT_ENABLED", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+}
 BROWSER_DOWNLOADS_DIR = Path(
     os.getenv("BROWSER_DOWNLOADS_DIR", str(DATA_ROOT / "tenders" / "_browser"))
 ).resolve()

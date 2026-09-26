@@ -105,6 +105,7 @@ def health():
         "status": "ok",
         "data_root": str(config.DATA_ROOT),
         "browser_agent": {
+            "enabled": config.BROWSER_AGENT_ENABLED,
             "llm_configured": bool(
                 config.AGENT_LLM_BASE_URL and config.AGENT_LLM_API_KEY
             ),
@@ -217,13 +218,20 @@ def api_fetch_url(body: FetchUrlBody):
     "/run_browser_task",
     summary="Run browser agent on a tender URL / task",
     description=(
-        "Starts an internal browser agent with tools: navigate, screenshot, "
-        "click_xy, type_text, list_download_links, download_url, get_page_text, finish. "
-        "The agent itself chooses DOM vs vision path — no fixed grounding stage. "
-        "Requires AGENT_LLM_* env (prefer a VL-capable OpenAI-compatible model)."
+        "DISABLED by default (BROWSER_AGENT_ENABLED=false): tender platforms "
+        "are not reachable from the server. Enable only when VPN/access is available."
     ),
+    include_in_schema=config.BROWSER_AGENT_ENABLED,
 )
 async def api_run_browser_task(body: BrowserTaskBody):
+    if not config.BROWSER_AGENT_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Browser agent is disabled (BROWSER_AGENT_ENABLED=false). "
+                "Tender platforms are not accessible from this server."
+            ),
+        )
     try:
         from .browser_tool.agent import run_browser_task
 

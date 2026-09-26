@@ -12,12 +12,28 @@ data/catalogs/**
 !data/catalogs/sample-*
 data/uploads/**
 !data/uploads/.gitkeep
+data/exports/**
+!data/exports/.gitkeep
+
+# Локальные логи / дебаг / state
+data/_logs/
+data/_state/
+data/debug-*.json
+data/vision_samples/
+tools-server/data/
+
+# Playwright / Chromium profile (тысячи файлов кэша)
+.browser-profile/
+**/browser-profile/
+**/tender-browser-profile/
 
 # Локальные артефакты
 tmp-*.json
 __pycache__/
 *.pyc
+.pytest_cache/
 .venv/
 venv/
 .DS_Store
 Thumbs.db
+*.pma

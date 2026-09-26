@@ -67,6 +67,8 @@ services:
 volumes:
   open-webui:
     external: true
+    name: ai-smart-tender_open-webui-data
   ollama:
     external: true
+    name: ai-smart-tender_ollama-data
   browser-profile:

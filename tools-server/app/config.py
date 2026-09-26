@@ -6,6 +6,9 @@ from pathlib import Path
 DATA_ROOT = Path(os.getenv("DATA_ROOT", "/data")).resolve()
 HOST = os.getenv("TOOLS_HOST", "0.0.0.0")
 PORT = int(os.getenv("TOOLS_PORT", "8000"))
+# Public URL of tools-server as seen by the user's browser (for download links).
+# Example: http://localhost:8000 or https://vps.example.com:8000
+TOOLS_PUBLIC_BASE_URL = os.getenv("TOOLS_PUBLIC_BASE_URL", "").rstrip("/")
 
 DEFAULT_MAX_CHARS = int(os.getenv("DEFAULT_MAX_CHARS", "120000"))
 DEFAULT_MAX_FILES = int(os.getenv("DEFAULT_MAX_FILES", "30"))

@@ -133,6 +133,11 @@ async def test_validate_point_statuses(vision_rt) -> None:
     empty = await validate_point(vision_rt, 700, 500, "Документы")
     assert empty["status"] in {"rejected_no_element", "rejected_not_interactive"}
 
+    # Search field: «поиска» ↔ placeholder «Поиск» (stem), input accepted
+    search = await validate_point(vision_rt, 140, 236, "Поле поиска закупок")
+    assert search["status"] == "accepted"
+    assert search["element"]["tag"] == "INPUT"
+
 
 class _MockBackend:
     name = "mock"

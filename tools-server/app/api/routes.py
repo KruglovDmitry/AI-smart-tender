@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -119,11 +121,18 @@ async def run_platform_task_route(body: PlatformTaskBody):
 @router.post("/run_tender_download")
 async def run_tender_download_route(body: TenderDownloadBody):
     """Open one card via adapter, collect docs, download into tenders/<host>/<id>/."""
-    from ..core.browser.primitives import download_url
+    from datetime import datetime, timezone
+
+    from ..agent.loop import _write_debug_json
+    from ..core.browser.primitives import download_url, get_page_text
     from ..core.browser.session import browser_runtime
+    from ..core.llm.usage import bind_usage, current_usage
     from ..domain import manifest as manifest_mod
+    from ..domain import overview as overview_mod
     from ..domain.workspace import safe_tender_dirname, switch_downloads
 
+    bind_usage()
+    t0 = time.perf_counter()
     url = (body.tender_url or "").strip()
     if not url.startswith("http"):
         raise HTTPException(status_code=400, detail="tender_url must be http(s)")
@@ -149,6 +158,37 @@ async def run_tender_download_route(body: TenderDownloadBody):
         manifest_mod.ensure_manifest(
             folder, tender_id=tid, platform=host, tender_url=step.url or url
         )
+        overview_path = None
+        overview_error = None
+        overview_brief = None
+        try:
+            page = await get_page_text(rt, 12000)
+            payload = await overview_mod.extract_overview(
+                tender_id=tid,
+                tender_url=step.url or url,
+                page_url=str(page.get("url") or step.url or url),
+                page_title=str(page.get("title") or ""),
+                page_text=str(page.get("text") or ""),
+                platform=host,
+            )
+            out_path = folder / "overview.json"
+            out_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            manifest_mod.upsert_overview_fields(
+                folder, {**payload, "platform": host, "tender_id": tid}
+            )
+            overview_path = str(out_path)
+            overview_brief = {
+                "object": payload.get("object"),
+                "customer": payload.get("customer"),
+                "price": payload.get("price"),
+                "deadline": payload.get("deadline"),
+            }
+        except Exception as e:
+            overview_error = str(e)
+
         docs = await adapter.collect_documents(rt)
         downloaded = []
         for doc in docs[: body.max_files]:
@@ -166,7 +206,8 @@ async def run_tender_download_route(body: TenderDownloadBody):
                     tender_url=step.url or url,
                 )
                 downloaded.append(res)
-        return {
+        run_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + tid[:40]
+        result = {
             "ok": True,
             "adapter": getattr(adapter, "display_name", host),
             "tender_id": tid,
@@ -175,4 +216,14 @@ async def run_tender_download_route(body: TenderDownloadBody):
             "documents_found": len(docs),
             "downloaded": downloaded,
             "manifest": str(manifest_mod.manifest_path(folder)),
+            "overview_path": overview_path,
+            "overview": overview_brief,
+            "overview_error": overview_error,
+            "model": config.AGENT_PRIMARY_MODEL,
+            "usage": current_usage(),
+            "wall_time_s": round(time.perf_counter() - t0, 1),
         }
+        debug_path = _write_debug_json(run_id, result)
+        if debug_path is not None:
+            result["debug_json"] = str(debug_path)
+        return result

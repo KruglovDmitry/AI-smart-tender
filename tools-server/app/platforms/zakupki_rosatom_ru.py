@@ -265,10 +265,7 @@ class ZakupkiRosatomRuAdapter:
             return {"ok": True, "note": "dom_fill"}
 
         # Vision fallback when DOM empty (SPA / anti-bot) — always validate_point
-        goal = (
-            "Поле поиска закупок (input/searchbox с placeholder Поиск) "
-            f"для ввода: {keywords}"
-        )
+        goal = "Поле поиска закупок"
         run_id = getattr(rt, "vision_run_id", None) or None
         gv = await ground_validated(
             rt,

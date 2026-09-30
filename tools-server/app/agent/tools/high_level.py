@@ -10,6 +10,7 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from ...core.browser import dom as browser_dom
+from ...core.browser.page_kind import detect_page_kind
 from ...core.browser.primitives import download_url as core_download
 from ...core.browser.primitives import get_page_text as core_get_page_text
 from ...core.browser.primitives import navigate as core_navigate
@@ -232,18 +233,37 @@ def build_high_level_tools(ctx: PlatformAgentContext) -> list[StructuredTool]:
     async def list_tender_documents() -> str:
         ad = _adapter(ctx)
         docs = await ad.collect_documents(ctx.rt)
+        page_url = str(ctx.rt.page.url or "")
+        kind_info = await detect_page_kind(ctx.rt)
+        page_kind = str(kind_info.get("page_kind") or "")
+        empty = not docs
+        nav_bad = page_kind in {"not_found", "login", "captcha"}
+        if docs:
+            message = f"Найдено {len(docs)} документов. Дальше download_document."
+        elif nav_bad:
+            message = (
+                f"Документы недоступны (page_kind={page_kind}, url={page_url}). "
+                "Сначала вернись на карточку (open_tender), затем "
+                "dom_snapshot → click «Документы» / click_on_screen, потом list снова."
+            )
+        else:
+            message = (
+                "Документов не найдено адаптером. Не mark_processed сразу: "
+                "dom_snapshot → click_element/click_on_screen по вкладке «Документы», "
+                "затем list_tender_documents снова."
+            )
         result = {
-            "ok": True,
+            # ok=false when empty so the model treats it as a failed happy-path step
+            "ok": not empty,
             "action": "list_tender_documents",
             "count": len(docs),
             "documents": [
                 {"url": d.url, "name": d.name, "kind": d.kind} for d in docs
             ],
-            "message": (
-                f"Найдено {len(docs)} документов. Дальше download_document."
-                if docs
-                else "Документов не найдено."
-            ),
+            "url": page_url,
+            "page_kind": page_kind,
+            "needs_browser_fallback": empty,
+            "message": message,
         }
         trace(ctx, "list_tender_documents", {}, result)
         return to_json(result)
@@ -252,7 +272,11 @@ def build_high_level_tools(ctx: PlatformAgentContext) -> list[StructuredTool]:
         StructuredTool.from_function(
             coroutine=list_tender_documents,
             name="list_tender_documents",
-            description="Список документов текущей карточки (adapter).",
+            description=(
+                "Список документов текущей карточки (adapter). "
+                "Если count=0 / ok=false — открой вкладку «Документы» через DOM/vision "
+                "и вызови снова; не mark_processed сразу."
+            ),
         )
     )
 

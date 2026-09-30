@@ -77,10 +77,32 @@ def is_card_href(url: str) -> bool:
     return bool(_CARD_COMMON_INFO_RE.search(url))
 
 
+def documents_query_ok(url: str) -> bool:
+    """
+    True when documents.html query is usable.
+    44-ФЗ: regNumber is enough.
+    223 (notice223): need purchaseNoticeNumber and/or noticeGuid — regNumber alone → 404.
+    """
+    try:
+        p = urlparse(url or "")
+    except Exception:
+        return False
+    path = (p.path or "").lower()
+    if "documents.html" not in path:
+        return False
+    qs = parse_qs(p.query or "")
+    if "notice223" in path or "/223/" in path:
+        return bool(qs.get("noticeGuid") or qs.get("purchaseNoticeNumber"))
+    return bool(qs.get("regNumber") or qs.get("purchaseNoticeNumber") or qs.get("noticeGuid"))
+
+
 def common_info_to_documents(url: str) -> str | None:
     """
     Derive documents URL from card common-info URL by replacing the last path segment.
     Keeps <TYPE> (zk20 / ea20 / …) and query string — avoids broken zkp20 shortcuts from listings.
+
+    For notice223 with only ?regNumber= returns None (that URL 404s on EIS); caller must
+    follow the «Документы» tab href (purchaseNoticeNumber + noticeGuid).
     """
     try:
         p = urlparse(url or "")
@@ -99,7 +121,37 @@ def common_info_to_documents(url: str) -> str | None:
     )
     if new_path == path:
         return None
-    return urlunparse((p.scheme, p.netloc, new_path, p.params, p.query, p.fragment))
+    candidate = urlunparse(
+        (p.scheme, p.netloc, new_path, p.params, p.query, p.fragment)
+    )
+    if not documents_query_ok(candidate):
+        return None
+    return candidate
+
+
+_FIND_DOCUMENTS_TAB_JS = """() => {
+  const candidates = [];
+  const seen = new Set();
+  for (const a of document.querySelectorAll('a[href]')) {
+    const raw = a.getAttribute('href');
+    const href = String(raw == null ? '' : raw).trim();
+    if (!href || href.startsWith('javascript:') || href.startsWith('mailto:')) continue;
+    let abs = href;
+    try { abs = new URL(href, location.href).href; } catch (e) { continue; }
+    if (!/documents\\.html/i.test(abs)) continue;
+    if (/printForm|signview|listModal/i.test(abs)) continue;
+    if (seen.has(abs)) continue;
+    seen.add(abs);
+    const text = String(a.innerText || a.textContent || a.getAttribute('title') || '')
+      .replace(/\\s+/g, ' ').trim().slice(0, 80);
+    candidates.push({ href: abs, text });
+  }
+  if (!candidates.length) return null;
+  const preferred = candidates.find(c =>
+    /noticeGuid=/i.test(c.href) || /purchaseNoticeNumber=/i.test(c.href)
+  );
+  return preferred || candidates[0];
+}"""
 
 
 def build_search_url(keywords: str, filters: dict[str, Any] | None = None) -> str:
@@ -211,19 +263,38 @@ class ZakupkiGovRuAdapter:
             },
         )
 
+    async def _documents_tab_href(self, rt: Any) -> str | None:
+        try:
+            hit = await rt.page.evaluate(_FIND_DOCUMENTS_TAB_JS)
+        except Exception:
+            return None
+        if not hit:
+            return None
+        href = str((hit or {}).get("href") or "").strip()
+        return href or None
+
     async def collect_documents(self, rt: Any) -> list[DocRef]:
         """
-        Navigate to documents.html derived from current/card common-info URL,
-        then scrape filestore file links. Never trust listing documents.html shortcuts.
+        Open the documents tab, then scrape filestore file links.
+
+        Prefer the «Документы» tab href from the card DOM (required for 223:
+        purchaseNoticeNumber + noticeGuid). Fall back to path-replace only when
+        the derived query is known-good (44-ФЗ regNumber).
         """
         current = rt.page.url or ""
-        docs_url = common_info_to_documents(current)
-        if docs_url is None and "documents.html" not in current.lower():
-            # try from data if caller left us on wrong page — no card url available here
-            return []
-        if docs_url and docs_url.split("#")[0] != current.split("#")[0]:
-            res = await navigate(rt, docs_url)
-            if not res.get("ok"):
+        already_ok = documents_query_ok(current)
+
+        if not already_ok:
+            docs_url = await self._documents_tab_href(rt)
+            if not docs_url:
+                docs_url = common_info_to_documents(current)
+            if not docs_url:
+                return []
+            if docs_url.split("#")[0] != current.split("#")[0]:
+                res = await navigate(rt, docs_url)
+                if not res.get("ok"):
+                    return []
+            if not documents_query_ok(rt.page.url or ""):
                 return []
 
         try:

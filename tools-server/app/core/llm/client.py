@@ -10,8 +10,16 @@ from typing import Any
 import httpx
 
 from ... import config
+from .usage import record_usage, usage_from_response
 
 logger = logging.getLogger(__name__)
+
+
+def deepseek_endpoint(model: str | None = None) -> bool:
+    """True when the call goes to DeepSeek (thinking defaults to on)."""
+    name = (model or "").lower()
+    base = (config.AGENT_LLM_BASE_URL or "").lower()
+    return "deepseek" in name or "deepseek.com" in base
 
 
 def chat_url() -> str:
@@ -96,6 +104,9 @@ async def chat_completions(
         payload["tools"] = tools
         if tool_choice is not None:
             payload["tool_choice"] = tool_choice
+    # deepseek-flash thinks by default; agent + overview need the final answer only.
+    if deepseek_endpoint(use_model):
+        payload["thinking"] = {"type": "disabled"}
 
     headers = {
         "Authorization": f"Bearer {config.AGENT_LLM_API_KEY}",
@@ -105,7 +116,9 @@ async def chat_completions(
         resp = await client.post(chat_url(), headers=headers, json=payload)
         if resp.status_code >= 400:
             raise RuntimeError(f"LLM error {resp.status_code}: {resp.text[:800]}")
-        return resp.json()
+        data = resp.json()
+        record_usage(usage_from_response(data))
+        return data
 
 
 async def chat_text(

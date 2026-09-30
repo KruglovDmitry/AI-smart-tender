@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -15,6 +17,8 @@ from langchain_openai import ChatOpenAI
 from .. import config
 from ..core.browser import primitives as browser_tools
 from ..core.browser.session import browser_runtime
+from ..core.llm.client import deepseek_endpoint
+from ..core.llm.usage import bind_usage, current_usage, record_usage, usage_from_ai_message
 from .context import PlatformAgentContext, platform_notes_digest
 from .logging import current_agent_log_path, log_messages, setup_agent_file_logging
 from .prompt import SYSTEM_PROMPT_BROWSER, SYSTEM_PROMPT_PLATFORM
@@ -46,12 +50,16 @@ def _rel_data_path(path: str) -> str:
 
 def _build_llm() -> ChatOpenAI:
     _require_llm()
+    kwargs: dict[str, Any] = {}
+    if deepseek_endpoint(config.AGENT_PRIMARY_MODEL):
+        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
     return ChatOpenAI(
         model=config.AGENT_PRIMARY_MODEL,
         api_key=config.AGENT_LLM_API_KEY,
         base_url=config.AGENT_LLM_BASE_URL,
         temperature=0.1,
         timeout=180,
+        **kwargs,
     )
 
 
@@ -217,6 +225,7 @@ async def run_multimodal_tool_loop(
             break
 
         ai: AIMessage = await llm.ainvoke(messages)
+        record_usage(usage_from_ai_message(ai), role="primary")
         messages.append(ai)
 
         raw_content = ai.content
@@ -348,6 +357,8 @@ async def run_platform_task(
     downloads.mkdir(parents=True, exist_ok=True)
 
     store = SeenTenderStore(config.SEEN_TENDERS_DB)
+    bind_usage()
+    t0 = time.perf_counter()
     run_id = (
         datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + session_name[:40]
     )
@@ -429,7 +440,7 @@ async def run_platform_task(
             final_summary = output_text or "Agent stopped without finish"
             final_success = bool(files) or ctx.new_tenders_processed > 0
 
-    return {
+    result = {
         "success": final_success,
         "summary": final_summary,
         "platform": ctx.platform,
@@ -455,4 +466,26 @@ async def run_platform_task(
         "tools": [t.name for t in tools],
         "agent_log_path": str(agent_log_path or current_agent_log_path() or ""),
         "max_steps": max_steps,
+        "usage": current_usage(),
+        "wall_time_s": round(time.perf_counter() - t0, 1),
     }
+    debug_path = _write_debug_json(run_id, result)
+    if debug_path is not None:
+        result["debug_json"] = str(debug_path)
+    return result
+
+
+def _write_debug_json(run_id: str, payload: dict[str, Any]) -> Path | None:
+    if not config.AGENT_DEBUG_LOGS:
+        return None
+    try:
+        config.AGENT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        path = config.AGENT_LOG_DIR / f"{run_id}.json"
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        return path
+    except Exception as e:
+        logger.warning("debug json write failed: %s", e)
+        return None

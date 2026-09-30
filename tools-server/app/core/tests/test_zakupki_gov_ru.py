@@ -8,6 +8,7 @@ from app.platforms.zakupki_gov_ru import (
     build_search_url,
     common_info_to_documents,
     detect_law,
+    documents_query_ok,
     extract_tender_id,
     is_card_href,
     is_service_href,
@@ -82,17 +83,37 @@ def test_common_info_to_documents_keeps_type() -> None:
     assert "zkp20" not in docs
 
 
-def test_common_info_to_documents_223() -> None:
+def test_common_info_to_documents_223_regnumber_alone_rejected() -> None:
+    # Path-replace with only regNumber 404s on notice223 — adapter must not invent it.
     card = (
-        "https://zakupki.gov.ru/223/purchase/public/purchase/info/common-info.html"
+        "https://zakupki.gov.ru/epz/order/notice/notice223/common-info.html"
         "?regNumber=32616383976"
+    )
+    assert common_info_to_documents(card) is None
+    assert not documents_query_ok(
+        "https://zakupki.gov.ru/epz/order/notice/notice223/documents.html"
+        "?regNumber=32616383976"
+    )
+
+
+def test_common_info_to_documents_223_with_guid() -> None:
+    card = (
+        "https://zakupki.gov.ru/epz/order/notice/notice223/common-info.html"
+        "?purchaseNoticeNumber=32616383976&noticeGuid=abc-def"
     )
     docs = common_info_to_documents(card)
     assert docs is not None
-    assert docs.endswith("documents.html?regNumber=32616383976") or (
-        "documents.html" in docs and "regNumber=32616383976" in docs
+    assert "documents.html" in docs
+    assert "purchaseNoticeNumber=32616383976" in docs
+    assert "noticeGuid=abc-def" in docs
+    assert documents_query_ok(docs)
+
+
+def test_documents_query_ok_44() -> None:
+    assert documents_query_ok(
+        "https://zakupki.gov.ru/epz/order/notice/zk20/view/documents.html"
+        "?regNumber=0829500001126006321"
     )
-    assert "common-info" not in docs
 
 
 def test_build_search_url() -> None:

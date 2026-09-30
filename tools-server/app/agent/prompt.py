@@ -14,6 +14,8 @@ Happy-path:
 - Не выдумывай URL/id/файлы. Копируй exact href из tool results.
 - DOM-first: escape-hatches — dom_snapshot → click_element / fill_element.
 - Vision: click_on_screen(goal) / inspect_screen(question) — когда DOM пуст или неясен UI.
+- Если list_tender_documents вернул count=0 / ok=false — НЕ mark_processed сразу:
+  сначала dom_snapshot → click «Документы» (или click_on_screen), затем list снова.
 - Не проси и не используй координаты x,y — их нет в ответах инструментов.
 - success=true только при processed_tenders и/или скачанных файлах.
 """

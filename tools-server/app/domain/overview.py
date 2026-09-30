@@ -9,6 +9,7 @@ from typing import Any
 
 from .. import config
 from ..core.llm.client import chat_text, extract_json_object
+from ..core.llm.usage import usage_role
 
 OVERVIEW_FIELDS: list[str] = [
     "tender_url",
@@ -71,19 +72,20 @@ async def extract_overview(
         page_text=(page_text or "")[:12000],
         fields_json=json.dumps(OVERVIEW_FIELDS, ensure_ascii=False),
     )
-    content = await chat_text(
-        [
-            {
-                "role": "system",
-                "content": "Ты извлекаешь поля карточки закупки. Отвечай только валидным JSON.",
-            },
-            {"role": "user", "content": prompt},
-        ],
-        model=config.AGENT_PRIMARY_MODEL,
-        temperature=0,
-        max_tokens=1500,
-        timeout=90.0,
-    )
+    with usage_role("overview"):
+        content = await chat_text(
+            [
+                {
+                    "role": "system",
+                    "content": "Ты извлекаешь поля карточки закупки. Отвечай только валидным JSON.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            model=config.AGENT_PRIMARY_MODEL,
+            temperature=0,
+            max_tokens=1500,
+            timeout=90.0,
+        )
     raw = extract_json_object(content)
     if not raw:
         raise RuntimeError("LLM returned no JSON object")

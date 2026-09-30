@@ -58,6 +58,9 @@ _VALIDATE_JS = """([x, y, sel]) => {
       title: norm(pick.getAttribute('title') || ''),
       value: norm(pick.value || ''),
       placeholder: norm(pick.getAttribute('placeholder') || ''),
+      input_type: (pick.tagName || '').toUpperCase() === 'INPUT'
+        ? String(pick.getAttribute('type') || 'text')
+        : '',
     },
     interactive: !!inter,
     iframe: false,
@@ -75,6 +78,39 @@ def significant_words(target: str) -> list[str]:
     """Strip service words; keep tokens with length >= 3."""
     toks = re.findall(r"[a-zA-Zа-яА-Я0-9]+", _normalize_text(target))
     return [t for t in toks if len(t) >= 3 and t not in _STOP_WORDS]
+
+
+_SEARCH_GOAL_RE = re.compile(r"поле|поиск|search", re.I)
+_TEXT_INPUT_TYPES = frozenset({"", "text", "search", "email", "tel", "url", "number"})
+
+
+def _element_words(blob: str) -> list[str]:
+    return re.findall(r"[a-zA-Zа-яА-Я0-9]+", _normalize_text(blob))
+
+
+def _stem_match(goal_words: list[str], element_words: list[str]) -> bool:
+    """First min(5, len) chars of a goal word match the start of an element word."""
+    for word in goal_words:
+        prefix = word[: min(5, len(word))]
+        if any(ew.startswith(prefix) for ew in element_words):
+            return True
+    return False
+
+
+def _is_text_field(hit: dict[str, Any]) -> bool:
+    tag = str(hit.get("tag") or "").upper()
+    role = str(hit.get("role") or "").lower()
+    if role in {"searchbox", "textbox"}:
+        return True
+    if tag == "TEXTAREA":
+        return True
+    if tag == "INPUT":
+        return str(hit.get("input_type") or "text").lower() in _TEXT_INPUT_TYPES
+    return False
+
+
+def _search_goal(target: str) -> bool:
+    return bool(_SEARCH_GOAL_RE.search(_normalize_text(target)))
 
 
 async def validate_point(rt: Any, x: int, y: int, target: str) -> dict[str, Any]:
@@ -139,6 +175,8 @@ async def validate_point(rt: Any, x: int, y: int, target: str) -> dict[str, Any]
             ]
         )
     )
-    if any(w in blob for w in words):
+    if _stem_match(words, _element_words(blob)) or any(w in blob for w in words):
+        return {"status": "accepted", "element": element}
+    if _search_goal(target) and _is_text_field(hit):
         return {"status": "accepted", "element": element}
     return {"status": "rejected_text_mismatch", "element": element}

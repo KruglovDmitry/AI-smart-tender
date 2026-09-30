@@ -47,18 +47,27 @@ services:
       - DEFAULT_MAX_FILES=${DEFAULT_MAX_FILES:-30}
       - FETCH_TIMEOUT_SEC=${FETCH_TIMEOUT_SEC:-30}
       - BROWSER_HEADLESS=${BROWSER_HEADLESS:-true}
+      - BROWSER_AGENT_ENABLED=${BROWSER_AGENT_ENABLED:-false}
       - BROWSER_MAX_STEPS=${BROWSER_MAX_STEPS:-20}
       - BROWSER_VIEWPORT_WIDTH=${BROWSER_VIEWPORT_WIDTH:-1280}
       - BROWSER_VIEWPORT_HEIGHT=${BROWSER_VIEWPORT_HEIGHT:-900}
       - BROWSER_PROFILE_DIR=/tmp/tender-browser-profile
       - AGENT_LLM_BASE_URL=${AGENT_LLM_BASE_URL:-}
       - AGENT_LLM_API_KEY=${AGENT_LLM_API_KEY:-}
-      - AGENT_LLM_MODEL=${AGENT_LLM_MODEL:-qwen-max}
-      - AGENT_VL_MODEL=${AGENT_VL_MODEL:-qwen-vl-plus}
+      - AGENT_LLM_MODEL=${AGENT_LLM_MODEL:-qwen3.7-plus}
+      - AGENT_PRIMARY_MODEL=${AGENT_PRIMARY_MODEL:-}
+      - AGENT_VL_MODEL=${AGENT_VL_MODEL:-qwen3-vl-plus}
       - AGENT_VL_ENABLED=${AGENT_VL_ENABLED:-true}
+      - AGENT_VISION_BACKEND=${AGENT_VISION_BACKEND:-ui_tars}
+      - UI_TARS_BASE_URL=${UI_TARS_BASE_URL:-}
+      - UI_TARS_MODEL=${UI_TARS_MODEL:-ui-tars}
       - AGENT_DEBUG_LOGS=${AGENT_DEBUG_LOGS:-true}
-      - PLATFORM_MAX_STEPS=${PLATFORM_MAX_STEPS:-40}
-      - PLATFORM_MAX_NEW_TENDERS=${PLATFORM_MAX_NEW_TENDERS:-3}
+      - PLATFORM_MAX_STEPS=${PLATFORM_MAX_STEPS:-180}
+      - PLATFORM_MAX_NEW_TENDERS=${PLATFORM_MAX_NEW_TENDERS:-10}
+      - PLATFORM_MAX_FILES_PER_TENDER=${PLATFORM_MAX_FILES_PER_TENDER:-5}
+      - SEEN_TENDERS_DB=${SEEN_TENDERS_DB:-/data/_state/seen_tenders.sqlite3}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/data
       - ./tools-server/app:/app/app
@@ -69,6 +78,8 @@ services:
 volumes:
   open-webui:
     external: true
+    name: ai-smart-tender_open-webui-data
   ollama:
     external: true
+    name: ai-smart-tender_ollama-data
   browser-profile:

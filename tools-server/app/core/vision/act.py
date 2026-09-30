@@ -33,7 +33,7 @@ async def ground_validated(
     For platform adapters that need a verified point before click_xy / type_text.
     Writes a vision sample when run_id is set (same dataset as click_on_screen).
     """
-    from . import get_vision_backend
+    from .registry import get_vision_backend
 
     goal = (goal or "").strip()
     shot = await core_screenshot(rt)
@@ -442,28 +442,460 @@ async def click_on_screen(
 
 async def inspect_screen(
     rt: Any,
-    question: str,
+    question: str | None = None,
     *,
-    backend: VisionBackend,
+    mode: str = "hybrid",
+    perception: VisionBackend | None = None,
+    grounding: VisionBackend | None = None,
 ) -> dict[str, Any]:
-    shot = await core_screenshot(rt)
-    if not shot.get("ok") or not getattr(rt, "last_screenshot_b64", None):
-        return {"ok": False, "answer": "screenshot failed"}
-    vp = (
-        int(shot.get("width") or 1280),
-        int(shot.get("height") or 900),
-    )
-    insp = await backend.inspect(rt.last_screenshot_b64, question, vp)
+    """
+    List clickable/typeable targets for the primary model.
+
+    mode=dom|hybrid: DOM viewport targets (d…); hybrid may add perception (v…) if <5 meaningful.
+    mode=vision: perception only (v…).
+    Optional question → answer from perception backend.
+    """
+    from ... import config
+    from ..browser.targets import dom_fingerprint_from_targets, snapshot_viewport_targets
+    from .registry import get_perception_backend, get_vision_backend
+
+    mode = (mode or "hybrid").strip().lower()
+    if mode not in {"dom", "hybrid", "vision"}:
+        mode = "hybrid"
+
+    url = getattr(rt.page, "url", "") or ""
+    try:
+        title = await rt.page.title()
+    except Exception:
+        title = ""
+    try:
+        kind_info = await detect_page_kind(rt)
+        page_kind = str(kind_info.get("page_kind") or "unknown")
+    except Exception:
+        page_kind = "unknown"
+
+    targets: list[dict[str, Any]] = []
+    source = "dom"
+    notes: list[str] = []
+    fingerprint = ""
+
+    if mode in {"dom", "hybrid"}:
+        snap = await snapshot_viewport_targets(rt)
+        if not snap.get("ok"):
+            notes.append(str(snap.get("message") or "dom snapshot failed"))
+        for t in snap.get("targets") or []:
+            targets.append(
+                {
+                    "id": t["id"],
+                    "label": t.get("label") or "",
+                    "kind": t.get("kind") or "other",
+                    "href": t.get("href"),
+                    "dom_id": t.get("dom_id"),
+                    "origin": "dom",
+                }
+            )
+        fingerprint = dom_fingerprint_from_targets(targets)
+        meaningful = int(snap.get("meaningful_count") or 0)
+        need_vision = mode == "hybrid" and meaningful < 5
+    else:
+        need_vision = True
+        meaningful = 0
+
+    answer = None
+    perc_backend = perception
+    if need_vision or (question and str(question).strip()):
+        if perc_backend is None:
+            try:
+                perc_backend = get_perception_backend()
+            except Exception as e:
+                notes.append(f"perception backend: {e}")
+                perc_backend = None
+        configured = bool(config.perception_configured())
+        if mode == "vision" and not configured:
+            return {
+                "ok": False,
+                "mode": mode,
+                "url": url,
+                "title": title,
+                "page_kind": page_kind,
+                "source": "vision",
+                "targets": [],
+                "note": "perception не настроен (AGENT_PERCEPTION_* / UI_TARS)",
+            }
+
+        shot = await core_screenshot(rt)
+        if not shot.get("ok") or not getattr(rt, "last_screenshot_b64", None):
+            if mode == "vision":
+                return {
+                    "ok": False,
+                    "mode": mode,
+                    "url": url,
+                    "title": title,
+                    "page_kind": page_kind,
+                    "source": "vision",
+                    "targets": [],
+                    "note": "screenshot failed",
+                }
+            notes.append("screenshot failed; DOM-only targets")
+        else:
+            vp = (
+                int(shot.get("width") or 1280),
+                int(shot.get("height") or 900),
+            )
+            image_b64 = rt.last_screenshot_b64
+            if mode == "vision":
+                fingerprint = f"shot:{hash(image_b64) & 0xFFFFFFFF:08x}"
+            if need_vision:
+                if configured or perc_backend is not None:
+                    try:
+                        if perc_backend is None:
+                            perc_backend = get_perception_backend()
+                        listed = await perc_backend.list_targets(image_b64, vp)
+                        for i, st in enumerate(listed, start=1):
+                            targets.append(
+                                {
+                                    "id": f"v{i}",
+                                    "label": st.label,
+                                    "kind": st.kind,
+                                    "href": None,
+                                    "origin": "vision",
+                                }
+                            )
+                        source = "dom+vision" if mode == "hybrid" else "vision"
+                        if mode == "vision":
+                            source = "vision"
+                    except Exception as e:
+                        notes.append(f"list_targets failed: {e}")
+                        if mode == "hybrid":
+                            notes.append("perception не настроен или ошибка — только DOM")
+                else:
+                    notes.append("perception не настроен")
+            if question and str(question).strip() and perc_backend is not None:
+                try:
+                    insp = await perc_backend.inspect(
+                        image_b64, str(question).strip(), vp
+                    )
+                    answer = insp.answer
+                except Exception as e:
+                    answer = f"inspect error: {e}"
+
+    # Agent-facing targets: strip internal fields
+    public = [
+        {"id": t["id"], "label": t.get("label") or "", "kind": t.get("kind") or "other"}
+        for t in targets
+    ]
     return {
         "ok": True,
-        "answer": insp.answer,
-        "backend": insp.backend,
-        "model": insp.model,
-        "latency_ms": insp.latency_ms,
+        "mode": mode,
+        "url": url,
+        "title": title,
+        "page_kind": page_kind,
+        "source": source if targets else ("dom" if mode != "vision" else "vision"),
+        "targets": public,
+        "answer": answer,
+        "note": "; ".join(notes) if notes else None,
+        # for ctx persistence (caller may strip)
+        "_internal_targets": targets,
+        "_fingerprint": fingerprint,
+        "_url": url,
+    }
+
+
+async def click_target(
+    rt: Any,
+    target_id: str,
+    *,
+    mode: str = "hybrid",
+    screen_targets: dict[str, Any] | None = None,
+    grounding: VisionBackend | None = None,
+    run_id: str | None = None,
+    platform: str = "",
+) -> dict[str, Any]:
+    """
+    Click a target from the last inspect_screen list.
+    d… → DOM click_by_id; v… → UI-TARS ground by label.
+    """
+    from ... import config
+    from ..browser.after_action import capture_before_state, describe_after_action
+    from ..browser.targets import dom_fingerprint_from_targets, snapshot_viewport_targets
+    from .registry import get_vision_backend
+
+    mode = (mode or "hybrid").strip().lower()
+    tid = (target_id or "").strip()
+    bag = screen_targets or {}
+    stored_url = str(bag.get("url") or "")
+    stored_fp = str(bag.get("fingerprint") or "")
+    items = list(bag.get("targets") or [])
+
+    # Stale check
+    cur_url = getattr(rt.page, "url", "") or ""
+    if stored_url and cur_url.split("#")[0] != stored_url.split("#")[0]:
+        return {
+            "ok": False,
+            "note": "экран изменился, вызови inspect_screen снова",
+            "reason": "url_changed",
+        }
+    if mode != "vision" and stored_fp:
+        snap = await snapshot_viewport_targets(rt)
+        now_fp = dom_fingerprint_from_targets(snap.get("targets") or [])
+        # Compare labels set loosely — full fingerprint mismatch
+        if now_fp != stored_fp:
+            return {
+                "ok": False,
+                "note": "экран изменился, вызови inspect_screen снова",
+                "reason": "fingerprint_changed",
+            }
+
+    hit = next((t for t in items if str(t.get("id")) == tid), None)
+    if hit is None:
+        return {"ok": False, "note": f"unknown target_id={tid!r}; call inspect_screen"}
+
+    before = await capture_before_state(rt, mode=mode)
+    download_info = None
+
+    if tid.startswith("d"):
+        dom_id = hit.get("dom_id")
+        if dom_id is None:
+            try:
+                dom_id = int(str(tid)[1:])
+            except ValueError:
+                return {"ok": False, "note": f"bad dom target id {tid}"}
+        # Listen for download while clicking
+        page = rt.page
+        try:
+            async with page.expect_download(timeout=3_000) as dl_info:
+                click_res = await browser_dom.click_by_id(rt, int(dom_id))
+            try:
+                dl = await dl_info.value
+                path = await dl.path()
+                # Caller/high_level may move into tender dir; report basename for now
+                download_info = {
+                    "file": str(path or dl.suggested_filename or ""),
+                    "suggested_name": dl.suggested_filename,
+                    "bytes": None,
+                }
+            except Exception:
+                pass
+        except Exception:
+            click_res = await browser_dom.click_by_id(rt, int(dom_id))
+        if not click_res.get("ok"):
+            return {
+                "ok": False,
+                "note": click_res.get("message") or "click_by_id failed",
+                **click_res,
+            }
+    elif tid.startswith("v"):
+        label = str(hit.get("label") or "").strip()
+        if not label:
+            return {"ok": False, "note": "empty vision target label"}
+        backend = grounding or get_vision_backend()
+        # Use click_on_screen path for navigate|click with validation
+        allow_dom = mode != "vision" or bool(
+            getattr(config, "VISION_ALLOW_DOM_CHECKS", False)
+        )
+        if mode == "vision" and not allow_dom:
+            # Ground + click without DOM validator
+            shot = await core_screenshot(rt)
+            if not shot.get("ok") or not rt.last_screenshot_b64:
+                return {"ok": False, "note": "screenshot failed"}
+            vp = (int(shot.get("width") or 1280), int(shot.get("height") or 900))
+            grounded = await backend.ground(rt.last_screenshot_b64, label, vp)
+            if grounded.action == "not_found" or not grounded.candidates:
+                return {
+                    "ok": False,
+                    "note": grounded.note or "not_found",
+                    "action": "not_found",
+                }
+            c0 = grounded.candidates[0]
+            w, h = vp
+            if not (0 <= c0.x < w and 0 <= c0.y < h):
+                return {"ok": False, "note": "point outside viewport"}
+            try:
+                await rt.page.mouse.click(c0.x, c0.y)
+                await rt.page.wait_for_timeout(350)
+            except Exception as e:
+                return {"ok": False, "note": str(e)}
+        else:
+            click_res = await click_on_screen(
+                rt,
+                label,
+                backend=backend,
+                run_id=run_id,
+                platform=platform,
+            )
+            if not click_res.get("ok"):
+                return {
+                    "ok": False,
+                    "note": click_res.get("note") or "vision click failed",
+                    **{k: v for k, v in click_res.items() if k not in {"x", "y"}},
+                }
+    else:
+        return {"ok": False, "note": f"unsupported target_id={tid!r}"}
+
+    report = await describe_after_action(
+        rt, before, mode=mode, download=download_info
+    )
+
+    # vision: if nothing changed, retry once with next grounding candidate
+    if (
+        mode == "vision"
+        and tid.startswith("v")
+        and not report.get("changed")
+        and not download_info
+    ):
+        label = str(hit.get("label") or "").strip()
+        backend = grounding or get_vision_backend()
+        shot = await core_screenshot(rt)
+        if shot.get("ok") and rt.last_screenshot_b64:
+            vp = (int(shot.get("width") or 1280), int(shot.get("height") or 900))
+            grounded = await backend.ground(rt.last_screenshot_b64, label, vp)
+            cands = list(grounded.candidates or [])
+            if len(cands) > 1:
+                c1 = cands[1]
+                w, h = vp
+                if 0 <= c1.x < w and 0 <= c1.y < h:
+                    before2 = await capture_before_state(rt, mode=mode)
+                    try:
+                        await rt.page.mouse.click(c1.x, c1.y)
+                        await rt.page.wait_for_timeout(350)
+                    except Exception as e:
+                        return {
+                            "ok": False,
+                            "note": f"retry click failed: {e}",
+                            "hint": "inspect_screen снова или scroll",
+                            **report,
+                        }
+                    report = await describe_after_action(
+                        rt, before2, mode=mode, download=None
+                    )
+                    if report.get("changed"):
+                        return {
+                            "ok": True,
+                            "target_id": tid,
+                            "label": hit.get("label"),
+                            "retried": True,
+                            **report,
+                        }
+        return {
+            "ok": False,
+            "note": "клик не изменил экран; попробуй другую цель или scroll",
+            "hint": "inspect_screen снова",
+            "target_id": tid,
+            **report,
+        }
+
+    return {"ok": True, "target_id": tid, "label": hit.get("label"), **report}
+
+
+async def type_into_target(
+    rt: Any,
+    target_id: str,
+    text: str,
+    *,
+    submit: bool = False,
+    mode: str = "hybrid",
+    screen_targets: dict[str, Any] | None = None,
+    grounding: VisionBackend | None = None,
+    run_id: str | None = None,
+    platform: str = "",
+) -> dict[str, Any]:
+    """Click target, Ctrl+A, type text; optional Enter. Returns after-action report."""
+    from ..browser.after_action import capture_before_state, describe_after_action
+
+    click_res = await click_target(
+        rt,
+        target_id,
+        mode=mode,
+        screen_targets=screen_targets,
+        grounding=grounding,
+        run_id=run_id,
+        platform=platform,
+    )
+    if not click_res.get("ok"):
+        return click_res
+
+    before = await capture_before_state(rt, mode=mode)
+    page = rt.page
+    try:
+        await page.keyboard.press("Control+A")
+        await page.keyboard.type(text or "", delay=15)
+        if submit:
+            await page.keyboard.press("Enter")
+            await page.wait_for_timeout(400)
+        else:
+            await page.wait_for_timeout(150)
+    except Exception as e:
+        return {"ok": False, "note": f"type failed: {e}", "target_id": target_id}
+
+    report = await describe_after_action(rt, before, mode=mode, download=None)
+    return {
+        "ok": True,
+        "target_id": target_id,
+        "typed": True,
+        "submit": bool(submit),
+        **report,
+    }
+
+
+async def scroll_screen(
+    rt: Any,
+    direction: str = "down",
+    amount: str = "screen",
+) -> dict[str, Any]:
+    """Mouse-wheel scroll at viewport center; return screen_diff + url."""
+    from ..browser.after_action import _screen_diff_ratio
+    from ..browser.primitives import screenshot as core_shot
+
+    direction = (direction or "down").strip().lower()
+    amount = (amount or "screen").strip().lower()
+    if direction not in {"down", "up"}:
+        direction = "down"
+    if amount not in {"screen", "half"}:
+        amount = "screen"
+
+    before_shot = await core_shot(rt)
+    b64_a = rt.last_screenshot_b64 or ""
+    vp = rt.page.viewport_size or {}
+    w = int(vp.get("width") or 1280)
+    h = int(vp.get("height") or 900)
+    delta = h if amount == "screen" else max(1, h // 2)
+    if direction == "up":
+        delta = -delta
+    try:
+        await rt.page.mouse.move(w // 2, h // 2)
+        await rt.page.mouse.wheel(0, delta)
+        await rt.page.wait_for_timeout(200)
+    except Exception as e:
+        return {"ok": False, "note": str(e), "url": getattr(rt.page, "url", "")}
+
+    after_shot = await core_shot(rt)
+    b64_b = rt.last_screenshot_b64 or ""
+    diff = 0.0
+    if b64_a and b64_b:
+        diff = _screen_diff_ratio(str(b64_a), str(b64_b))
+    return {
+        "ok": True,
+        "screen_diff": round(diff, 4),
+        "url": getattr(rt.page, "url", "") or "",
+        "direction": direction,
+        "amount": amount,
+        "stale_targets": True,
     }
 
 
 def strip_coords(result: dict[str, Any]) -> dict[str, Any]:
     """Ensure agent-facing payload has no x/y."""
-    out = {k: v for k, v in result.items() if k not in {"x", "y", "candidates", "chosen"}}
+    out = {
+        k: v
+        for k, v in result.items()
+        if k not in {
+            "x",
+            "y",
+            "candidates",
+            "chosen",
+            "_internal_targets",
+            "_fingerprint",
+            "_url",
+        }
+    }
     return out

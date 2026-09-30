@@ -8,7 +8,9 @@ from typing import Any
 
 from ... import config
 from ..llm.client import chat_completions, extract_json_object, message_text, require_llm
-from .base import GroundingCandidate, GroundingResult, InspectionResult
+from ..llm.usage import usage_role
+from .base import GroundingCandidate, GroundingResult, InspectionResult, ScreenTarget
+from .perception import LIST_TARGETS_PROMPT, parse_targets_payload
 from .scale import (
     clamp_css,
     clamp_xy,
@@ -279,3 +281,54 @@ class QwenVLBackend:
             model=model,
             latency_ms=int((time.perf_counter() - t0) * 1000),
         )
+
+    async def list_targets(
+        self,
+        image_b64: str,
+        viewport: tuple[int, int],
+    ) -> list[ScreenTarget]:
+        width, height = int(viewport[0]), int(viewport[1])
+        model = (
+            getattr(config, "AGENT_PERCEPTION_MODEL", None)
+            or config.AGENT_VL_MODEL
+            or "qwen3-vl-plus"
+        )
+        if not image_b64:
+            return []
+        base = (getattr(config, "AGENT_PERCEPTION_BASE_URL", None) or "").rstrip("/")
+        key = getattr(config, "AGENT_PERCEPTION_API_KEY", None) or ""
+        # Perception must not use primary DeepSeek credentials by accident.
+        if not base or not key:
+            logger.warning("QwenVLBackend.list_targets: perception credentials missing")
+            return []
+        prompt = LIST_TARGETS_PROMPT.format(width=width, height=height)
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{image_b64}"},
+                    },
+                ],
+            }
+        ]
+        try:
+            with usage_role("perception"):
+                data = await chat_completions(
+                    messages,
+                    model=model,
+                    tools=None,
+                    tool_choice=None,
+                    temperature=0,
+                    max_tokens=1200,
+                    timeout=90.0,
+                    base_url=base,
+                    api_key=key,
+                )
+            content = message_text((data.get("choices") or [{}])[0].get("message"))
+            return parse_targets_payload(content)
+        except Exception as e:
+            logger.warning("QwenVLBackend.list_targets failed: %s", e)
+            return []

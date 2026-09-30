@@ -8,7 +8,11 @@ from types import SimpleNamespace
 import pytest
 from playwright.async_api import async_playwright
 
-from app.agent.tools import PLATFORM_TOOL_NAMES, build_langchain_tools, normalize_tools_mode
+from app.agent.tools import (
+    TOOLS_HYBRID,
+    build_langchain_tools,
+    normalize_tools_mode,
+)
 from app.agent.tools.high_level import build_high_level_tools
 from app.core.browser import dom
 from app.domain.dedup import SeenTenderStore
@@ -22,10 +26,11 @@ def test_normalize_rejects_full() -> None:
         normalize_tools_mode("full")
     assert normalize_tools_mode(None) == "platform"
     assert normalize_tools_mode("platform") == "platform"
-    assert normalize_tools_mode("browser") == "browser"
+    with pytest.raises(ValueError, match="browser"):
+        normalize_tools_mode("browser")
 
 
-def test_platform_toolset_exactly_15(tmp_path) -> None:
+def test_platform_toolset_hybrid_default(tmp_path) -> None:
     store = SeenTenderStore(":memory:")
     rt = SimpleNamespace(
         page=SimpleNamespace(url="https://example.com/"),
@@ -35,13 +40,12 @@ def test_platform_toolset_exactly_15(tmp_path) -> None:
     from app.agent.context import make_context
 
     ctx = make_context(rt, store, "https://example.com/", "test", 3)
-    tools = build_langchain_tools(ctx, mode="platform")
+    ctx.vision_mode = "hybrid"
+    tools = build_langchain_tools(ctx, mode="platform", vision_mode="hybrid")
     names = [t.name for t in tools]
-    assert names == list(PLATFORM_TOOL_NAMES)
-    assert len(names) == 15
-    assert len(set(names)) == 15
-    # also via high_level directly
-    assert [t.name for t in build_high_level_tools(ctx)] == list(PLATFORM_TOOL_NAMES)
+    assert names == list(TOOLS_HYBRID)
+    assert len(set(names)) == len(names)
+    assert [t.name for t in build_high_level_tools(ctx)] == list(TOOLS_HYBRID)
 
 
 @pytest.fixture

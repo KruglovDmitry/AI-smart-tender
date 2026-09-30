@@ -142,6 +142,28 @@ def run_task(page, client: UiTarsClient, task: dict[str, Any], out_dir: Path) ->
             )
             if task.get("setup_js"):
                 page.evaluate(task["setup_js"])
+                # Wait for scroll settle (same as primitives.screenshot)
+                page.evaluate(
+                    """async () => {
+                      const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+                      const raf = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+                      await raf();
+                      const t0 = performance.now();
+                      let last = window.scrollY;
+                      let quiet = 0;
+                      while (performance.now() - t0 < 1000) {
+                        await sleep(50);
+                        const y = window.scrollY;
+                        if (Math.abs(y - last) < 1) {
+                          quiet += 50;
+                          if (quiet >= 100) break;
+                        } else {
+                          quiet = 0;
+                          last = y;
+                        }
+                      }
+                    }"""
+                )
             if task.get("wait_ms"):
                 page.wait_for_timeout(int(task["wait_ms"]))
             loc, used_sel = None, None

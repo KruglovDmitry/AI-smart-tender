@@ -101,6 +101,42 @@ SEEN_TENDERS_DB = Path(
     os.getenv("SEEN_TENDERS_DB", str(DATA_ROOT / "_state" / "seen_tenders.sqlite3"))
 ).resolve()
 
+# Vision interaction modes: dom | hybrid (default) | vision
+_AGENT_VISION_MODE = os.getenv("AGENT_VISION_MODE", "hybrid").strip().lower()
+AGENT_VISION_MODE = (
+    _AGENT_VISION_MODE if _AGENT_VISION_MODE in {"dom", "hybrid", "vision"} else "hybrid"
+)
+# Auto-switch hybrid → vision after N "DOM failed, vision helped" streaks (0 = off)
+AGENT_AUTO_VISION_AFTER = int(os.getenv("AGENT_AUTO_VISION_AFTER", "3"))
+# In vision mode, optionally still run DOM validate_point for v* targets
+VISION_ALLOW_DOM_CHECKS = os.getenv("VISION_ALLOW_DOM_CHECKS", "0").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+# EIS test: disable common-info→documents URL helper so agent must open the tab
+EIS_TEST_NO_DOCS_ROUTE = os.getenv("EIS_TEST_NO_DOCS_ROUTE", "0").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+
+# Perception backend («что на экране?») — separate from grounding UI-TARS
+AGENT_PERCEPTION_BACKEND = (
+    os.getenv("AGENT_PERCEPTION_BACKEND", "qwen_vl").strip().lower() or "qwen_vl"
+)
+AGENT_PERCEPTION_BASE_URL = os.getenv("AGENT_PERCEPTION_BASE_URL", "").rstrip("/")
+AGENT_PERCEPTION_API_KEY = os.getenv("AGENT_PERCEPTION_API_KEY", "")
+AGENT_PERCEPTION_MODEL = os.getenv("AGENT_PERCEPTION_MODEL", "qwen3-vl-plus")
+
+
+def perception_configured() -> bool:
+    """True when perception endpoint credentials are set (not primary DeepSeek)."""
+    if AGENT_PERCEPTION_BACKEND == "ui_tars":
+        return bool(UI_TARS_BASE_URL)
+    return bool(AGENT_PERCEPTION_BASE_URL and AGENT_PERCEPTION_API_KEY)
+
+
 ALLOWED_EXTENSIONS = {
     ".pdf",
     ".docx",

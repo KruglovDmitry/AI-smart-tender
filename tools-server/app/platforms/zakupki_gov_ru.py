@@ -195,6 +195,7 @@ _COLLECT_HREFS_JS = """() => {
 class ZakupkiGovRuAdapter:
     host = HOST
     display_name = "ЕИС (zakupki.gov.ru)"
+    preferred_vision_mode: str | None = None
 
     def matches(self, url: str) -> bool:
         return matches_url(url)
@@ -202,8 +203,24 @@ class ZakupkiGovRuAdapter:
     def tender_id(self, url: str) -> str | None:
         return extract_tender_id(url)
 
+    def search_url(self, spec: SearchSpec) -> str | None:
+        return build_search_url(spec.keywords, spec.filters)
+
+    def documents_url(self, card_url: str) -> str | None:
+        from .. import config
+
+        if getattr(config, "EIS_TEST_NO_DOCS_ROUTE", False):
+            return None
+        return common_info_to_documents(card_url)
+
+    def next_page_url(self, url: str) -> str | None:
+        suggested = bump_page_url(url or "")
+        if suggested and suggested != url:
+            return suggested
+        return None
+
     async def open_search(self, rt: Any, spec: SearchSpec) -> StepResult:
-        url = build_search_url(spec.keywords, spec.filters)
+        url = self.search_url(spec) or build_search_url(spec.keywords, spec.filters)
         res = await navigate(rt, url)
         kind_info = await detect_page_kind(rt)
         kind = str(kind_info.get("page_kind") or res.get("page_kind") or "unknown")
@@ -280,14 +297,20 @@ class ZakupkiGovRuAdapter:
         Prefer the «Документы» tab href from the card DOM (required for 223:
         purchaseNoticeNumber + noticeGuid). Fall back to path-replace only when
         the derived query is known-good (44-ФЗ regNumber).
+
+        EIS_TEST_NO_DOCS_ROUTE=1: do not navigate via documents_url / tab helper;
+        return only filestore links on the current page.
         """
+        from .. import config
+
         current = rt.page.url or ""
+        test_no_docs = bool(getattr(config, "EIS_TEST_NO_DOCS_ROUTE", False))
         already_ok = documents_query_ok(current)
 
-        if not already_ok:
+        if not already_ok and not test_no_docs:
             docs_url = await self._documents_tab_href(rt)
             if not docs_url:
-                docs_url = common_info_to_documents(current)
+                docs_url = self.documents_url(current)
             if not docs_url:
                 return []
             if docs_url.split("#")[0] != current.split("#")[0]:

@@ -100,9 +100,35 @@ async def navigate(rt: BrowserRuntime, url: str) -> dict[str, Any]:
 
 
 async def screenshot(rt: BrowserRuntime) -> dict[str, Any]:
-    """Capture viewport PNG; image kept on runtime for vision grounding."""
+    """Capture viewport PNG; wait for scroll settle first (reduces mid-scroll miss)."""
     try:
         from ..vision.scale import png_pixel_size
+
+        # Wait until scrollY is stable (~2 rAF + 100ms quiet, max 1s)
+        try:
+            await rt.page.evaluate(
+                """async () => {
+                  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+                  const raf = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+                  await raf();
+                  const t0 = performance.now();
+                  let last = window.scrollY;
+                  let quiet = 0;
+                  while (performance.now() - t0 < 1000) {
+                    await sleep(50);
+                    const y = window.scrollY;
+                    if (Math.abs(y - last) < 1) {
+                      quiet += 50;
+                      if (quiet >= 100) break;
+                    } else {
+                      quiet = 0;
+                      last = y;
+                    }
+                  }
+                }"""
+            )
+        except Exception:
+            pass
 
         vp = rt.page.viewport_size or {}
         width = int(vp.get("width") or config.BROWSER_VIEWPORT_WIDTH)

@@ -179,12 +179,25 @@ async def _human_pause(rt: Any, seconds: float = 1.2) -> None:
 class ZakupkiRosatomRuAdapter:
     host = HOST
     display_name = "Росатом (zakupki.rosatom.ru)"
+    preferred_vision_mode: str | None = None
 
     def matches(self, url: str) -> bool:
         return matches_url(url)
 
     def tender_id(self, url: str) -> str | None:
         return extract_tender_id(url)
+
+    def search_url(self, spec: SearchSpec) -> str | None:
+        return build_search_url(spec.keywords)
+
+    def documents_url(self, card_url: str) -> str | None:
+        return None
+
+    def next_page_url(self, url: str) -> str | None:
+        suggested = bump_page_url(url or "")
+        if suggested and suggested != url:
+            return suggested
+        return None
 
     async def open_search(self, rt: Any, spec: SearchSpec) -> StepResult:
         """

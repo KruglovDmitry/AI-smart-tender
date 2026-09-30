@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 
-from ..base import GroundingCandidate, GroundingResult, InspectionResult
+from ..base import GroundingCandidate, GroundingResult, InspectionResult, ScreenTarget
+from ..perception import LIST_TARGETS_PROMPT, parse_targets_payload
 from ..scale import png_pixel_size
 from .client import UiTarsClient
 from .parser import parse_to_css
@@ -154,3 +155,35 @@ class UiTarsBackend:
             model=self.client.model,
             latency_ms=int(api.get("latency_ms") or 0),
         )
+
+    async def list_targets(
+        self,
+        image_b64: str,
+        viewport: tuple[int, int],
+    ) -> list[ScreenTarget]:
+        if not self.client.configured or not image_b64:
+            return []
+        width, height = int(viewport[0]), int(viewport[1])
+        prompt = LIST_TARGETS_PROMPT.format(width=width, height=height)
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{image_b64}"
+                        },
+                    },
+                ],
+            }
+        ]
+        from ...llm.usage import usage_role
+
+        with usage_role("perception"):
+            api = await self.client.chat(messages, max_tokens=1200)
+        if not api.get("ok"):
+            logger.warning("UiTarsBackend.list_targets failed: %s", api.get("error"))
+            return []
+        return parse_targets_payload(str(api.get("content") or ""))

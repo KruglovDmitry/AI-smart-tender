@@ -86,12 +86,30 @@ async def chat_completions(
     temperature: float = 0.1,
     max_tokens: int | None = None,
     timeout: float = 180.0,
+    base_url: str | None = None,
+    api_key: str | None = None,
 ) -> dict[str, Any]:
     """
     POST /chat/completions. Returns raw API JSON.
     model defaults to AGENT_PRIMARY_MODEL (falls back to AGENT_LLM_MODEL).
+    Optional base_url/api_key override primary AGENT_LLM_* (perception).
     """
-    require_llm()
+    override = bool((base_url or "").strip())
+    if not override:
+        require_llm()
+        url = chat_url()
+        key = config.AGENT_LLM_API_KEY
+    else:
+        base = str(base_url).rstrip("/")
+        url = (
+            base
+            if base.endswith("/chat/completions")
+            else f"{base}/chat/completions"
+        )
+        key = (api_key or "").strip()
+        if not key:
+            raise RuntimeError("api_key required when base_url override is set")
+
     use_model = model or getattr(config, "AGENT_PRIMARY_MODEL", None) or config.AGENT_LLM_MODEL
     payload: dict[str, Any] = {
         "model": use_model,
@@ -105,15 +123,15 @@ async def chat_completions(
         if tool_choice is not None:
             payload["tool_choice"] = tool_choice
     # deepseek-flash thinks by default; agent + overview need the final answer only.
-    if deepseek_endpoint(use_model):
+    if deepseek_endpoint(use_model) and not override:
         payload["thinking"] = {"type": "disabled"}
 
     headers = {
-        "Authorization": f"Bearer {config.AGENT_LLM_API_KEY}",
+        "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
     async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.post(chat_url(), headers=headers, json=payload)
+        resp = await client.post(url, headers=headers, json=payload)
         if resp.status_code >= 400:
             raise RuntimeError(f"LLM error {resp.status_code}: {resp.text[:800]}")
         data = resp.json()

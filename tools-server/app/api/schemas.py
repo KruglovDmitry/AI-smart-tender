@@ -16,16 +16,26 @@ class PlatformTaskBody(BaseModel):
     instruction: str | None = None
     tools_mode: str | None = Field(
         None,
-        description="platform (default) | browser (ablation only). full removed.",
+        description="platform only (browser removed; use vision_mode=vision).",
+    )
+    vision_mode: str | None = Field(
+        None,
+        description="dom | hybrid | vision. Default: AGENT_VISION_MODE.",
     )
 
 
 class TenderDownloadBody(BaseModel):
-    """Single-tender download via adapter (Phase 4 thin entry)."""
+    """Single-tender download via adapter or agent (vision_mode)."""
 
     tender_url: str = Field(..., description="Exact card URL")
     max_files: int = Field(default=5, ge=1, le=30)
     download_subdir: str | None = None
+    vision_mode: str | None = Field(
+        None,
+        description="dom | hybrid | vision. Default: AGENT_VISION_MODE.",
+    )
+    max_steps: int | None = Field(None, ge=5, le=200)
+    instruction: str | None = None
 
 
 class HealthOut(BaseModel):

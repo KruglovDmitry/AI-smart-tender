@@ -1,45 +1,42 @@
-"""Vision backends — grounding/inspect only; never drive the browser."""
+"""Vision backends — grounding / perception; never drive the browser."""
 
 from __future__ import annotations
 
-from ... import config
-from .act import click_on_screen, ground_validated, inspect_screen
+from .act import (
+    click_on_screen,
+    click_target,
+    ground_validated,
+    inspect_screen,
+    scroll_screen,
+    type_into_target,
+)
 from .base import (
     GroundingCandidate,
     GroundingResult,
     InspectionResult,
+    ScreenTarget,
     VisionBackend,
 )
 from .qwen_vl import QwenVLBackend
+from .registry import get_perception_backend, get_vision_backend
 from .ui_tars import UiTarsBackend
 from .validators import validate_point
-
-_BACKENDS: dict[str, type] = {
-    "qwen_vl": QwenVLBackend,
-    "ui_tars": UiTarsBackend,
-}
-
-
-def get_vision_backend(name: str | None = None) -> VisionBackend:
-    key = (name or getattr(config, "AGENT_VISION_BACKEND", None) or "ui_tars").strip().lower()
-    cls = _BACKENDS.get(key)
-    if cls is None:
-        raise ValueError(
-            f"Unknown AGENT_VISION_BACKEND={key!r}. Available: {sorted(_BACKENDS)}"
-        )
-    return cls()
-
 
 __all__ = [
     "GroundingCandidate",
     "GroundingResult",
     "InspectionResult",
+    "ScreenTarget",
     "VisionBackend",
     "QwenVLBackend",
     "UiTarsBackend",
     "get_vision_backend",
+    "get_perception_backend",
     "validate_point",
     "click_on_screen",
+    "click_target",
     "ground_validated",
     "inspect_screen",
+    "scroll_screen",
+    "type_into_target",
 ]

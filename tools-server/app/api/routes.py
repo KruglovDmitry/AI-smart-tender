@@ -18,8 +18,11 @@ router = APIRouter()
 
 @router.get("/health")
 async def health():
-    vision = await _vision_health()
-    status = "ok" if vision.get("ok") or not vision.get("required") else "degraded"
+    grounding = await _grounding_health()
+    perception = await _perception_health()
+    # Grounding required for hybrid/vision clicks; perception required only for vision mode
+    grounding_ok = bool(grounding.get("ok") or not grounding.get("required"))
+    status = "ok" if grounding_ok else "degraded"
     return {
         "status": status,
         "data_root": str(config.DATA_ROOT),
@@ -28,25 +31,32 @@ async def health():
         ),
         "primary_model": getattr(config, "AGENT_PRIMARY_MODEL", config.AGENT_LLM_MODEL),
         "vl_model": config.AGENT_VL_MODEL,
-        "vision": vision,
+        "vision_mode_default": getattr(config, "AGENT_VISION_MODE", "hybrid"),
+        "grounding": grounding,
+        "perception": perception,
+        # backward-compatible alias
+        "vision": grounding,
         "platform_agent": {
             "model": config.AGENT_LLM_MODEL,
             "max_steps": config.PLATFORM_MAX_STEPS,
             "max_new_tenders": config.PLATFORM_MAX_NEW_TENDERS,
             "mode_default": getattr(config, "PLATFORM_AGENT_MODE", "platform"),
             "vision_backend": getattr(config, "AGENT_VISION_BACKEND", "ui_tars"),
+            "perception_backend": getattr(config, "AGENT_PERCEPTION_BACKEND", "qwen_vl"),
+            "vision_mode": getattr(config, "AGENT_VISION_MODE", "hybrid"),
         },
     }
 
 
-async def _vision_health() -> dict:
-    """Probe the configured vision backend so /health fails loudly if GPU/vLLM is down."""
+async def _grounding_health() -> dict:
+    """Probe grounding backend (where is X?)."""
     backend = getattr(config, "AGENT_VISION_BACKEND", "ui_tars")
     if backend == "ui_tars":
         from ..core.vision.ui_tars.client import UiTarsClient
 
         probe = await UiTarsClient().probe()
         return {
+            "role": "grounding",
             "backend": "ui_tars",
             "required": True,
             "ok": bool(probe.get("ok")),
@@ -56,10 +66,10 @@ async def _vision_health() -> dict:
             "latency_ms": probe.get("latency_ms"),
             "note": probe.get("note"),
         }
-    # qwen_vl uses the same OpenAI-compatible LLM gateway
     base = (config.AGENT_LLM_BASE_URL or "").rstrip("/")
     if not base or not config.AGENT_LLM_API_KEY:
         return {
+            "role": "grounding",
             "backend": backend,
             "required": True,
             "ok": False,
@@ -75,6 +85,7 @@ async def _vision_health() -> dict:
                 headers={"Authorization": f"Bearer {config.AGENT_LLM_API_KEY}"},
             )
         return {
+            "role": "grounding",
             "backend": backend,
             "required": True,
             "ok": r.status_code < 400,
@@ -85,6 +96,7 @@ async def _vision_health() -> dict:
         }
     except Exception as e:
         return {
+            "role": "grounding",
             "backend": backend,
             "required": True,
             "ok": False,
@@ -92,6 +104,74 @@ async def _vision_health() -> dict:
             "base_url": base,
             "note": str(e)[:200],
         }
+
+
+async def _perception_health() -> dict:
+    """Probe perception backend (what is on screen?)."""
+    backend = getattr(config, "AGENT_PERCEPTION_BACKEND", "qwen_vl")
+    configured = bool(config.perception_configured())
+    if backend == "ui_tars":
+        from ..core.vision.ui_tars.client import UiTarsClient
+
+        probe = await UiTarsClient().probe()
+        return {
+            "role": "perception",
+            "backend": "ui_tars",
+            "required": False,
+            "ok": bool(probe.get("ok")),
+            "configured": configured,
+            "base_url": probe.get("base_url") or config.UI_TARS_BASE_URL or None,
+            "model": probe.get("model") or config.UI_TARS_MODEL,
+            "latency_ms": probe.get("latency_ms"),
+            "note": probe.get("note"),
+        }
+    base = (getattr(config, "AGENT_PERCEPTION_BASE_URL", "") or "").rstrip("/")
+    key = getattr(config, "AGENT_PERCEPTION_API_KEY", "") or ""
+    model = getattr(config, "AGENT_PERCEPTION_MODEL", "qwen3-vl-plus")
+    if not base or not key:
+        return {
+            "role": "perception",
+            "backend": backend,
+            "required": False,
+            "ok": False,
+            "configured": False,
+            "model": model,
+            "note": "AGENT_PERCEPTION_BASE_URL / API_KEY not set",
+        }
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(
+                f"{base}/v1/models",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+        return {
+            "role": "perception",
+            "backend": backend,
+            "required": False,
+            "ok": r.status_code < 400,
+            "configured": True,
+            "base_url": base,
+            "model": model,
+            "note": None if r.status_code < 400 else f"HTTP {r.status_code}",
+        }
+    except Exception as e:
+        return {
+            "role": "perception",
+            "backend": backend,
+            "required": False,
+            "ok": False,
+            "configured": True,
+            "base_url": base,
+            "model": model,
+            "note": str(e)[:200],
+        }
+
+
+async def _vision_health() -> dict:
+    """Backward-compatible alias → grounding."""
+    return await _grounding_health()
 
 
 @router.post("/run_platform_task")
@@ -107,6 +187,7 @@ async def run_platform_task_route(body: PlatformTaskBody):
             download_subdir=body.download_subdir,
             instruction=body.instruction,
             tools_mode=body.tools_mode,
+            vision_mode=body.vision_mode,
         )
     except ImportError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
@@ -120,10 +201,15 @@ async def run_platform_task_route(body: PlatformTaskBody):
 
 @router.post("/run_tender_download")
 async def run_tender_download_route(body: TenderDownloadBody):
-    """Open one card via adapter, collect docs, download into tenders/<host>/<id>/."""
+    """
+    Open one card and download docs.
+    Direct adapter path when vision_mode omitted / dom-like happy path;
+    agent loop when vision_mode is hybrid|vision (or EIS_TEST_NO_DOCS_ROUTE).
+    """
     from datetime import datetime, timezone
 
     from ..agent.loop import _write_debug_json
+    from ..agent.tools.tool_modes import normalize_vision_mode
     from ..core.browser.primitives import download_url, get_page_text
     from ..core.browser.session import browser_runtime
     from ..core.llm.usage import bind_usage, current_usage
@@ -131,12 +217,28 @@ async def run_tender_download_route(body: TenderDownloadBody):
     from ..domain import overview as overview_mod
     from ..domain.workspace import safe_tender_dirname, switch_downloads
 
-    bind_usage()
-    t0 = time.perf_counter()
     url = (body.tender_url or "").strip()
     if not url.startswith("http"):
         raise HTTPException(status_code=400, detail="tender_url must be http(s)")
 
+    vmode_raw = body.vision_mode
+    use_agent = False
+    if vmode_raw is not None:
+        vmode = normalize_vision_mode(vmode_raw)
+        use_agent = vmode in {"hybrid", "vision"} or bool(
+            getattr(config, "EIS_TEST_NO_DOCS_ROUTE", False)
+        )
+    elif getattr(config, "EIS_TEST_NO_DOCS_ROUTE", False):
+        vmode = normalize_vision_mode(getattr(config, "AGENT_VISION_MODE", "hybrid"))
+        use_agent = True
+    else:
+        vmode = None
+
+    if use_agent:
+        return await _run_tender_download_agent(body, vision_mode=vmode or "hybrid")
+
+    bind_usage()
+    t0 = time.perf_counter()
     adapter = get_adapter(url)
     host = getattr(adapter, "host", "platform")
     if host == "*":
@@ -220,6 +322,10 @@ async def run_tender_download_route(body: TenderDownloadBody):
             "overview": overview_brief,
             "overview_error": overview_error,
             "model": config.AGENT_PRIMARY_MODEL,
+            "vision_mode": "adapter",
+            "eis_test_no_docs_route": bool(
+                getattr(config, "EIS_TEST_NO_DOCS_ROUTE", False)
+            ),
             "usage": current_usage(),
             "wall_time_s": round(time.perf_counter() - t0, 1),
         }
@@ -227,3 +333,56 @@ async def run_tender_download_route(body: TenderDownloadBody):
         if debug_path is not None:
             result["debug_json"] = str(debug_path)
         return result
+
+
+async def _run_tender_download_agent(body: TenderDownloadBody, *, vision_mode: str):
+    """Agent-driven single-tender download (hybrid/vision)."""
+    from urllib.parse import urlparse
+
+    from ..agent.loop import run_platform_task
+
+    url = (body.tender_url or "").strip()
+    host = (urlparse(url).netloc or "platform").replace("www.", "")
+    session = body.download_subdir or (
+        "".join(c if c.isalnum() or c in "-_" else "_" for c in host)[:80]
+    )
+    max_files = body.max_files
+    instruction = (body.instruction or "").strip() or (
+        f"Одна закупка: {url}. "
+        f"open_tender(card_url) → save_overview → найди и скачай до {max_files} документов "
+        f"(list_tender_documents/download_document или inspect_screen→click_target). "
+        f"mark_processed → finish."
+    )
+    try:
+        result = await run_platform_task(
+            platform_url=url,
+            keywords="tender-download",
+            max_new_tenders=1,
+            max_steps=body.max_steps or 40,
+            download_subdir=session,
+            instruction=instruction,
+            vision_mode=vision_mode,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {
+        "ok": bool(result.get("success")),
+        "agent": True,
+        "vision_mode": result.get("vision_mode"),
+        "mode_switches": result.get("mode_switches"),
+        "eis_test_no_docs_route": result.get("eis_test_no_docs_route"),
+        "tender_url": url,
+        "downloaded_files": result.get("downloaded_files"),
+        "downloaded_files_rel": result.get("downloaded_files_rel"),
+        "processed_tenders": result.get("processed_tenders"),
+        "summary": result.get("summary"),
+        "steps": result.get("steps"),
+        "trace": result.get("trace"),
+        "usage": result.get("usage"),
+        "wall_time_s": result.get("wall_time_s"),
+        "debug_json": result.get("debug_json"),
+        "model": result.get("model"),
+        "tools": result.get("tools"),
+    }

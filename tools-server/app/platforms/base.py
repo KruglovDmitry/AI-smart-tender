@@ -52,6 +52,16 @@ class PlatformAdapter(Protocol):
 
     def tender_id(self, url: str) -> str | None: ...
 
+    # URL knowledge (works in any vision_mode)
+    def search_url(self, spec: SearchSpec) -> str | None: ...
+
+    def documents_url(self, card_url: str) -> str | None: ...
+
+    def next_page_url(self, url: str) -> str | None: ...
+
+    # Optional preferred mode for this platform (None = use request/config)
+    preferred_vision_mode: str | None
+
     async def open_search(self, rt: Any, spec: SearchSpec) -> StepResult: ...
 
     async def collect_cards(self, rt: Any) -> list[CardRef]: ...
@@ -75,6 +85,7 @@ class GenericAdapter:
 
     host = "*"
     display_name = "generic"
+    preferred_vision_mode: str | None = None
 
     def matches(self, url: str) -> bool:
         return True
@@ -87,6 +98,18 @@ class GenericAdapter:
                 return str(vals[0]).strip()
         m = re.search(r"/(\d{5,})(?:/|$)", urlparse(url or "").path)
         return m.group(1) if m else None
+
+    def search_url(self, spec: SearchSpec) -> str | None:
+        return None
+
+    def documents_url(self, card_url: str) -> str | None:
+        return None
+
+    def next_page_url(self, url: str) -> str | None:
+        suggested = bump_page_url(url or "")
+        if suggested and suggested != url:
+            return suggested
+        return None
 
     async def open_search(self, rt: Any, spec: SearchSpec) -> StepResult:
         # Try DOM: find search field, fill, submit

@@ -40,27 +40,39 @@ class UsageLedger:
 
         primary = pack("primary")
         overview = pack("overview")
+        perception = pack("perception")
         other_prompt = other_completion = other_cached = other_calls = 0
         for name, b in self.roles.items():
-            if name in {"primary", "overview"}:
+            if name in {"primary", "overview", "perception"}:
                 continue
             other_calls += b.calls
             other_prompt += b.prompt_tokens
             other_completion += b.completion_tokens
             other_cached += b.cached_tokens
         total = {
-            "calls": primary["calls"] + overview["calls"] + other_calls,
+            "calls": primary["calls"]
+            + overview["calls"]
+            + perception["calls"]
+            + other_calls,
             "prompt_tokens": primary["prompt_tokens"]
             + overview["prompt_tokens"]
+            + perception["prompt_tokens"]
             + other_prompt,
             "completion_tokens": primary["completion_tokens"]
             + overview["completion_tokens"]
+            + perception["completion_tokens"]
             + other_completion,
             "cached_tokens": primary["cached_tokens"]
             + overview["cached_tokens"]
+            + perception["cached_tokens"]
             + other_cached,
         }
-        return {"primary": primary, "overview": overview, "total": total}
+        return {
+            "primary": primary,
+            "overview": overview,
+            "perception": perception,
+            "total": total,
+        }
 
 
 _ledger: ContextVar[UsageLedger | None] = ContextVar("llm_usage_ledger", default=None)
@@ -102,7 +114,12 @@ def current_usage() -> dict[str, Any]:
             "completion_tokens": 0,
             "cached_tokens": 0,
         }
-        return {"primary": dict(empty), "overview": dict(empty), "total": dict(empty)}
+        return {
+            "primary": dict(empty),
+            "overview": dict(empty),
+            "perception": dict(empty),
+            "total": dict(empty),
+        }
     return ledger.snapshot()
 
 

@@ -32,6 +32,9 @@
 <body>
   <div id="pad"></div>
   <button id="docs" type="button">Документы</button>
+  <button id="icon-only" type="button" class="btn-attach" aria-label="" title="">
+    <svg class="icon-paperclip" name="paperclip"><use href="#paperclip"></use></svg>
+  </button>
   <a id="download" href="https://example.com/file.pdf">Скачать</a>
   <a id="hash-link" href="#">Открыть меню</a>
   <div id="empty"></div>
@@ -40,6 +43,12 @@
   <script>
     document.getElementById('docs').addEventListener('click', function () {
       document.getElementById('status').textContent = 'docs-clicked';
+      document.body.style.background = '#ffcccc';
+      const banner = document.createElement('div');
+      banner.id = 'banner';
+      banner.style.cssText = 'position:absolute;left:0;top:0;width:800px;height:80px;background:#cc0000;color:#fff;';
+      banner.textContent = 'DOCS OPEN';
+      document.body.appendChild(banner);
     });
     document.getElementById('hash-link').addEventListener('click', function (e) {
       e.preventDefault();

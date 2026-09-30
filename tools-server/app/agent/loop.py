@@ -21,13 +21,15 @@ from ..core.llm.client import deepseek_endpoint
 from ..core.llm.usage import bind_usage, current_usage, record_usage, usage_from_ai_message
 from .context import PlatformAgentContext, platform_notes_digest
 from .logging import current_agent_log_path, log_messages, setup_agent_file_logging
-from .prompt import SYSTEM_PROMPT_BROWSER, SYSTEM_PROMPT_PLATFORM
+from .prompt import SYSTEM_PROMPT_PLATFORM, SYSTEM_PROMPT_VISION
 from .tools import (
     SeenTenderStore,
     build_langchain_tools,
     make_context,
     normalize_tools_mode,
+    normalize_vision_mode,
     platform_from_url,
+    tool_names_for_mode,
 )
 
 logger = logging.getLogger(__name__)
@@ -286,6 +288,46 @@ async def run_multimodal_tool_loop(
             if ctx.done:
                 break
 
+        # Auto hybrid → vision after N DOM-blind streaks
+        threshold = int(getattr(config, "AGENT_AUTO_VISION_AFTER", 3) or 0)
+        if (
+            threshold > 0
+            and ctx.vision_mode == "hybrid"
+            and ctx.dom_blind_streak >= threshold
+            and not ctx.done
+        ):
+            ctx.vision_mode = "vision"
+            tools[:] = build_langchain_tools(ctx, vision_mode="vision")
+            tools_by_name.clear()
+            tools_by_name.update({t.name: t for t in tools})
+            llm = _build_llm().bind_tools(tools)
+            names_list = [t.name for t in tools]
+            event = {
+                "from": "hybrid",
+                "to": "vision",
+                "reason": "dom_blind_streak",
+                "streak": ctx.dom_blind_streak,
+                "step": step_i,
+                "tools": names_list,
+            }
+            ctx.mode_switches.append(event)
+            logger.info(
+                "auto vision_mode switch hybrid→vision streak=%s tools=%s",
+                ctx.dom_blind_streak,
+                names_list,
+            )
+            messages.append(
+                HumanMessage(
+                    content=(
+                        "Переключение в режим vision: DOM на этом сайте не помогает. "
+                        f"Доступные инструменты: {', '.join(names_list)}."
+                    )
+                )
+            )
+            # Rebuild system context: replace first SystemMessage
+            if messages and isinstance(messages[0], SystemMessage):
+                messages[0] = SystemMessage(content=SYSTEM_PROMPT_VISION)
+
         if saw_screenshot and not ctx.done:
             follow = _screenshot_followup(ctx)
             if follow is not None:
@@ -321,10 +363,12 @@ async def run_platform_task(
     download_subdir: str | None = None,
     instruction: str | None = None,
     tools_mode: str | None = None,
+    vision_mode: str | None = None,
 ) -> dict[str, Any]:
     """
     Tool-calling loop.
-    tools_mode: platform (default) | browser (ablation). full — rejected.
+    tools_mode: platform only (browser removed).
+    vision_mode: dom | hybrid (default) | vision.
     """
     platform_url = (platform_url or "").strip()
     keywords = (keywords or "").strip()
@@ -342,6 +386,22 @@ async def run_platform_task(
         if tools_mode is not None
         else getattr(config, "PLATFORM_AGENT_MODE", "platform")
     )
+
+    # Resolve vision_mode: request → adapter preferred → config
+    from ..platforms.registry import get_adapter
+
+    adapter = get_adapter(platform_url)
+    preferred = getattr(adapter, "preferred_vision_mode", None)
+    vmode = normalize_vision_mode(
+        vision_mode
+        if vision_mode is not None
+        else (preferred or getattr(config, "AGENT_VISION_MODE", "hybrid"))
+    )
+    if vmode == "vision" and not config.perception_configured():
+        raise RuntimeError(
+            "vision_mode=vision требует настроенное восприятие: "
+            "AGENT_PERCEPTION_BASE_URL+API_KEY (qwen_vl) или UI_TARS_BASE_URL (ui_tars)"
+        )
 
     plat = "".join(
         c if c.isalnum() or c in "-_" else "_" for c in platform_from_url(platform_url)
@@ -362,25 +422,34 @@ async def run_platform_task(
     run_id = (
         datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + session_name[:40]
     )
-    agent_log_path = setup_agent_file_logging(run_tag=f"{session_name}-{mode}")
+    agent_log_path = setup_agent_file_logging(run_tag=f"{session_name}-{vmode}")
 
-    if mode == "browser":
+    if vmode == "vision":
         user_input = (instruction or "").strip() or (
-            f"Режим browser-only (абляция). Найди и обработай до {max_new} закупок по «{keywords}»: "
-            f"поиск на UI, navigate(exact href), скачай документы, finish."
+            f"Площадка {platform_url}. Keywords: «{keywords}». Лимит новых: {max_new}. "
+            f"Режим vision: inspect_screen → click_target / type_into_target → scroll. "
+            f"navigate по URL адаптера если известен. finish в конце."
         )
-        system_prompt = SYSTEM_PROMPT_BROWSER
+        system_prompt = SYSTEM_PROMPT_VISION
     else:
         user_input = (instruction or "").strip() or (
             f"Площадка {platform_url}. Keywords: «{keywords}». Лимит новых: {max_new}. "
             f"Happy-path: open_platform_search → list_new_cards → open_tender → "
             f"save_overview → list_tender_documents → download_document → mark_processed → "
             f"finish. DOM: dom_snapshot → click/fill_element. "
-            f"Vision: click_on_screen / inspect_screen."
+            f"Vision: inspect_screen → click_target; запасной click_on_screen."
         )
         system_prompt = SYSTEM_PROMPT_PLATFORM
     if "finish" not in user_input.lower():
         user_input += " В конце вызови finish."
+
+    logger.info(
+        "vision_mode=%s EIS_TEST_NO_DOCS_ROUTE=%s perception=%s grounding=%s",
+        vmode,
+        getattr(config, "EIS_TEST_NO_DOCS_ROUTE", False),
+        getattr(config, "AGENT_PERCEPTION_BACKEND", ""),
+        getattr(config, "AGENT_VISION_BACKEND", ""),
+    )
 
     async with browser_runtime(downloads_dir=downloads) as rt:
         nav = await browser_tools.navigate(rt, platform_url)
@@ -394,28 +463,27 @@ async def run_platform_task(
             downloads_root=downloads,
         )
         ctx.vision_run_id = run_id
-        # Adapters (Rosatom vision fallback) read samples run_id from the runtime
+        ctx.vision_mode = vmode
         try:
             rt.vision_run_id = run_id  # type: ignore[attr-defined]
         except Exception:
             pass
-        ctx.inject_screenshots = mode == "browser" and config.AGENT_PRIMARY_MULTIMODAL
+        ctx.inject_screenshots = False
         ctx.trace.append(
             {"tool": "navigate", "args": {"url": platform_url}, "result": nav}
         )
 
-        tools = build_langchain_tools(ctx, mode=mode)
-        inject_shots = mode == "browser" and config.AGENT_PRIMARY_MULTIMODAL
+        tools = build_langchain_tools(ctx, mode=mode, vision_mode=vmode)
 
         logger.info(
             "platform loop start platform=%s keywords=%s max_iter=%s "
-            "model=%s tools_mode=%s inject_shots=%s tools=%s",
+            "model=%s tools_mode=%s vision_mode=%s tools=%s",
             ctx.platform,
             keywords,
             max_steps,
             config.AGENT_PRIMARY_MODEL,
             mode,
-            inject_shots,
+            vmode,
             [t.name for t in tools],
         )
 
@@ -459,11 +527,17 @@ async def run_platform_task(
         "vl_model": config.AGENT_VL_MODEL,
         "vl_enabled": config.AGENT_VL_ENABLED,
         "vision_backend": config.AGENT_VISION_BACKEND,
+        "perception_backend": getattr(config, "AGENT_PERCEPTION_BACKEND", ""),
         "vision_run_id": run_id,
-        "vl_mode": "click_on_screen" if mode == "platform" else "inline_multimodal",
+        "vision_mode": ctx.vision_mode,
+        "mode_switches": list(ctx.mode_switches),
+        "eis_test_no_docs_route": bool(
+            getattr(config, "EIS_TEST_NO_DOCS_ROUTE", False)
+        ),
+        "vl_mode": "inspect_screen+click_target",
         "agent_framework": "langchain.tool_loop",
         "tools_mode": mode,
-        "tools": [t.name for t in tools],
+        "tools": tool_names_for_mode(ctx.vision_mode),
         "agent_log_path": str(agent_log_path or current_agent_log_path() or ""),
         "max_steps": max_steps,
         "usage": current_usage(),

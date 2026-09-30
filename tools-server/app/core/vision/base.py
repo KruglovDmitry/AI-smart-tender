@@ -35,6 +35,14 @@ class InspectionResult:
     latency_ms: int = 0
 
 
+@dataclass
+class ScreenTarget:
+    """Perception / listing target — no coordinates."""
+
+    label: str
+    kind: str = "other"  # button|link|tab|input|icon|checkbox|select|other
+
+
 @runtime_checkable
 class VisionBackend(Protocol):
     name: str
@@ -52,3 +60,9 @@ class VisionBackend(Protocol):
         question: str,
         viewport: tuple[int, int],
     ) -> InspectionResult: ...
+
+    async def list_targets(
+        self,
+        image_b64: str,
+        viewport: tuple[int, int],
+    ) -> list[ScreenTarget]: ...

@@ -41,6 +41,11 @@ class PlatformAgentContext:
     trace: list[dict[str, Any]] = field(default_factory=list)
     vision_run_id: str = ""
     inject_screenshots: bool = False
+    # Last inspect_screen bag: {url, fingerprint, targets:[...]}
+    screen_targets: dict[str, Any] = field(default_factory=dict)
+    vision_mode: str = "hybrid"
+    mode_switches: list[dict[str, Any]] = field(default_factory=list)
+    dom_blind_streak: int = 0
 
 
 def note_results_url(ctx: PlatformAgentContext, url: str | None) -> None:

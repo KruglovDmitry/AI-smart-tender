@@ -13,14 +13,20 @@ Happy-path:
 Правила:
 - Не выдумывай URL/id/файлы. Копируй exact href из tool results.
 - DOM-first: escape-hatches — dom_snapshot → click_element / fill_element.
-- Vision: click_on_screen(goal) / inspect_screen(question) — когда DOM пуст или неясен UI.
-- Если list_tender_documents вернул count=0 / ok=false — НЕ mark_processed сразу:
-  сначала dom_snapshot → click «Документы» (или click_on_screen), затем list снова.
+- Если нужного элемента нет в результатах инструментов:
+  1) dom_snapshot(query="<слово>") — поиск по всей странице;
+  2) не нашёл — inspect_screen() и выбери цель ИЗ СПИСКА → click_target(id);
+  3) в списке нет — значит, этого нет на экране: прокрути/смени подход. Не описывай цель наугад.
+  После каждого действия читай отчёт: url_changed, file_links, new_text, download.
+- click_on_screen(goal) — запасной вариант со свободной формулировкой.
 - Не проси и не используй координаты x,y — их нет в ответах инструментов.
 - success=true только при processed_tenders и/или скачанных файлах.
 """
 
-SYSTEM_PROMPT_BROWSER = """Низкоуровневый browser-режим (абляция): только navigate/screenshot/click_xy/
-type_text/press_key/scroll/wait/get_page_text/list_download_links/download_url/finish.
-Не выдумывай URL. Координаты — только из свежего screenshot (если multimodal включён).
+SYSTEM_PROMPT_VISION = """Ты работаешь только через экран. Цикл: inspect_screen() → выбери цель ИЗ СПИСКА →
+click_target(id) / type_into_target(id, text, submit) → прочитай отчёт.
+Нужного нет в списке — scroll(down) и снова inspect_screen().
+Файлы скачиваются кликом по ссылке на файл: смотри поле download в отчёте.
+Если адаптер знает URL (поиск, документы, следующая страница) — используй navigate, это дешевле.
+Не описывай цели наугад.
 """

@@ -52,15 +52,12 @@ class PlatformAdapter(Protocol):
 
     def tender_id(self, url: str) -> str | None: ...
 
-    # URL knowledge (works in any vision_mode)
+    # URL knowledge
     def search_url(self, spec: SearchSpec) -> str | None: ...
 
     def documents_url(self, card_url: str) -> str | None: ...
 
     def next_page_url(self, url: str) -> str | None: ...
-
-    # Optional preferred mode for this platform (None = use request/config)
-    preferred_vision_mode: str | None
 
     async def open_search(self, rt: Any, spec: SearchSpec) -> StepResult: ...
 
@@ -85,7 +82,6 @@ class GenericAdapter:
 
     host = "*"
     display_name = "generic"
-    preferred_vision_mode: str | None = None
 
     def matches(self, url: str) -> bool:
         return True

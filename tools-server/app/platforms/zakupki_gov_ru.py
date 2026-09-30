@@ -195,7 +195,6 @@ _COLLECT_HREFS_JS = """() => {
 class ZakupkiGovRuAdapter:
     host = HOST
     display_name = "ЕИС (zakupki.gov.ru)"
-    preferred_vision_mode: str | None = None
 
     def matches(self, url: str) -> bool:
         return matches_url(url)

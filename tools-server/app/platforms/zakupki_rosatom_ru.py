@@ -1,4 +1,4 @@
-"""Rosatom (zakupki.rosatom.ru) SPA adapter — URL search + deep DOM + vision fallback."""
+"""Rosatom (zakupki.rosatom.ru) SPA adapter — URL search + deep DOM."""
 
 from __future__ import annotations
 
@@ -12,13 +12,12 @@ from ..core.browser import dom as browser_dom
 from ..core.browser.page_kind import detect_page_kind
 from ..core.browser.primitives import list_download_links, navigate
 from ..core.browser.url_utils import bump_page_url
-from ..core.vision.act import ground_validated
 from .base import CardRef, DocRef, SearchSpec, StepResult
 
 logger = logging.getLogger(__name__)
 
 # Heuristic SPA adapter — selectors/URL patterns are unconfirmed without a live
-# platform log. Prefer URL search template; DOM/vision paths are fallbacks.
+# platform log. Prefer URL search template; DOM is the fallback.
 
 HOST = "zakupki.rosatom.ru"
 
@@ -179,7 +178,6 @@ async def _human_pause(rt: Any, seconds: float = 1.2) -> None:
 class ZakupkiRosatomRuAdapter:
     host = HOST
     display_name = "Росатом (zakupki.rosatom.ru)"
-    preferred_vision_mode: str | None = None
 
     def matches(self, url: str) -> bool:
         return matches_url(url)
@@ -202,7 +200,7 @@ class ZakupkiRosatomRuAdapter:
     async def open_search(self, rt: Any, spec: SearchSpec) -> StepResult:
         """
         Prefer URL template (?link=procurements&search=) proven in full-tools log.
-        Fallback: DOM fill + submit / vision locate.
+        Fallback: DOM fill + submit.
         """
         url = build_search_url(spec.keywords)
         res = await navigate(rt, url)
@@ -229,7 +227,7 @@ class ZakupkiRosatomRuAdapter:
             )
         )
         if blocked or (ok and len((text_probe or "").strip()) < 40):
-            # DOM / vision path on base procurements page
+            # DOM path on base procurements page
             base = "https://zakupki.rosatom.ru/?link=procurements"
             await navigate(rt, base)
             await _human_pause(rt, 1.5)
@@ -277,35 +275,7 @@ class ZakupkiRosatomRuAdapter:
             await _human_pause(rt, 2.0)
             return {"ok": True, "note": "dom_fill"}
 
-        # Vision fallback when DOM empty (SPA / anti-bot) — always validate_point
-        goal = "Поле поиска закупок"
-        run_id = getattr(rt, "vision_run_id", None) or None
-        gv = await ground_validated(
-            rt,
-            goal,
-            run_id=run_id,
-            platform=HOST,
-        )
-        if not gv.get("ok"):
-            return {
-                "ok": False,
-                "note": f"vision_rejected:{gv.get('note')}:{gv.get('validation')}",
-            }
-
-        from ..core.browser.primitives import click_xy, type_text
-
-        x, y = float(gv["x"]), float(gv["y"])
-        await click_xy(rt, x, y)
-        await type_text(rt, keywords, x=x, y=y)
-        await rt.page.keyboard.press("Enter")
-        await _human_pause(rt, 2.0)
-        return {
-            "ok": True,
-            "note": (
-                f"vision_validated:{gv.get('validation')}:"
-                f"{gv.get('backend')}:{gv.get('note')}"
-            ),
-        }
+        return {"ok": False, "note": "search UI not found (DOM empty)"}
 
     async def collect_cards(self, rt: Any) -> list[CardRef]:
         await _human_pause(rt, 0.8)
@@ -434,20 +404,4 @@ class ZakupkiRosatomRuAdapter:
             res = await browser_dom.click_by_id(rt, int(nexts[0]["id"]))
             await _human_pause(rt, 1.5)
             return bool(res.get("ok"))
-
-        # Vision fallback for pagination — validate before click
-        goal = "Кнопка следующей страницы пагинации (далее / Следующая / next / >)"
-        run_id = getattr(rt, "vision_run_id", None) or None
-        gv = await ground_validated(
-            rt,
-            goal,
-            run_id=run_id,
-            platform=HOST,
-        )
-        if not gv.get("ok"):
-            return False
-        from ..core.browser.primitives import click_xy
-
-        await click_xy(rt, float(gv["x"]), float(gv["y"]))
-        await _human_pause(rt, 1.5)
-        return True
+        return False

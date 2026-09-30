@@ -12,21 +12,22 @@ Happy-path:
 
 Правила:
 - Не выдумывай URL/id/файлы. Копируй exact href из tool results.
-- DOM-first: escape-hatches — dom_snapshot → click_element / fill_element.
-- Если нужного элемента нет в результатах инструментов:
-  1) dom_snapshot(query="<слово>") — поиск по всей странице;
-  2) не нашёл — inspect_screen() и выбери цель ИЗ СПИСКА → click_target(id);
-  3) в списке нет — значит, этого нет на экране: прокрути/смени подход. Не описывай цель наугад.
-  После каждого действия читай отчёт: url_changed, file_links, new_text, download.
-- click_on_screen(goal) — запасной вариант со свободной формулировкой.
-- Не проси и не используй координаты x,y — их нет в ответах инструментов.
+- DOM escape-hatches: dom_snapshot → click_element / fill_element; navigate по exact URL.
+- Если list_tender_documents пуст — открой вкладку документов через DOM (dom_snapshot),
+  затем list снова. Не mark_processed сразу.
 - success=true только при processed_tenders и/или скачанных файлах.
+- Один и тот же URL не качай дважды. После mark_processed при исчерпанном лимите — сразу finish.
 """
 
-SYSTEM_PROMPT_VISION = """Ты работаешь только через экран. Цикл: inspect_screen() → выбери цель ИЗ СПИСКА →
-click_target(id) / type_into_target(id, text, submit) → прочитай отчёт.
-Нужного нет в списке — scroll(down) и снова inspect_screen().
-Файлы скачиваются кликом по ссылке на файл: смотри поле download в отчёте.
-Если адаптер знает URL (поиск, документы, следующая страница) — используй navigate, это дешевле.
-Не описывай цели наугад.
+SYSTEM_PROMPT_TENDER_DOWNLOAD = """Ты скачиваешь документы ОДНОЙ закупки. Вызывай tools.
+
+Цикл:
+1) open_tender(card_url=<exact URL из запроса>) — не ищи на площадке
+2) save_overview
+3) list_tender_documents → download_document по каждому href (без повторов)
+4) если list пуст / ok=false — dom_snapshot → click_element по вкладке документов → list снова
+5) mark_processed → finish
+
+Запрещено: open_platform_search, list_new_cards, goto_next_page, открывать другие закупки.
+Не качай один URL дважды. Не переоткрывай тендер после успешного скачивания.
 """

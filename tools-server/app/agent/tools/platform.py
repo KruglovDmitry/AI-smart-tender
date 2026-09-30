@@ -3,21 +3,22 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 from langchain_core.tools import StructuredTool
 
-from ....core.browser.page_kind import detect_page_kind
-from ....core.browser.primitives import download_url as core_download
-from ....core.browser.primitives import get_page_text as core_get_page_text
-from ....core.browser.primitives import navigate as core_navigate
-from ....domain import finish as finish_mod
-from ....domain import manifest as manifest_mod
-from ....domain import overview as overview_mod
-from ....domain.tender_id import resolve_tender_id
-from ....platforms.base import CardRef, SearchSpec
-from ...context import (
+from ... import config
+from ...core.browser.page_kind import detect_page_kind
+from ...core.browser.primitives import download_url as core_download
+from ...core.browser.primitives import get_page_text as core_get_page_text
+from ...domain import finish as finish_mod
+from ...domain import manifest as manifest_mod
+from ...domain import overview as overview_mod
+from ...domain.tender_id import resolve_tender_id
+from ...platforms.base import CardRef, SearchSpec
+from ..context import (
     PlatformAgentContext,
     ensure_tender_workspace,
     note_pending_new,
@@ -36,42 +37,12 @@ from .schemas import (
 )
 
 
-def build_platform_tools(
-    ctx: PlatformAgentContext, *, vision_mode: str
-) -> dict[str, StructuredTool]:
+def build_platform_tools(ctx: PlatformAgentContext) -> dict[str, StructuredTool]:
     out: dict[str, StructuredTool] = {}
 
     async def open_platform_search(keywords: str) -> str:
         ad = adapter_for(ctx)
         spec = SearchSpec(keywords=keywords or ctx.keywords)
-        if vision_mode == "vision":
-            url = None
-            if hasattr(ad, "search_url"):
-                url = ad.search_url(spec)
-            if not url:
-                result = {
-                    "ok": False,
-                    "action": "open_platform_search",
-                    "message": (
-                        "адаптер не знает search_url — ищи через "
-                        "inspect_screen / type_into_target"
-                    ),
-                }
-                trace(ctx, "open_platform_search", {"keywords": keywords}, result)
-                return to_json(result)
-            nav = await core_navigate(ctx.rt, url)
-            result = {
-                "ok": bool(nav.get("ok")),
-                "action": "open_platform_search",
-                "url": ctx.rt.page.url,
-                "note": "via search_url",
-                "data": {"search_url": url, "keywords": spec.keywords},
-                "adapter": getattr(ad, "display_name", ad.host),
-            }
-            note_results_url(ctx, ctx.rt.page.url)
-            ctx.screen_targets = {}
-            trace(ctx, "open_platform_search", {"keywords": keywords}, result)
-            return to_json(result)
         step = await ad.open_search(ctx.rt, spec)
         note_results_url(ctx, step.url)
         result = {
@@ -186,12 +157,12 @@ def build_platform_tools(
             message = (
                 f"Документы недоступны (page_kind={page_kind}, url={page_url}). "
                 "Сначала вернись на карточку (open_tender), затем "
-                "dom_snapshot → click «Документы» / click_on_screen, потом list снова."
+                "dom_snapshot → click «Документы», потом list снова."
             )
         else:
             message = (
                 "Документов не найдено адаптером. Не mark_processed сразу: "
-                "dom_snapshot → click_element/click_on_screen по вкладке «Документы», "
+                "dom_snapshot → click_element по вкладке «Документы», "
                 "затем list_tender_documents снова."
             )
         result = {
@@ -214,33 +185,68 @@ def build_platform_tools(
         name="list_tender_documents",
         description=(
             "Список документов текущей карточки (adapter). "
-            "Если count=0 / ok=false — открой вкладку «Документы» через DOM/vision "
-            "и вызови снова; не mark_processed сразу."
+            "Если count=0 / ok=false — открой вкладку «Документы» через DOM "
+            "(dom_snapshot → click_element) и вызови снова; не mark_processed сразу."
         ),
     )
 
     async def download_document(url: str, name: str = "") -> str:
+        url = (url or "").strip()
+        if not url:
+            result = {"ok": False, "action": "download_document", "message": "empty url"}
+            trace(ctx, "download_document", {"url": url, "name": name}, result)
+            return to_json(result)
+        if url in ctx.downloaded_urls:
+            result = {
+                "ok": True,
+                "skipped": True,
+                "action": "download_document",
+                "message": "уже скачан в этом прогоне — не качай повторно",
+                "source_url": url,
+            }
+            trace(ctx, "download_document", {"url": url, "name": name}, result)
+            return to_json(result)
+        max_files = int(os.getenv("PLATFORM_MAX_FILES_PER_TENDER", "10") or 10)
+        already = len(ctx.downloaded_urls)
+        if already >= max_files:
+            result = {
+                "ok": False,
+                "skipped": True,
+                "action": "download_document",
+                "message": (
+                    f"лимит файлов на тендер ({max_files}) достигнут — "
+                    "mark_processed → finish"
+                ),
+                "downloaded_in_run": already,
+            }
+            trace(ctx, "download_document", {"url": url, "name": name}, result)
+            return to_json(result)
         if ctx.current_tender_id:
             ensure_tender_workspace(
                 ctx, ctx.current_tender_id, ctx.current_tender_url
             )
         result = await core_download(ctx.rt, url, suggested_name=name or None)
-        if result.get("ok") and ctx.current_tender_dir:
-            file_path = result.get("file") or ""
-            manifest_mod.append_file(
-                Path(ctx.current_tender_dir),
-                name=Path(str(file_path)).name if file_path else (name or "document"),
-                sha256=str(result.get("sha256") or ""),
-                bytes_count=int(result.get("bytes") or 0),
-                source_url=str(result.get("source_url") or url),
-                content_type=str(result.get("content_type") or ""),
-                tender_id=str(ctx.current_tender_id or ""),
-                platform=ctx.platform,
-                tender_url=str(ctx.current_tender_url or ""),
-            )
-            result["manifest"] = str(
-                manifest_mod.manifest_path(Path(ctx.current_tender_dir))
-            )
+        if result.get("ok") and not result.get("skipped"):
+            ctx.downloaded_urls.add(url)
+            if ctx.current_tender_dir:
+                file_path = result.get("file") or ""
+                manifest_mod.append_file(
+                    Path(ctx.current_tender_dir),
+                    name=Path(str(file_path)).name if file_path else (name or "document"),
+                    sha256=str(result.get("sha256") or ""),
+                    bytes_count=int(result.get("bytes") or 0),
+                    source_url=str(result.get("source_url") or url),
+                    content_type=str(result.get("content_type") or ""),
+                    tender_id=str(ctx.current_tender_id or ""),
+                    platform=ctx.platform,
+                    tender_url=str(ctx.current_tender_url or ""),
+                )
+                result["manifest"] = str(
+                    manifest_mod.manifest_path(Path(ctx.current_tender_dir))
+                )
+            result["downloaded_in_run"] = len(ctx.downloaded_urls)
+            if len(ctx.downloaded_urls) >= max_files:
+                result["hint"] = "лимит файлов — mark_processed → finish"
         trace(ctx, "download_document", {"url": url, "name": name}, result)
         return to_json(result)
 
@@ -274,64 +280,45 @@ def build_platform_tools(
         tender_url = ctx.current_tender_url or page_url
         folder = ensure_tender_workspace(ctx, tender_id, tender_url)
 
-        if vision_mode == "vision":
-            try:
-                payload = await overview_mod.extract_overview_from_screenshots(
-                    rt=ctx.rt,
-                    tender_id=tender_id,
-                    tender_url=tender_url,
-                    platform=ctx.platform,
-                )
-            except Exception as e:
-                result = {
-                    "ok": False,
-                    "action": "save_overview",
-                    "message": f"vision overview failed: {e}",
-                    "tender_id": tender_id,
-                    "tender_dir": str(folder),
-                }
-                trace(ctx, "save_overview", {}, result)
-                return to_json(result)
-        else:
-            page = await core_get_page_text(ctx.rt, 14000)
-            if not page.get("ok"):
-                result = {
-                    "ok": False,
-                    "action": "save_overview",
-                    "message": page.get("message") or "get_page_text failed",
-                }
-                trace(ctx, "save_overview", {}, result)
-                return to_json(result)
+        page = await core_get_page_text(ctx.rt, 14000)
+        if not page.get("ok"):
+            result = {
+                "ok": False,
+                "action": "save_overview",
+                "message": page.get("message") or "get_page_text failed",
+            }
+            trace(ctx, "save_overview", {}, result)
+            return to_json(result)
 
-            page_url = str(page.get("url") or ctx.rt.page.url)
-            resolved2 = resolve_tender_id(page_url, platform=ctx.platform)
-            page_tid2 = str(resolved2.get("tender_id") or "").strip() or None
-            if page_tid2:
-                tender_id = page_tid2
-                ctx.current_tender_id = tender_id
-                ctx.current_tender_url = page_url
-            tender_url = ctx.current_tender_url or page_url
-            folder = ensure_tender_workspace(ctx, tender_id, tender_url)
+        page_url = str(page.get("url") or ctx.rt.page.url)
+        resolved2 = resolve_tender_id(page_url, platform=ctx.platform)
+        page_tid2 = str(resolved2.get("tender_id") or "").strip() or None
+        if page_tid2:
+            tender_id = page_tid2
+            ctx.current_tender_id = tender_id
+            ctx.current_tender_url = page_url
+        tender_url = ctx.current_tender_url or page_url
+        folder = ensure_tender_workspace(ctx, tender_id, tender_url)
 
-            try:
-                payload = await overview_mod.extract_overview(
-                    tender_id=tender_id,
-                    tender_url=tender_url,
-                    page_url=page_url,
-                    page_title=str(page.get("title") or ""),
-                    page_text=str(page.get("text") or ""),
-                    platform=ctx.platform,
-                )
-            except Exception as e:
-                result = {
-                    "ok": False,
-                    "action": "save_overview",
-                    "message": f"LLM overview failed: {e}",
-                    "tender_id": tender_id,
-                    "tender_dir": str(folder),
-                }
-                trace(ctx, "save_overview", {}, result)
-                return to_json(result)
+        try:
+            payload = await overview_mod.extract_overview(
+                tender_id=tender_id,
+                tender_url=tender_url,
+                page_url=page_url,
+                page_title=str(page.get("title") or ""),
+                page_text=str(page.get("text") or ""),
+                platform=ctx.platform,
+            )
+        except Exception as e:
+            result = {
+                "ok": False,
+                "action": "save_overview",
+                "message": f"LLM overview failed: {e}",
+                "tender_id": tender_id,
+                "tender_dir": str(folder),
+            }
+            trace(ctx, "save_overview", {}, result)
+            return to_json(result)
 
         out_path = Path(folder) / "overview.json"
         out_path.write_text(
@@ -352,8 +339,7 @@ def build_platform_tools(
             "tender_id": tender_id,
             "tender_dir": str(folder),
             "overview_path": str(out_path),
-            "source": payload.get("source")
-            or ("vision" if vision_mode == "vision" else "text"),
+            "source": payload.get("source") or "text",
             "overview": {
                 "tender_url": payload.get("tender_url"),
                 "object": payload.get("object"),
@@ -406,6 +392,14 @@ def build_platform_tools(
             tender_url=turl,
         )
         pop_pending_new(ctx, tender_id)
+        if ctx.new_tenders_processed >= ctx.max_new_tenders:
+            result["limit_reached"] = True
+            result["hint"] = "Лимит новых исчерпан — сразу finish(success=true)."
+        else:
+            result["hint"] = (
+                f"processed={ctx.new_tenders_processed}/{ctx.max_new_tenders}. "
+                "Не переоткрывай тот же тендер."
+            )
         trace(
             ctx,
             "mark_processed",
@@ -427,25 +421,8 @@ def build_platform_tools(
 
     async def goto_next_page() -> str:
         ad = adapter_for(ctx)
-        ok = False
-        note = ""
-        if vision_mode == "vision":
-            next_url = None
-            if hasattr(ad, "next_page_url"):
-                next_url = ad.next_page_url(ctx.rt.page.url or "")
-            if next_url:
-                nav = await core_navigate(ctx.rt, next_url)
-                ok = bool(nav.get("ok"))
-                note = (
-                    "via next_page_url"
-                    if ok
-                    else (nav.get("message") or "navigate failed")
-                )
-            else:
-                note = "адаптер не знает next_page_url — используй inspect_screen/scroll"
-        else:
-            ok = await ad.next_page(ctx.rt)
-            note = "Перешли на следующую страницу" if ok else "Пагинация не удалась"
+        ok = await ad.next_page(ctx.rt)
+        note = "Перешли на следующую страницу" if ok else "Пагинация не удалась"
         result = {
             "ok": ok,
             "action": "goto_next_page",
@@ -454,7 +431,6 @@ def build_platform_tools(
         }
         if ok:
             note_results_url(ctx, ctx.rt.page.url)
-            ctx.screen_targets = {}
         trace(ctx, "goto_next_page", {}, result)
         return to_json(result)
 

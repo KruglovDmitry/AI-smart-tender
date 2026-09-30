@@ -1,4 +1,4 @@
-"""Pydantic arg schemas for platform / DOM / screen tools."""
+"""Pydantic arg schemas for platform / DOM tools."""
 
 from __future__ import annotations
 
@@ -22,32 +22,6 @@ class MarkProcessedInput(BaseModel):
     tender_id: str = Field(description="tender_id")
     tender_url: str = Field(default="", description="URL карточки")
     count_toward_limit: bool = Field(default=True)
-
-
-class GoalInput(BaseModel):
-    goal: str = Field(description="Что кликнуть на экране (на русском, без координат)")
-
-
-class QuestionInput(BaseModel):
-    question: str | None = Field(
-        default=None,
-        description="Опциональный вопрос по скриншоту; без вопроса — только список целей",
-    )
-
-
-class TargetIdInput(BaseModel):
-    target_id: str = Field(description="id цели из inspect_screen (d17 или v3)")
-
-
-class TypeIntoTargetInput(BaseModel):
-    target_id: str = Field(description="id цели из inspect_screen")
-    text: str = Field(description="Текст для ввода")
-    submit: bool = Field(default=False, description="True — Enter после ввода")
-
-
-class ScrollInput(BaseModel):
-    direction: str = Field(default="down", description="down | up")
-    amount: str = Field(default="screen", description="screen | half")
 
 
 class DomSnapshotInput(BaseModel):

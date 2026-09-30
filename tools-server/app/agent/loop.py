@@ -17,17 +17,15 @@ from langchain_openai import ChatOpenAI
 from .. import config
 from ..core.browser import primitives as browser_tools
 from ..core.browser.session import browser_runtime
-from ..core.llm.client import deepseek_endpoint
 from ..core.llm.usage import bind_usage, current_usage, record_usage, usage_from_ai_message
 from .context import PlatformAgentContext, platform_notes_digest
 from .logging import current_agent_log_path, log_messages, setup_agent_file_logging
-from .prompt import SYSTEM_PROMPT_PLATFORM, SYSTEM_PROMPT_VISION
+from .prompt import SYSTEM_PROMPT_PLATFORM, SYSTEM_PROMPT_TENDER_DOWNLOAD
 from .tools import (
     SeenTenderStore,
     build_langchain_tools,
     make_context,
     normalize_tools_mode,
-    normalize_vision_mode,
     platform_from_url,
     tool_names_for_mode,
 )
@@ -53,10 +51,12 @@ def _rel_data_path(path: str) -> str:
 def _build_llm() -> ChatOpenAI:
     _require_llm()
     kwargs: dict[str, Any] = {}
-    if deepseek_endpoint(config.AGENT_PRIMARY_MODEL):
+    model = config.AGENT_PRIMARY_MODEL
+    base = (config.AGENT_LLM_BASE_URL or "").lower()
+    if "deepseek" in model.lower() or "deepseek.com" in base:
         kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
     return ChatOpenAI(
-        model=config.AGENT_PRIMARY_MODEL,
+        model=model,
         api_key=config.AGENT_LLM_API_KEY,
         base_url=config.AGENT_LLM_BASE_URL,
         temperature=0.1,
@@ -65,29 +65,7 @@ def _build_llm() -> ChatOpenAI:
     )
 
 
-def _message_has_image(msg: Any) -> bool:
-    content = getattr(msg, "content", None)
-    if not isinstance(content, list):
-        return False
-    for part in content:
-        if isinstance(part, dict) and part.get("type") in {"image_url", "image"}:
-            return True
-    return False
-
-
-def _prune_old_screenshots(messages: list[Any]) -> None:
-    """Оставляем только последний кадр в истории — экономия токенов."""
-    image_idxs = [i for i, m in enumerate(messages) if _message_has_image(m)]
-    if len(image_idxs) <= 1:
-        return
-    for i in image_idxs[:-1]:
-        messages[i] = HumanMessage(
-            content="[предыдущий screenshot удалён из контекста; ориентируйся на последний кадр]"
-        )
-
-
 def _progress_digest(ctx: PlatformAgentContext) -> str:
-    """Краткий статус для LLM вместо полной истории tools по завершённым тендерам."""
     try:
         cur_url = ctx.rt.page.url
     except Exception:
@@ -128,11 +106,9 @@ def _progress_digest(ctx: PlatformAgentContext) -> str:
     return "\n".join(lines)
 
 
-def _compact_messages_after_tender(messages: list[Any], ctx: PlatformAgentContext) -> list[Any]:
-    """
-    Оставляем system + исходный user-запрос + краткий прогресс.
-    Убираем накопившиеся AI/Tool/screenshot по уже закрытым тендерам.
-    """
+def _compact_messages_after_tender(
+    messages: list[Any], ctx: PlatformAgentContext
+) -> list[Any]:
     if len(messages) < 2:
         return messages
     system = messages[0]
@@ -144,37 +120,6 @@ def _compact_messages_after_tender(messages: list[Any], ctx: PlatformAgentContex
         ctx.new_tenders_processed,
     )
     return [system, task, digest]
-
-
-def _screenshot_followup(ctx: PlatformAgentContext) -> HumanMessage | None:
-    if not getattr(ctx, "inject_screenshots", False):
-        return None
-    if not (config.AGENT_PRIMARY_MULTIMODAL and config.AGENT_VL_ENABLED):
-        return None
-    b64 = getattr(ctx.rt, "last_screenshot_b64", None)
-    if not b64:
-        return None
-    meta = getattr(ctx.rt, "last_screenshot_meta", None) or {}
-    w = meta.get("width") or config.BROWSER_VIEWPORT_WIDTH
-    h = meta.get("height") or config.BROWSER_VIEWPORT_HEIGHT
-    url = meta.get("url") or ctx.rt.page.url
-    return HumanMessage(
-        content=[
-            {
-                "type": "text",
-                "text": (
-                    f"Screenshot viewport {w}x{h}. URL: {url}. "
-                    "Изображение ниже — текущий экран. "
-                    "Оцени UI сам; для кликов/ввода используй координаты в пределах viewport; "
-                    "затем продолжи через tool calls (не описывай картинку длинно)."
-                ),
-            },
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{b64}"},
-            },
-        ]
-    )
 
 
 async def _ainvoke_tool(tool: BaseTool, args: dict[str, Any]) -> str:
@@ -198,10 +143,7 @@ async def run_multimodal_tool_loop(
     max_steps: int,
     system_prompt: str | None = None,
 ) -> str:
-    """
-    Один multimodal ChatOpenAI + tools.
-    screenshot не вызывает отдельный VL: картинка инжектится в messages.
-    """
+    """ChatOpenAI + tools loop (text primary, DOM/adapter tools)."""
     llm = _build_llm().bind_tools(tools)
     tools_by_name = {t.name: t for t in tools}
     sys_text = system_prompt or SYSTEM_PROMPT_PLATFORM
@@ -215,6 +157,7 @@ async def run_multimodal_tool_loop(
                 f"- platform: {ctx.platform}\n"
                 f"- keywords: {keywords}\n"
                 f"- max_new_tenders: {max_new}\n"
+                f"- primary_model: {config.AGENT_PRIMARY_MODEL}\n"
                 f"- current_url: {ctx.rt.page.url}\n\n"
                 f"ЗАПРОС:\n{user_input}"
             )
@@ -246,13 +189,12 @@ async def run_multimodal_tool_loop(
         if config.AGENT_DEBUG_LOGS:
             if last_text:
                 logger.info("LLM step=%s text=%s", step_i, last_text)
-            # Полный dump только редко — иначе лог раздувается мегабайтами
             if step_i == 0 or step_i % 10 == 0:
                 log_messages(step_i, messages, label="after_llm")
 
         tool_calls = getattr(ai, "tool_calls", None) or []
         if not tool_calls:
-            logger.info("multimodal loop: no tool_calls at step=%s", step_i)
+            logger.info("tool loop: no tool_calls at step=%s", step_i)
             if config.AGENT_DEBUG_LOGS:
                 log_messages(step_i, messages, label="final")
             break
@@ -260,7 +202,6 @@ async def run_multimodal_tool_loop(
         names = [tc.get("name") for tc in tool_calls]
         logger.info("LLM step=%s tool_calls=%s", step_i, names)
 
-        saw_screenshot = False
         marked_seen = False
         for tc in tool_calls:
             name = tc.get("name") or ""
@@ -272,7 +213,9 @@ async def run_multimodal_tool_loop(
             else:
                 if config.AGENT_DEBUG_LOGS:
                     logger.info("tool_call step=%s name=%s args=%s", step_i, name, args)
-                observation = await _ainvoke_tool(tool, args if isinstance(args, dict) else {})
+                observation = await _ainvoke_tool(
+                    tool, args if isinstance(args, dict) else {}
+                )
                 if config.AGENT_DEBUG_LOGS:
                     logger.info(
                         "tool_result step=%s name=%s observation=%s",
@@ -281,65 +224,11 @@ async def run_multimodal_tool_loop(
                         observation[:2000],
                     )
             messages.append(ToolMessage(content=observation, tool_call_id=tc_id))
-            if name == "screenshot":
-                saw_screenshot = True
             if name in {"mark_tender_seen", "mark_processed"}:
                 marked_seen = True
             if ctx.done:
                 break
 
-        # Auto hybrid → vision after N DOM-blind streaks
-        threshold = int(getattr(config, "AGENT_AUTO_VISION_AFTER", 3) or 0)
-        if (
-            threshold > 0
-            and ctx.vision_mode == "hybrid"
-            and ctx.dom_blind_streak >= threshold
-            and not ctx.done
-        ):
-            ctx.vision_mode = "vision"
-            tools[:] = build_langchain_tools(ctx, vision_mode="vision")
-            tools_by_name.clear()
-            tools_by_name.update({t.name: t for t in tools})
-            llm = _build_llm().bind_tools(tools)
-            names_list = [t.name for t in tools]
-            event = {
-                "from": "hybrid",
-                "to": "vision",
-                "reason": "dom_blind_streak",
-                "streak": ctx.dom_blind_streak,
-                "step": step_i,
-                "tools": names_list,
-            }
-            ctx.mode_switches.append(event)
-            logger.info(
-                "auto vision_mode switch hybrid→vision streak=%s tools=%s",
-                ctx.dom_blind_streak,
-                names_list,
-            )
-            messages.append(
-                HumanMessage(
-                    content=(
-                        "Переключение в режим vision: DOM на этом сайте не помогает. "
-                        f"Доступные инструменты: {', '.join(names_list)}."
-                    )
-                )
-            )
-            # Rebuild system context: replace first SystemMessage
-            if messages and isinstance(messages[0], SystemMessage):
-                messages[0] = SystemMessage(content=SYSTEM_PROMPT_VISION)
-
-        if saw_screenshot and not ctx.done:
-            follow = _screenshot_followup(ctx)
-            if follow is not None:
-                _prune_old_screenshots(messages)
-                messages.append(follow)
-                if config.AGENT_DEBUG_LOGS:
-                    logger.info(
-                        "screenshot image attached to multimodal context (model=%s)",
-                        config.AGENT_PRIMARY_MODEL,
-                    )
-
-        # После закрытия тендера — в LLM только прогресс, без пачки download/list
         if marked_seen and not ctx.done:
             messages[:] = _compact_messages_after_tender(messages, ctx)
 
@@ -366,10 +255,10 @@ async def run_platform_task(
     vision_mode: str | None = None,
 ) -> dict[str, Any]:
     """
-    Tool-calling loop.
-    tools_mode: platform only (browser removed).
-    vision_mode: dom | hybrid (default) | vision.
+    Tool-calling loop (platform = DOM + adapters).
+    vision_mode is deprecated and ignored.
     """
+    _ = vision_mode
     platform_url = (platform_url or "").strip()
     keywords = (keywords or "").strip()
     if not platform_url or not keywords:
@@ -386,22 +275,6 @@ async def run_platform_task(
         if tools_mode is not None
         else getattr(config, "PLATFORM_AGENT_MODE", "platform")
     )
-
-    # Resolve vision_mode: request → adapter preferred → config
-    from ..platforms.registry import get_adapter
-
-    adapter = get_adapter(platform_url)
-    preferred = getattr(adapter, "preferred_vision_mode", None)
-    vmode = normalize_vision_mode(
-        vision_mode
-        if vision_mode is not None
-        else (preferred or getattr(config, "AGENT_VISION_MODE", "hybrid"))
-    )
-    if vmode == "vision" and not config.perception_configured():
-        raise RuntimeError(
-            "vision_mode=vision требует настроенное восприятие: "
-            "AGENT_PERCEPTION_BASE_URL+API_KEY (qwen_vl) или UI_TARS_BASE_URL (ui_tars)"
-        )
 
     plat = "".join(
         c if c.isalnum() or c in "-_" else "_" for c in platform_from_url(platform_url)
@@ -422,33 +295,30 @@ async def run_platform_task(
     run_id = (
         datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + session_name[:40]
     )
-    agent_log_path = setup_agent_file_logging(run_tag=f"{session_name}-{vmode}")
+    agent_log_path = setup_agent_file_logging(run_tag=f"{session_name}-platform")
 
-    if vmode == "vision":
+    if (keywords or "").strip().lower() in {"tender-download", "single", "one"}:
         user_input = (instruction or "").strip() or (
-            f"Площадка {platform_url}. Keywords: «{keywords}». Лимит новых: {max_new}. "
-            f"Режим vision: inspect_screen → click_target / type_into_target → scroll. "
-            f"navigate по URL адаптера если известен. finish в конце."
+            f"Одна закупка: {platform_url}. "
+            f"open_tender(card_url) → save_overview → list_tender_documents → "
+            f"download_document → mark_processed → finish. "
+            f"Если list пуст — dom_snapshot → click_element по вкладке документов."
         )
-        system_prompt = SYSTEM_PROMPT_VISION
+        system_prompt = SYSTEM_PROMPT_TENDER_DOWNLOAD
     else:
         user_input = (instruction or "").strip() or (
             f"Площадка {platform_url}. Keywords: «{keywords}». Лимит новых: {max_new}. "
             f"Happy-path: open_platform_search → list_new_cards → open_tender → "
             f"save_overview → list_tender_documents → download_document → mark_processed → "
-            f"finish. DOM: dom_snapshot → click/fill_element. "
-            f"Vision: inspect_screen → click_target; запасной click_on_screen."
+            f"finish. DOM: dom_snapshot → click/fill_element."
         )
         system_prompt = SYSTEM_PROMPT_PLATFORM
     if "finish" not in user_input.lower():
         user_input += " В конце вызови finish."
 
     logger.info(
-        "vision_mode=%s EIS_TEST_NO_DOCS_ROUTE=%s perception=%s grounding=%s",
-        vmode,
+        "platform agent EIS_TEST_NO_DOCS_ROUTE=%s",
         getattr(config, "EIS_TEST_NO_DOCS_ROUTE", False),
-        getattr(config, "AGENT_PERCEPTION_BACKEND", ""),
-        getattr(config, "AGENT_VISION_BACKEND", ""),
     )
 
     async with browser_runtime(downloads_dir=downloads) as rt:
@@ -462,28 +332,20 @@ async def run_platform_task(
             task_hint=user_input,
             downloads_root=downloads,
         )
-        ctx.vision_run_id = run_id
-        ctx.vision_mode = vmode
-        try:
-            rt.vision_run_id = run_id  # type: ignore[attr-defined]
-        except Exception:
-            pass
-        ctx.inject_screenshots = False
         ctx.trace.append(
             {"tool": "navigate", "args": {"url": platform_url}, "result": nav}
         )
 
-        tools = build_langchain_tools(ctx, mode=mode, vision_mode=vmode)
+        tools = build_langchain_tools(ctx, mode=mode)
 
         logger.info(
             "platform loop start platform=%s keywords=%s max_iter=%s "
-            "model=%s tools_mode=%s vision_mode=%s tools=%s",
+            "model=%s tools_mode=%s tools=%s",
             ctx.platform,
             keywords,
             max_steps,
             config.AGENT_PRIMARY_MODEL,
             mode,
-            vmode,
             [t.name for t in tools],
         )
 
@@ -524,21 +386,14 @@ async def run_platform_task(
         "downloads_dir": str(downloads),
         "seen_tenders_db": str(config.SEEN_TENDERS_DB),
         "model": config.AGENT_PRIMARY_MODEL,
-        "vl_model": config.AGENT_VL_MODEL,
-        "vl_enabled": config.AGENT_VL_ENABLED,
-        "vision_backend": config.AGENT_VISION_BACKEND,
-        "perception_backend": getattr(config, "AGENT_PERCEPTION_BACKEND", ""),
-        "vision_run_id": run_id,
-        "vision_mode": ctx.vision_mode,
-        "mode_switches": list(ctx.mode_switches),
         "eis_test_no_docs_route": bool(
             getattr(config, "EIS_TEST_NO_DOCS_ROUTE", False)
         ),
-        "vl_mode": "inspect_screen+click_target",
         "agent_framework": "langchain.tool_loop",
         "tools_mode": mode,
-        "tools": tool_names_for_mode(ctx.vision_mode),
+        "tools": tool_names_for_mode(),
         "agent_log_path": str(agent_log_path or current_agent_log_path() or ""),
+        "run_id": run_id,
         "max_steps": max_steps,
         "usage": current_usage(),
         "wall_time_s": round(time.perf_counter() - t0, 1),

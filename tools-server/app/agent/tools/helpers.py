@@ -1,4 +1,4 @@
-"""Shared helpers for high-level tools."""
+"""Shared helpers for platform tools."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from ....domain import manifest as manifest_mod
-from ....platforms.registry import get_adapter
-from ...context import PlatformAgentContext
+from ...domain import manifest as manifest_mod
+from ...platforms.registry import get_adapter
+from ..context import PlatformAgentContext
 
 
 def adapter_for(ctx: PlatformAgentContext):
@@ -76,35 +76,3 @@ async def persist_download(
         "sha256": sha,
         "source_url": source_url,
     }
-
-
-def note_dom_blind(
-    ctx: PlatformAgentContext, tool: str, result: dict[str, Any]
-) -> None:
-    """Track DOM-empty → vision-helped streak for auto hybrid→vision."""
-    empty_dom = False
-    if tool in {"dom_snapshot", "list_tender_documents", "list_new_cards"}:
-        if not result.get("ok"):
-            empty_dom = True
-        elif tool == "dom_snapshot" and not (result.get("elements") or []):
-            empty_dom = True
-        elif tool == "list_tender_documents" and int(result.get("count") or 0) == 0:
-            empty_dom = True
-        elif tool == "list_new_cards" and not (result.get("new") or []):
-            empty_dom = True
-    if empty_dom:
-        ctx.platform_notes["_last_dom_empty"] = True
-        return
-    if tool in {"click_target", "click_on_screen", "type_into_target"}:
-        if ctx.platform_notes.pop("_last_dom_empty", False) and result.get("changed"):
-            tid = str(result.get("target_id") or "")
-            if tool == "click_on_screen" or tid.startswith("v"):
-                ctx.dom_blind_streak += 1
-                return
-        ctx.dom_blind_streak = 0
-
-
-# Back-compat alias used by tests
-_note_dom_blind = note_dom_blind
-_adapter = adapter_for
-_persist_download = persist_download

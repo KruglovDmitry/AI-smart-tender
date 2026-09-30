@@ -28,7 +28,7 @@ body = {
         "Поиск только по ключевому слову «канцтовары», без фильтров. "
         "Обработай до 10 новых закупок: open_platform_search → list_new_cards → "
         "open_tender → save_overview → list_tender_documents → download_document → "
-        "mark_processed → finish. Предпочитай DOM; click_on_screen только если DOM не помогает."
+        "mark_processed → finish. Используй DOM (dom_snapshot / click_element)."
     ),
 }
 

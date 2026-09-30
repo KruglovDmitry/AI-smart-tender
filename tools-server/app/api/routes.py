@@ -18,160 +18,19 @@ router = APIRouter()
 
 @router.get("/health")
 async def health():
-    grounding = await _grounding_health()
-    perception = await _perception_health()
-    # Grounding required for hybrid/vision clicks; perception required only for vision mode
-    grounding_ok = bool(grounding.get("ok") or not grounding.get("required"))
-    status = "ok" if grounding_ok else "degraded"
+    llm_ok = bool(config.AGENT_LLM_BASE_URL and config.AGENT_LLM_API_KEY)
     return {
-        "status": status,
+        "status": "ok" if llm_ok else "degraded",
         "data_root": str(config.DATA_ROOT),
-        "agent_llm_configured": bool(
-            config.AGENT_LLM_BASE_URL and config.AGENT_LLM_API_KEY
-        ),
+        "agent_llm_configured": llm_ok,
         "primary_model": getattr(config, "AGENT_PRIMARY_MODEL", config.AGENT_LLM_MODEL),
-        "vl_model": config.AGENT_VL_MODEL,
-        "vision_mode_default": getattr(config, "AGENT_VISION_MODE", "hybrid"),
-        "grounding": grounding,
-        "perception": perception,
-        # backward-compatible alias
-        "vision": grounding,
         "platform_agent": {
             "model": config.AGENT_LLM_MODEL,
             "max_steps": config.PLATFORM_MAX_STEPS,
             "max_new_tenders": config.PLATFORM_MAX_NEW_TENDERS,
             "mode_default": getattr(config, "PLATFORM_AGENT_MODE", "platform"),
-            "vision_backend": getattr(config, "AGENT_VISION_BACKEND", "ui_tars"),
-            "perception_backend": getattr(config, "AGENT_PERCEPTION_BACKEND", "qwen_vl"),
-            "vision_mode": getattr(config, "AGENT_VISION_MODE", "hybrid"),
         },
     }
-
-
-async def _grounding_health() -> dict:
-    """Probe grounding backend (where is X?)."""
-    backend = getattr(config, "AGENT_VISION_BACKEND", "ui_tars")
-    if backend == "ui_tars":
-        from ..core.vision.ui_tars.client import UiTarsClient
-
-        probe = await UiTarsClient().probe()
-        return {
-            "role": "grounding",
-            "backend": "ui_tars",
-            "required": True,
-            "ok": bool(probe.get("ok")),
-            "configured": bool(probe.get("configured")),
-            "base_url": probe.get("base_url") or config.UI_TARS_BASE_URL or None,
-            "model": probe.get("model") or config.UI_TARS_MODEL,
-            "latency_ms": probe.get("latency_ms"),
-            "note": probe.get("note"),
-        }
-    base = (config.AGENT_LLM_BASE_URL or "").rstrip("/")
-    if not base or not config.AGENT_LLM_API_KEY:
-        return {
-            "role": "grounding",
-            "backend": backend,
-            "required": True,
-            "ok": False,
-            "configured": False,
-            "note": "AGENT_LLM_BASE_URL / AGENT_LLM_API_KEY not set",
-        }
-    import httpx
-
-    try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            r = await client.get(
-                f"{base}/v1/models",
-                headers={"Authorization": f"Bearer {config.AGENT_LLM_API_KEY}"},
-            )
-        return {
-            "role": "grounding",
-            "backend": backend,
-            "required": True,
-            "ok": r.status_code < 400,
-            "configured": True,
-            "base_url": base,
-            "model": config.AGENT_VL_MODEL,
-            "note": None if r.status_code < 400 else f"HTTP {r.status_code}",
-        }
-    except Exception as e:
-        return {
-            "role": "grounding",
-            "backend": backend,
-            "required": True,
-            "ok": False,
-            "configured": True,
-            "base_url": base,
-            "note": str(e)[:200],
-        }
-
-
-async def _perception_health() -> dict:
-    """Probe perception backend (what is on screen?)."""
-    backend = getattr(config, "AGENT_PERCEPTION_BACKEND", "qwen_vl")
-    configured = bool(config.perception_configured())
-    if backend == "ui_tars":
-        from ..core.vision.ui_tars.client import UiTarsClient
-
-        probe = await UiTarsClient().probe()
-        return {
-            "role": "perception",
-            "backend": "ui_tars",
-            "required": False,
-            "ok": bool(probe.get("ok")),
-            "configured": configured,
-            "base_url": probe.get("base_url") or config.UI_TARS_BASE_URL or None,
-            "model": probe.get("model") or config.UI_TARS_MODEL,
-            "latency_ms": probe.get("latency_ms"),
-            "note": probe.get("note"),
-        }
-    base = (getattr(config, "AGENT_PERCEPTION_BASE_URL", "") or "").rstrip("/")
-    key = getattr(config, "AGENT_PERCEPTION_API_KEY", "") or ""
-    model = getattr(config, "AGENT_PERCEPTION_MODEL", "qwen3-vl-plus")
-    if not base or not key:
-        return {
-            "role": "perception",
-            "backend": backend,
-            "required": False,
-            "ok": False,
-            "configured": False,
-            "model": model,
-            "note": "AGENT_PERCEPTION_BASE_URL / API_KEY not set",
-        }
-    import httpx
-
-    try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            r = await client.get(
-                f"{base}/v1/models",
-                headers={"Authorization": f"Bearer {key}"},
-            )
-        return {
-            "role": "perception",
-            "backend": backend,
-            "required": False,
-            "ok": r.status_code < 400,
-            "configured": True,
-            "base_url": base,
-            "model": model,
-            "note": None if r.status_code < 400 else f"HTTP {r.status_code}",
-        }
-    except Exception as e:
-        return {
-            "role": "perception",
-            "backend": backend,
-            "required": False,
-            "ok": False,
-            "configured": True,
-            "base_url": base,
-            "model": model,
-            "note": str(e)[:200],
-        }
-
-
-async def _vision_health() -> dict:
-    """Backward-compatible alias → grounding."""
-    return await _grounding_health()
 
 
 @router.post("/run_platform_task")
@@ -187,7 +46,6 @@ async def run_platform_task_route(body: PlatformTaskBody):
             download_subdir=body.download_subdir,
             instruction=body.instruction,
             tools_mode=body.tools_mode,
-            vision_mode=body.vision_mode,
         )
     except ImportError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
@@ -203,13 +61,11 @@ async def run_platform_task_route(body: PlatformTaskBody):
 async def run_tender_download_route(body: TenderDownloadBody):
     """
     Open one card and download docs.
-    Direct adapter path when vision_mode omitted / dom-like happy path;
-    agent loop when vision_mode is hybrid|vision (or EIS_TEST_NO_DOCS_ROUTE).
+    Default: direct adapter path. Agent loop when use_agent=true or EIS_TEST_NO_DOCS_ROUTE.
     """
     from datetime import datetime, timezone
 
     from ..agent.loop import _write_debug_json
-    from ..agent.tools.tool_modes import normalize_vision_mode
     from ..core.browser.primitives import download_url, get_page_text
     from ..core.browser.session import browser_runtime
     from ..core.llm.usage import bind_usage, current_usage
@@ -221,21 +77,11 @@ async def run_tender_download_route(body: TenderDownloadBody):
     if not url.startswith("http"):
         raise HTTPException(status_code=400, detail="tender_url must be http(s)")
 
-    vmode_raw = body.vision_mode
-    use_agent = False
-    if vmode_raw is not None:
-        vmode = normalize_vision_mode(vmode_raw)
-        use_agent = vmode in {"hybrid", "vision"} or bool(
-            getattr(config, "EIS_TEST_NO_DOCS_ROUTE", False)
-        )
-    elif getattr(config, "EIS_TEST_NO_DOCS_ROUTE", False):
-        vmode = normalize_vision_mode(getattr(config, "AGENT_VISION_MODE", "hybrid"))
-        use_agent = True
-    else:
-        vmode = None
-
+    use_agent = bool(body.use_agent) or bool(
+        getattr(config, "EIS_TEST_NO_DOCS_ROUTE", False)
+    )
     if use_agent:
-        return await _run_tender_download_agent(body, vision_mode=vmode or "hybrid")
+        return await _run_tender_download_agent(body)
 
     bind_usage()
     t0 = time.perf_counter()
@@ -278,9 +124,6 @@ async def run_tender_download_route(body: TenderDownloadBody):
                 json.dumps(payload, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-            manifest_mod.upsert_overview_fields(
-                folder, {**payload, "platform": host, "tender_id": tid}
-            )
             overview_path = str(out_path)
             overview_brief = {
                 "object": payload.get("object"),
@@ -288,55 +131,62 @@ async def run_tender_download_route(body: TenderDownloadBody):
                 "price": payload.get("price"),
                 "deadline": payload.get("deadline"),
             }
+            try:
+                manifest_mod.upsert_overview_fields(
+                    folder, {**payload, "platform": host, "tender_id": tid}
+                )
+            except Exception:
+                pass
         except Exception as e:
             overview_error = str(e)
 
         docs = await adapter.collect_documents(rt)
-        downloaded = []
+        downloaded: list[dict] = []
         for doc in docs[: body.max_files]:
             res = await download_url(rt, doc.url, suggested_name=doc.name)
-            if res.get("ok") and not res.get("skipped"):
-                manifest_mod.append_file(
-                    folder,
-                    name=Path(str(res.get("file") or doc.name)).name,
-                    sha256=str(res.get("sha256") or ""),
-                    bytes_count=int(res.get("bytes") or 0),
-                    source_url=str(res.get("source_url") or doc.url),
-                    content_type=str(res.get("content_type") or ""),
-                    tender_id=tid,
-                    platform=host,
-                    tender_url=step.url or url,
-                )
+            if res.get("ok"):
                 downloaded.append(res)
-        run_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + tid[:40]
+                try:
+                    manifest_mod.append_file(
+                        folder,
+                        name=Path(str(res.get("file") or doc.name)).name,
+                        sha256=str(res.get("sha256") or ""),
+                        bytes_count=int(res.get("bytes") or 0),
+                        source_url=str(res.get("source_url") or doc.url),
+                        content_type=str(res.get("content_type") or ""),
+                        tender_id=tid,
+                        platform=host,
+                        tender_url=step.url or url,
+                    )
+                except Exception:
+                    pass
+
         result = {
             "ok": True,
-            "adapter": getattr(adapter, "display_name", host),
+            "agent": False,
+            "path": "adapter",
             "tender_id": tid,
-            "url": step.url,
+            "tender_url": step.url or url,
             "tender_dir": str(folder),
+            "adapter": getattr(adapter, "display_name", host),
+            "overview_path": overview_path,
+            "overview_error": overview_error,
+            "overview": overview_brief,
             "documents_found": len(docs),
             "downloaded": downloaded,
-            "manifest": str(manifest_mod.manifest_path(folder)),
-            "overview_path": overview_path,
-            "overview": overview_brief,
-            "overview_error": overview_error,
-            "model": config.AGENT_PRIMARY_MODEL,
-            "vision_mode": "adapter",
-            "eis_test_no_docs_route": bool(
-                getattr(config, "EIS_TEST_NO_DOCS_ROUTE", False)
-            ),
+            "downloaded_count": len(downloaded),
             "usage": current_usage(),
             "wall_time_s": round(time.perf_counter() - t0, 1),
         }
+        run_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-tdl"
         debug_path = _write_debug_json(run_id, result)
         if debug_path is not None:
             result["debug_json"] = str(debug_path)
         return result
 
 
-async def _run_tender_download_agent(body: TenderDownloadBody, *, vision_mode: str):
-    """Agent-driven single-tender download (hybrid/vision)."""
+async def _run_tender_download_agent(body: TenderDownloadBody):
+    """Agent-driven single-tender download (DOM/platform tools)."""
     from urllib.parse import urlparse
 
     from ..agent.loop import run_platform_task
@@ -348,9 +198,10 @@ async def _run_tender_download_agent(body: TenderDownloadBody, *, vision_mode: s
     )
     max_files = body.max_files
     instruction = (body.instruction or "").strip() or (
-        f"Одна закупка: {url}. "
-        f"open_tender(card_url) → save_overview → найди и скачай до {max_files} документов "
-        f"(list_tender_documents/download_document или inspect_screen→click_target). "
+        f"Одна закупка exact URL: {url}. "
+        f"Сразу open_tender(card_url). Без поиска. "
+        f"save_overview → list_tender_documents → download (до {max_files}). "
+        f"Если list пуст: dom_snapshot → click_element(вкладка документов) → list снова. "
         f"mark_processed → finish."
     )
     try:
@@ -361,7 +212,6 @@ async def _run_tender_download_agent(body: TenderDownloadBody, *, vision_mode: s
             max_steps=body.max_steps or 40,
             download_subdir=session,
             instruction=instruction,
-            vision_mode=vision_mode,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
@@ -370,9 +220,7 @@ async def _run_tender_download_agent(body: TenderDownloadBody, *, vision_mode: s
     return {
         "ok": bool(result.get("success")),
         "agent": True,
-        "vision_mode": result.get("vision_mode"),
-        "mode_switches": result.get("mode_switches"),
-        "eis_test_no_docs_route": result.get("eis_test_no_docs_route"),
+        "path": "agent",
         "tender_url": url,
         "downloaded_files": result.get("downloaded_files"),
         "downloaded_files_rel": result.get("downloaded_files_rel"),
@@ -384,5 +232,5 @@ async def _run_tender_download_agent(body: TenderDownloadBody, *, vision_mode: s
         "wall_time_s": result.get("wall_time_s"),
         "debug_json": result.get("debug_json"),
         "model": result.get("model"),
-        "tools": result.get("tools"),
+        "eis_test_no_docs_route": result.get("eis_test_no_docs_route"),
     }

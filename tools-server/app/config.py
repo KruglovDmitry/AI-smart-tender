@@ -22,7 +22,7 @@ DEFAULT_MAX_CHARS = int(os.getenv("DEFAULT_MAX_CHARS", "120000"))
 DEFAULT_MAX_FILES = int(os.getenv("DEFAULT_MAX_FILES", "30"))
 FETCH_TIMEOUT_SEC = float(os.getenv("FETCH_TIMEOUT_SEC", "30"))
 
-# Browser agent (internal tool-calling loop)
+# Playwright browser harness (used by adapters / platform agent)
 BROWSER_HEADLESS = os.getenv("BROWSER_HEADLESS", "true").lower() in {"1", "true", "yes"}
 BROWSER_VIEWPORT_WIDTH = int(os.getenv("BROWSER_VIEWPORT_WIDTH", "1280"))
 BROWSER_VIEWPORT_HEIGHT = int(os.getenv("BROWSER_VIEWPORT_HEIGHT", "900"))
@@ -37,7 +37,6 @@ BROWSER_PROFILE_DIR = Path(
         str(_REPO_ROOT / ".browser-profile"),
     )
 ).resolve()
-# Verbose agent step logs (LLM text, tool args/results) → console + data/_logs/agent/
 AGENT_DEBUG_LOGS = os.getenv("AGENT_DEBUG_LOGS", "true").lower() in {
     "1",
     "true",
@@ -47,95 +46,27 @@ AGENT_LOG_DIR = Path(
     os.getenv("AGENT_LOG_DIR", str(DATA_ROOT / "_logs" / "agent"))
 ).resolve()
 
-# OpenAI-compatible chat API for the browser agent
-# AGENT_PRIMARY_MODEL — text tool-caller (preferred); falls back to AGENT_LLM_MODEL
-# AGENT_VL_MODEL — vision grounding/inspect model (click_on_screen / inspect_screen)
-# AGENT_VISION_BACKEND — registry key (qwen_vl | ui_tars)
-# AGENT_PRIMARY_MULTIMODAL — if true AND tools_mode=browser, primary gets inline screenshots
+# Primary LLM (DeepSeek text tool-caller)
 AGENT_LLM_BASE_URL = os.getenv("AGENT_LLM_BASE_URL", "").rstrip("/")
 AGENT_LLM_API_KEY = os.getenv("AGENT_LLM_API_KEY", "")
 AGENT_LLM_MODEL = os.getenv("AGENT_LLM_MODEL", "deepseek-flash")
 AGENT_PRIMARY_MODEL = os.getenv("AGENT_PRIMARY_MODEL", "") or AGENT_LLM_MODEL
-AGENT_VL_MODEL = os.getenv("AGENT_VL_MODEL", "qwen3-vl-plus")
-AGENT_VISION_BACKEND = os.getenv("AGENT_VISION_BACKEND", "ui_tars").strip().lower()
-# pixel — model returns PNG/viewport pixels; norm1000 — 0..1000 grid over PNG
-_AGENT_VL_COORDS = os.getenv("AGENT_VL_COORDS", "pixel").strip().lower()
-AGENT_VL_COORDS = _AGENT_VL_COORDS if _AGENT_VL_COORDS in {"pixel", "norm1000"} else "pixel"
-# UI-TARS-1.5 via OpenAI-compatible vLLM (Mode A GROUNDING fallback).
-# Leave empty in defaults — set UI_TARS_BASE_URL in .env (e.g. http://host:8000).
-UI_TARS_BASE_URL = os.getenv("UI_TARS_BASE_URL", "").rstrip("/")
-UI_TARS_MODEL = os.getenv("UI_TARS_MODEL", "ui-tars")
-UI_TARS_API_KEY = os.getenv("UI_TARS_API_KEY", "EMPTY")
-AGENT_PRIMARY_MULTIMODAL = os.getenv("AGENT_PRIMARY_MULTIMODAL", "false").lower() in {
-    "1",
-    "true",
-    "yes",
-}
-# Inline screenshot injection into primary context (browser ablation only).
-_vl_env = os.getenv("AGENT_VL_ENABLED")
-if _vl_env is None:
-    AGENT_VL_ENABLED = AGENT_PRIMARY_MULTIMODAL
-else:
-    AGENT_VL_ENABLED = _vl_env.lower() in {"1", "true", "yes"}
-if AGENT_PRIMARY_MULTIMODAL:
-    AGENT_VL_ENABLED = True
-
-VISION_SAMPLES_ENABLED = os.getenv("VISION_SAMPLES_ENABLED", "true").lower() in {
-    "1",
-    "true",
-    "yes",
-}
-VISION_SAMPLES_DIR = Path(
-    os.getenv("VISION_SAMPLES_DIR", str(DATA_ROOT / "vision_samples"))
-).resolve()
-VISION_SAMPLES_MAX_PER_RUN = int(os.getenv("VISION_SAMPLES_MAX_PER_RUN", "200"))
 
 # Platform monitoring agent (LangChain + SQLite dedup)
 PLATFORM_MAX_STEPS = int(os.getenv("PLATFORM_MAX_STEPS", "90"))
 PLATFORM_MAX_NEW_TENDERS = int(os.getenv("PLATFORM_MAX_NEW_TENDERS", "3"))
-# Max document files to download per tender (priority docs; skip junk/wrappers)
-PLATFORM_MAX_FILES_PER_TENDER = int(os.getenv("PLATFORM_MAX_FILES_PER_TENDER", "5"))
-# platform (default) | browser (ablation only). "full" is rejected.
+PLATFORM_MAX_FILES_PER_TENDER = int(os.getenv("PLATFORM_MAX_FILES_PER_TENDER", "10"))
 PLATFORM_AGENT_MODE = os.getenv("PLATFORM_AGENT_MODE", "platform").strip().lower()
 SEEN_TENDERS_DB = Path(
     os.getenv("SEEN_TENDERS_DB", str(DATA_ROOT / "_state" / "seen_tenders.sqlite3"))
 ).resolve()
 
-# Vision interaction modes: dom | hybrid (default) | vision
-_AGENT_VISION_MODE = os.getenv("AGENT_VISION_MODE", "hybrid").strip().lower()
-AGENT_VISION_MODE = (
-    _AGENT_VISION_MODE if _AGENT_VISION_MODE in {"dom", "hybrid", "vision"} else "hybrid"
-)
-# Auto-switch hybrid → vision after N "DOM failed, vision helped" streaks (0 = off)
-AGENT_AUTO_VISION_AFTER = int(os.getenv("AGENT_AUTO_VISION_AFTER", "3"))
-# In vision mode, optionally still run DOM validate_point for v* targets
-VISION_ALLOW_DOM_CHECKS = os.getenv("VISION_ALLOW_DOM_CHECKS", "0").lower() in {
-    "1",
-    "true",
-    "yes",
-}
-# EIS test: disable common-info→documents URL helper so agent must open the tab
+# EIS test: disable common-info→documents URL helper so agent must open the tab via DOM
 EIS_TEST_NO_DOCS_ROUTE = os.getenv("EIS_TEST_NO_DOCS_ROUTE", "0").lower() in {
     "1",
     "true",
     "yes",
 }
-
-# Perception backend («что на экране?») — separate from grounding UI-TARS
-AGENT_PERCEPTION_BACKEND = (
-    os.getenv("AGENT_PERCEPTION_BACKEND", "qwen_vl").strip().lower() or "qwen_vl"
-)
-AGENT_PERCEPTION_BASE_URL = os.getenv("AGENT_PERCEPTION_BASE_URL", "").rstrip("/")
-AGENT_PERCEPTION_API_KEY = os.getenv("AGENT_PERCEPTION_API_KEY", "")
-AGENT_PERCEPTION_MODEL = os.getenv("AGENT_PERCEPTION_MODEL", "qwen3-vl-plus")
-
-
-def perception_configured() -> bool:
-    """True when perception endpoint credentials are set (not primary DeepSeek)."""
-    if AGENT_PERCEPTION_BACKEND == "ui_tars":
-        return bool(UI_TARS_BASE_URL)
-    return bool(AGENT_PERCEPTION_BASE_URL and AGENT_PERCEPTION_API_KEY)
-
 
 ALLOWED_EXTENSIONS = {
     ".pdf",

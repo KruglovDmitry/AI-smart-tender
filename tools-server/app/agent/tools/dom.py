@@ -4,17 +4,14 @@ from __future__ import annotations
 
 from langchain_core.tools import StructuredTool
 
-from ....core.browser import dom as browser_dom
-from ....core.browser.after_action import capture_before_state, describe_after_action
-from ....core.browser.primitives import navigate as core_navigate
-from ...context import PlatformAgentContext, to_json, trace
-from .helpers import note_dom_blind
+from ...core.browser import dom as browser_dom
+from ...core.browser.after_action import capture_before_state, describe_after_action
+from ...core.browser.primitives import navigate as core_navigate
+from ..context import PlatformAgentContext, to_json, trace
 from .schemas import DomIdInput, DomSnapshotInput, FillInput, NavigateInput
 
 
-def build_dom_tools(
-    ctx: PlatformAgentContext, *, vision_mode: str
-) -> dict[str, StructuredTool]:
+def build_dom_tools(ctx: PlatformAgentContext) -> dict[str, StructuredTool]:
     out: dict[str, StructuredTool] = {}
 
     async def dom_snapshot(query: str | None = None) -> str:
@@ -33,11 +30,10 @@ def build_dom_tools(
     )
 
     async def click_element(el_id: int) -> str:
-        before = await capture_before_state(ctx.rt, mode=vision_mode)
+        before = await capture_before_state(ctx.rt, mode="dom")
         click_res = await browser_dom.click_by_id(ctx.rt, el_id)
-        report = await describe_after_action(ctx.rt, before, mode=vision_mode)
+        report = await describe_after_action(ctx.rt, before, mode="dom")
         result = {**click_res, **report}
-        note_dom_blind(ctx, "click_element", result)
         trace(ctx, "click_element", {"el_id": el_id}, result)
         return to_json(result)
 
@@ -49,12 +45,10 @@ def build_dom_tools(
     )
 
     async def fill_element(el_id: int, text: str, submit: bool = False) -> str:
-        before = (
-            await capture_before_state(ctx.rt, mode=vision_mode) if submit else None
-        )
+        before = await capture_before_state(ctx.rt, mode="dom") if submit else None
         result = await browser_dom.fill_by_id(ctx.rt, el_id, text, submit=submit)
         if submit and before is not None:
-            report = await describe_after_action(ctx.rt, before, mode=vision_mode)
+            report = await describe_after_action(ctx.rt, before, mode="dom")
             result = {**result, **report}
         trace(
             ctx,
@@ -73,7 +67,6 @@ def build_dom_tools(
 
     async def navigate(url: str) -> str:
         result = await core_navigate(ctx.rt, url)
-        ctx.screen_targets = {}
         trace(ctx, "navigate", {"url": url}, result)
         return to_json(result)
 

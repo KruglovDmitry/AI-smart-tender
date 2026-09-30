@@ -39,13 +39,6 @@ class PlatformAgentContext:
     final_summary: str = ""
     final_success: bool = False
     trace: list[dict[str, Any]] = field(default_factory=list)
-    vision_run_id: str = ""
-    inject_screenshots: bool = False
-    # Last inspect_screen bag: {url, fingerprint, targets:[...]}
-    screen_targets: dict[str, Any] = field(default_factory=dict)
-    vision_mode: str = "hybrid"
-    mode_switches: list[dict[str, Any]] = field(default_factory=list)
-    dom_blind_streak: int = 0
 
 
 def note_results_url(ctx: PlatformAgentContext, url: str | None) -> None:
@@ -92,7 +85,7 @@ def platform_notes_digest(ctx: PlatformAgentContext) -> str:
         lines.append(f"- docs_entry_hint={n['docs_entry_hint']}")
     lines.append(
         "Правило: navigate ТОЛЬКО по exact tender_url из pending_new/new[]; "
-        "пагинация — inspect_page_nav → suggested_next_url / next.href. "
+        "пагинация — suggested_next_url / next.href. "
         "При 404 — вернись на results_url."
     )
     return "\n".join(lines)

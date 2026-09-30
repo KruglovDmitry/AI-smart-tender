@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from .. import config
-
 
 class PlatformTaskBody(BaseModel):
     platform_url: str = Field(..., description="Tender platform base URL")
@@ -16,24 +14,24 @@ class PlatformTaskBody(BaseModel):
     instruction: str | None = None
     tools_mode: str | None = Field(
         None,
-        description="platform only (browser removed; use vision_mode=vision).",
+        description="platform only.",
     )
-    vision_mode: str | None = Field(
-        None,
-        description="dom | hybrid | vision. Default: AGENT_VISION_MODE.",
-    )
+    # Deprecated — ignored (vision layer removed).
+    vision_mode: str | None = Field(None, description="Deprecated, ignored.")
 
 
 class TenderDownloadBody(BaseModel):
-    """Single-tender download via adapter or agent (vision_mode)."""
+    """Single-tender download via adapter or optional agent loop."""
 
     tender_url: str = Field(..., description="Exact card URL")
     max_files: int = Field(default=5, ge=1, le=30)
     download_subdir: str | None = None
-    vision_mode: str | None = Field(
-        None,
-        description="dom | hybrid | vision. Default: AGENT_VISION_MODE.",
+    use_agent: bool = Field(
+        default=False,
+        description="If true, run platform agent loop instead of direct adapter path.",
     )
+    # Deprecated — ignored.
+    vision_mode: str | None = Field(None, description="Deprecated, ignored.")
     max_steps: int | None = Field(None, ge=5, le=200)
     instruction: str | None = None
 

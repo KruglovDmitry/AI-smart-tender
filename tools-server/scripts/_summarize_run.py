@@ -31,13 +31,7 @@ print("model", d.get("model"))
 print("usage", json.dumps(d.get("usage"), ensure_ascii=False))
 tools = Counter(s.get("tool") for s in (d.get("trace") or []))
 print("tools", dict(tools))
-print(
-    "vision",
-    "click_on_screen",
-    tools.get("click_on_screen", 0),
-    "dom_snapshot",
-    tools.get("dom_snapshot", 0),
-)
+print("dom_snapshot", tools.get("dom_snapshot", 0))
 dst = log / f"20260930-{run_token}-qwen-kanctovary-response.json"
 # keep original name if response empty
 alt = log / "20260930-114114-qwen-kanctovary-response.json"

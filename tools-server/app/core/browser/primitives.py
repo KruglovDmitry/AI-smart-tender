@@ -102,7 +102,7 @@ async def navigate(rt: BrowserRuntime, url: str) -> dict[str, Any]:
 async def screenshot(rt: BrowserRuntime) -> dict[str, Any]:
     """Capture viewport PNG; wait for scroll settle first (reduces mid-scroll miss)."""
     try:
-        from ..vision.scale import png_pixel_size
+        from .png_size import png_pixel_size
 
         # Wait until scrollY is stable (~2 rAF + 100ms quiet, max 1s)
         try:

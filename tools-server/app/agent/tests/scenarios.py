@@ -12,7 +12,7 @@ SCENARIOS: dict[int, dict[str, Any]] = {
         "max_new_tenders": 1,
         "instruction": (
             "СЦЕНАРИЙ 1 (только открытие). Платформа уже открыта или открой platform_url. "
-            "Проверь загрузку (dom_snapshot или inspect_screen). НЕ ищи. "
+            "Проверь загрузку (dom_snapshot). НЕ ищи. "
             "finish(success=true) с URL и title."
         ),
     },

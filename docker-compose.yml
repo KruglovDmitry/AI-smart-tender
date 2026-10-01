@@ -65,7 +65,7 @@ services:
       - AGENT_DEBUG_LOGS=${AGENT_DEBUG_LOGS:-true}
       - PLATFORM_MAX_STEPS=${PLATFORM_MAX_STEPS:-180}
       - PLATFORM_MAX_NEW_TENDERS=${PLATFORM_MAX_NEW_TENDERS:-10}
-      - PLATFORM_MAX_FILES_PER_TENDER=${PLATFORM_MAX_FILES_PER_TENDER:-5}
+      - PLATFORM_MAX_FILES_PER_TENDER=${PLATFORM_MAX_FILES_PER_TENDER:-10}
       - SEEN_TENDERS_DB=${SEEN_TENDERS_DB:-/data/_state/seen_tenders.sqlite3}
     extra_hosts:
       - "host.docker.internal:host-gateway"

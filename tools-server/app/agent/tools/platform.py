@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -206,8 +205,10 @@ def build_platform_tools(ctx: PlatformAgentContext) -> dict[str, StructuredTool]
             }
             trace(ctx, "download_document", {"url": url, "name": name}, result)
             return to_json(result)
-        max_files = int(os.getenv("PLATFORM_MAX_FILES_PER_TENDER", "10") or 10)
-        already = len(ctx.downloaded_urls)
+        max_files = int(getattr(config, "PLATFORM_MAX_FILES_PER_TENDER", 10) or 10)
+        tender_key = str(ctx.current_tender_id or "").strip() or "_none"
+        per_tender = ctx.downloads_by_tender.setdefault(tender_key, set())
+        already = len(per_tender)
         if already >= max_files:
             result = {
                 "ok": False,
@@ -215,9 +216,11 @@ def build_platform_tools(ctx: PlatformAgentContext) -> dict[str, StructuredTool]
                 "action": "download_document",
                 "message": (
                     f"лимит файлов на тендер ({max_files}) достигнут — "
-                    "mark_processed → finish"
+                    "mark_processed и переходи к следующему / finish"
                 ),
-                "downloaded_in_run": already,
+                "tender_id": ctx.current_tender_id,
+                "downloaded_for_tender": already,
+                "downloaded_in_run": len(ctx.downloaded_urls),
             }
             trace(ctx, "download_document", {"url": url, "name": name}, result)
             return to_json(result)
@@ -225,9 +228,12 @@ def build_platform_tools(ctx: PlatformAgentContext) -> dict[str, StructuredTool]
             ensure_tender_workspace(
                 ctx, ctx.current_tender_id, ctx.current_tender_url
             )
+            tender_key = str(ctx.current_tender_id).strip() or tender_key
+            per_tender = ctx.downloads_by_tender.setdefault(tender_key, set())
         result = await core_download(ctx.rt, url, suggested_name=name or None)
         if result.get("ok") and not result.get("skipped"):
             ctx.downloaded_urls.add(url)
+            per_tender.add(url)
             if ctx.current_tender_dir:
                 file_path = result.get("file") or ""
                 manifest_mod.append_file(
@@ -244,9 +250,12 @@ def build_platform_tools(ctx: PlatformAgentContext) -> dict[str, StructuredTool]
                 result["manifest"] = str(
                     manifest_mod.manifest_path(Path(ctx.current_tender_dir))
                 )
+            result["downloaded_for_tender"] = len(per_tender)
             result["downloaded_in_run"] = len(ctx.downloaded_urls)
-            if len(ctx.downloaded_urls) >= max_files:
-                result["hint"] = "лимит файлов — mark_processed → finish"
+            if len(per_tender) >= max_files:
+                result["hint"] = (
+                    "лимит файлов на этот тендер — mark_processed → следующий / finish"
+                )
         trace(ctx, "download_document", {"url": url, "name": name}, result)
         return to_json(result)
 

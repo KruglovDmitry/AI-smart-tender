@@ -32,7 +32,10 @@ class PlatformAgentContext:
     current_tender_dir: Path | None = None
     new_tenders_processed: int = 0
     processed_tenders: list[dict[str, Any]] = field(default_factory=list)
+    # Dedup URLs across the whole run (same file link never twice).
     downloaded_urls: set[str] = field(default_factory=set)
+    # Per-tender download counts for PLATFORM_MAX_FILES_PER_TENDER.
+    downloads_by_tender: dict[str, set[str]] = field(default_factory=dict)
     # Session notes: what we learned about THIS platform in the current run
     platform_notes: dict[str, Any] = field(default_factory=dict)
     done: bool = False

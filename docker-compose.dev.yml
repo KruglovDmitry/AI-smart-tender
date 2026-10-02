@@ -1,0 +1,13 @@
+# Локальная разработка: сборка из исходников + hot-reload кода tools-server.
+# Запуск:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+
+services:
+  tools-server:
+    image: tender-tools:dev
+    build: ./tools-server
+    volumes:
+      - ./tools-server/app:/app/app
+      - ${DATA_HOST_PATH:-./data}:/data
+      - ${TENDERS_HOST_PATH:-./data/tenders}:/data/tenders
+      - browser-profile:/tmp/tender-browser-profile

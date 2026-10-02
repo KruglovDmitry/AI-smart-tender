@@ -3,24 +3,10 @@
 *.key
 *.pma
 
-# Данные пользователя (тендеры/каталоги) — не коммитим содержимое,
-# кроме примеров sample-*
-data/tenders/**
-!data/tenders/.gitkeep
-!data/tenders/sample-*
-data/catalogs/**
-!data/catalogs/.gitkeep
-!data/catalogs/sample-*
-data/uploads/**
-!data/uploads/.gitkeep
-data/exports/**
-!data/exports/.gitkeep
-
-# Локальные логи / дебаг / state
-data/_logs/
-data/_state/
-data/debug-*.json
-data/vision_samples/
+# Локальные данные (тендеры, логи, state) — в git только каркас .gitkeep
+data/**
+!data/**/
+!data/**/.gitkeep
 tools-server/data/
 
 # Playwright / Chromium profile (тысячи файлов кэша)
@@ -37,3 +23,7 @@ __pycache__/
 venv/
 .DS_Store
 Thumbs.db
+
+# Собранный дистрибутив для заказчика
+dist/
+*.zip

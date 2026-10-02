@@ -1,38 +1,46 @@
 # AI Smart Tender
 
-Локальный чат с LLM и документами: [Open WebUI](https://github.com/open-webui/open-webui) + Ollama + облачные API (DeepSeek / Qwen) + **OpenAPI Tool Server** (папка на сервере + просмотр ссылок).
+Локальный чат с LLM и документами: [Open WebUI](https://github.com/open-webui/open-webui) + облачные API + **OpenAPI Tool Server** (тендеры, fetch, platform agent, Excel).
+
+Установка у клиента: **[INSTALL.md](INSTALL.md)** (`start.bat` или `docker compose up -d`).
 
 ## Что получите
 
-- UI как у ChatGPT / DeepSeek на `http://localhost:3000`
-- Выбор моделей: локальный Qwen и/или DeepSeek / Qwen по API
+- UI на `http://localhost:3000` (чат-модели через Connections в UI; Ollama не нужна)
 - Вложения файлов в чат + Knowledge
-- Tools без форка UI:
-  - чтение документов из `data/` на сервере (извлечение текста как в Open WebUI)
-  - просмотр внешней ссылки (как browse в DeepSeek/ChatGPT)
+- Tools: документы из папки тендеров / `data/`, fetch URL, platform agent, Excel
 
 ## Требования
 
 - Docker Desktop (Windows) с Docker Compose
-- Для облачных моделей — API-ключи
-- Для локального Qwen — от ~16 GB RAM для `qwen2.5:7b`
+- API-ключ для чата (в UI) и для platform agent (`.env` → `AGENT_LLM_*`)
 
 ## Быстрый старт
 
 ```powershell
 copy .env.example .env
-docker compose up -d --build
+# AGENT_LLM_API_KEY=... ; при необходимости TENDERS_HOST_PATH=C:/path/to/tenders
+docker compose up -d
 ```
 
 Откройте [http://localhost:3000](http://localhost:3000).  
 Swagger tools: [http://localhost:8000/docs](http://localhost:8000/docs).
 
-Локальный Qwen:
+Разработка (mount исходников):
 
 ```powershell
-.\scripts\pull-qwen.ps1
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 ```
 
+Дистрибутив для заказчика (без исходников, образ с Hub):
+
+```powershell
+cd C:\Users\Dima\Desktop\Work\AI-smart-tender
+.\scripts\pack-dist.bat --zip
+```
+
+Результат: `dist\ai-smart-tender\` и `dist\ai-smart-tender-YYYYMMDD.zip`.  
+Альтернатива: `py -3 scripts\pack_dist.py --zip`
 ## Подключение Tool Server в Open WebUI
 
 Tools работают **без изменения UI** — через штатные OpenAPI Tool Servers.

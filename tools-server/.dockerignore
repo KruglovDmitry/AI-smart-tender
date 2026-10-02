@@ -1,0 +1,17 @@
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.venv
+venv
+*.egg-info
+.mypy_cache
+.ruff_cache
+scripts
+**/tests
+**/*_test.py
+.git
+.gitignore
+Dockerfile
+.dockerignore
+README*

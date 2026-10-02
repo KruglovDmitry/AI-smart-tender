@@ -1,6 +1,7 @@
-"""OpenAPI Tool Server for Open WebUI: documents, fetch URL, browser agent."""
+"""OpenAPI Tool Server for Open WebUI: documents, fetch URL, Excel export."""
 
 from __future__ import annotations
+
 
 import logging
 import sys
@@ -19,13 +20,18 @@ def _force_utf8_stdio() -> None:
 
 _force_utf8_stdio()
 
-from fastapi import FastAPI, HTTPException, Query
+from typing import Any
+
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from . import config
+from .document_tool import list_directory, read_document, read_folder_documents
+from .excel_tool import resolve_export_file, write_excel
 from .api.routes import router as api_router
-from .tools import fetch_page, list_directory, read_document, read_folder_documents
+from .web_tool import fetch_page
 
 _handler = logging.StreamHandler(sys.stdout)
 _handler.setFormatter(
@@ -39,10 +45,10 @@ logging.getLogger("langchain").setLevel(logging.INFO)
 
 app = FastAPI(
     title="Tender Tools API",
-    version="1.1.0",
+    version="1.3.0",
     description=(
-        "Tools for the tender agent: server documents, simple URL fetch, "
-        "and a browser agent (DOM + screenshot tools, LLM chooses the path)."
+        "Tools for the tender agent: server documents, URL fetch, "
+        "Excel export, platform monitoring agent, optional legacy browser agent."
     ),
 )
 
@@ -54,6 +60,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 app.include_router(api_router)
 
 
@@ -61,8 +68,9 @@ class ReadDocumentBody(BaseModel):
     path: str = Field(
         ...,
         description=(
-            "Relative path under data root, e.g. 'tenders/spec.pdf' "
-            "or 'catalogs/prices.xlsx'."
+            "Relative path under server data root only, e.g. 'tenders/spec.pdf' "
+            "or 'catalogs/prices.xlsx'. Do NOT use for chat attachments — "
+            "those are already in the conversation context."
         ),
     )
     max_chars: int = Field(
@@ -90,7 +98,11 @@ class ReadFolderBody(BaseModel):
 class FetchUrlBody(BaseModel):
     url: str = Field(
         ...,
-        description="Public http(s) URL of a tender page or any web page to read.",
+        description=(
+            "Public http(s) URL exactly as provided by the user "
+            "(do not invent paths like /sitemap.xml). "
+            "Use as a complement to chat attachments when a link is present."
+        ),
     )
     max_chars: int = Field(
         default=config.DEFAULT_MAX_CHARS,
@@ -98,7 +110,86 @@ class FetchUrlBody(BaseModel):
     )
 
 
+class ExcelSheetBody(BaseModel):
+    name: str = Field(..., description="Sheet tab name, e.g. 'Позиции'")
+    headers: list[str] = Field(
+        ...,
+        description="Column headers in order",
+        min_length=1,
+    )
+    rows: list[list[Any]] = Field(
+        default_factory=list,
+        description="Data rows; each row is a list of cell values aligned to headers",
+    )
 
+
+class WriteExcelBody(BaseModel):
+    filename: str = Field(
+        ...,
+        description="Output file name, e.g. 'tz_positions.xlsx' (saved under exports/)",
+    )
+    sheets: list[ExcelSheetBody] = Field(
+        ...,
+        description="One or more sheets to write into the workbook",
+        min_length=1,
+    )
+
+
+class BrowserTaskBody(BaseModel):
+    task: str = Field(
+        ...,
+        description=(
+            "Natural-language task for the browser agent, e.g. "
+            "'Скачай все документы со страницы тендера и кратко опиши лот'."
+        ),
+    )
+    url: str | None = Field(
+        None,
+        description="Optional starting URL (agent will navigate here first).",
+    )
+    max_steps: int | None = Field(
+        None,
+        description=f"Max tool steps (default {config.BROWSER_MAX_STEPS}).",
+    )
+    download_subdir: str | None = Field(
+        None,
+        description=(
+            "Optional folder name under data/tenders/ for downloads "
+            "(default data/tenders/_browser)."
+        ),
+    )
+
+
+def _public_base(request: Request) -> str:
+    configured = config.TOOLS_PUBLIC_BASE_URL
+    if configured:
+        return configured
+    return str(request.base_url).rstrip("/")
+
+
+@app.get("/health", summary="Health check")
+def health():
+    llm_ok = bool(config.AGENT_LLM_BASE_URL and config.AGENT_LLM_API_KEY)
+    return {
+        "status": "ok" if llm_ok else "degraded",
+        "data_root": str(config.DATA_ROOT),
+        "agent_llm_configured": llm_ok,
+        "primary_model": getattr(config, "AGENT_PRIMARY_MODEL", config.AGENT_LLM_MODEL),
+        "platform_agent": {
+            "model": config.AGENT_LLM_MODEL,
+            "max_steps": config.PLATFORM_MAX_STEPS,
+            "max_new_tenders": config.PLATFORM_MAX_NEW_TENDERS,
+            "mode_default": getattr(config, "PLATFORM_AGENT_MODE", "platform"),
+        },
+        "browser_agent": {
+            "enabled": config.BROWSER_AGENT_ENABLED,
+            "llm_configured": llm_ok,
+            "model": config.AGENT_LLM_MODEL,
+            "vl_model": getattr(config, "AGENT_VL_MODEL", ""),
+            "vl_enabled": getattr(config, "AGENT_VL_ENABLED", False),
+            "headless": config.BROWSER_HEADLESS,
+        },
+    }
 
 
 @app.get(
@@ -106,7 +197,9 @@ class FetchUrlBody(BaseModel):
     summary="List documents on the server",
     description=(
         "List files and folders under the server data directory "
-        "(tenders/, catalogs/, uploads/). Use this before reading."
+        "(tenders/, catalogs/, uploads/, exports/). "
+        "Not for chat attachments — those are already in the model context. "
+        "Use when the user refers to a server folder/path."
     ),
 )
 def list_documents(
@@ -130,9 +223,10 @@ def list_documents(
     "/read_document",
     summary="Read one document from the server",
     description=(
-        "Extract text from a file on the server the same way Open WebUI does "
-        "for chat attachments (PDF/DOCX/TXT/CSV/XLSX/ZIP/...). "
-        "Returns full text for the model context (with optional truncation)."
+        "Extract text from a file on the server data volume "
+        "(PDF/DOCX/TXT/CSV/XLSX/ZIP/...). "
+        "Do NOT call this for files attached in the chat — use chat context instead. "
+        "Use only for paths under tenders/, catalogs/, uploads/ on the server."
     ),
 )
 def api_read_document(body: ReadDocumentBody):
@@ -152,8 +246,8 @@ def api_read_document(body: ReadDocumentBody):
     "/read_folder",
     summary="Read all documents from a server folder",
     description=(
-        "Extract text from every supported file in a folder "
-        "(like attaching multiple chat documents at once)."
+        "Extract text from every supported file in a server data folder "
+        "(tenders/, catalogs/, ...). Not a substitute for chat attachments."
     ),
 )
 def api_read_folder(body: ReadFolderBody):
@@ -178,7 +272,8 @@ def api_read_folder(body: ReadFolderBody):
     description=(
         "Fetch a public URL and extract the main readable content "
         "(similar to ChatGPT / DeepSeek web browsing). "
-        "Use for tender portal pages or any external link."
+        "Complement chat attachments when the user provides a link: "
+        "pass the exact URL from the message, do not invent paths."
     ),
 )
 def api_fetch_url(body: FetchUrlBody):
@@ -192,3 +287,94 @@ def api_fetch_url(body: FetchUrlBody):
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Fetch failed: {e}") from e
+
+
+@app.post(
+    "/write_excel",
+    summary="Export tables to Excel for the user",
+    description=(
+        "Create an .xlsx from structured tables (variant A): you extract rows from "
+        "the ТЗ / chat context, pass headers+rows for one or more sheets. "
+        "Returns download_url — put it in the reply as a markdown link so the user "
+        "can download the file in the browser. Do NOT invent table data."
+    ),
+)
+def api_write_excel(body: WriteExcelBody, request: Request):
+    try:
+        return write_excel(
+            filename=body.filename,
+            sheets=[s.model_dump() for s in body.sheets],
+            public_base_url=_public_base(request),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Excel write failed: {e}") from e
+
+
+@app.get(
+    "/download_file",
+    summary="Download an exported spreadsheet",
+    description="Browser download for files under exports/. Not for the model to call.",
+    include_in_schema=False,
+)
+def api_download_file(
+    path: str = Query(
+        ...,
+        description="Relative path under data root, e.g. exports/2026-03-26/x.xlsx",
+    ),
+):
+    try:
+        file_path = resolve_export_file(path)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
+    return FileResponse(
+        path=file_path,
+        filename=file_path.name,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        content_disposition_type="attachment",
+    )
+
+
+@app.post(
+    "/run_browser_task",
+    summary="Run browser agent on a tender URL / task",
+    description=(
+        "DISABLED by default (BROWSER_AGENT_ENABLED=false): tender platforms "
+        "are not reachable from the server. Enable only when VPN/access is available."
+    ),
+    include_in_schema=config.BROWSER_AGENT_ENABLED,
+)
+async def api_run_browser_task(body: BrowserTaskBody):
+    if not config.BROWSER_AGENT_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Browser agent is disabled (BROWSER_AGENT_ENABLED=false). "
+                "Tender platforms are not accessible from this server."
+            ),
+        )
+    try:
+        from .browser_tool.agent import run_browser_task
+
+        return await run_browser_task(
+            task=body.task,
+            url=body.url,
+            max_steps=body.max_steps,
+            download_subdir=body.download_subdir,
+        )
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Playwright is not installed in the container: {e}",
+        ) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Browser agent failed: {e}") from e

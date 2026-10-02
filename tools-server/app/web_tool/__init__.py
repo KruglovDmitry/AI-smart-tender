@@ -52,8 +52,30 @@ def fetch_page(url: str, max_chars: int, timeout_sec: float) -> dict[str, Any]:
         timeout=timeout_sec,
         headers=headers,
     ) as client:
-        resp = client.get(url)
-        resp.raise_for_status()
+        try:
+            resp = client.get(url)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            # Soft failure: keep HTTP 200 from the tool so the model can retry
+            # with the user's original URL instead of inventing paths.
+            status = e.response.status_code
+            final = str(e.response.url)
+            return {
+                "ok": False,
+                "url": url,
+                "final_url": final,
+                "title": None,
+                "content_type": e.response.headers.get("content-type", ""),
+                "content": (
+                    f"Fetch failed with HTTP {status} for {final}. "
+                    "Retry with the exact URL the user provided; "
+                    "do not invent alternate paths."
+                ),
+                "chars": 0,
+                "truncated": False,
+                "extractor": "http-error",
+                "http_status": status,
+            }
         content_type = resp.headers.get("content-type", "")
         html = resp.text
         final_url = str(resp.url)

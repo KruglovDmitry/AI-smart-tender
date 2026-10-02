@@ -16,23 +16,6 @@ from .schemas import PlatformTaskBody, TenderDownloadBody
 router = APIRouter()
 
 
-@router.get("/health")
-async def health():
-    llm_ok = bool(config.AGENT_LLM_BASE_URL and config.AGENT_LLM_API_KEY)
-    return {
-        "status": "ok" if llm_ok else "degraded",
-        "data_root": str(config.DATA_ROOT),
-        "agent_llm_configured": llm_ok,
-        "primary_model": getattr(config, "AGENT_PRIMARY_MODEL", config.AGENT_LLM_MODEL),
-        "platform_agent": {
-            "model": config.AGENT_LLM_MODEL,
-            "max_steps": config.PLATFORM_MAX_STEPS,
-            "max_new_tenders": config.PLATFORM_MAX_NEW_TENDERS,
-            "mode_default": getattr(config, "PLATFORM_AGENT_MODE", "platform"),
-        },
-    }
-
-
 @router.post("/run_platform_task")
 async def run_platform_task_route(body: PlatformTaskBody):
     try:

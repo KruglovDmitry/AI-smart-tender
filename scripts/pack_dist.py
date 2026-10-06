@@ -43,6 +43,15 @@ def main() -> int:
     for name in (".env.example", "start.bat", "INSTALL.md"):
         shutil.copy2(root / name, out / name)
 
+    # Lightweight local image (not on Hub): include sources for compose build
+    dash_src = root / "dashboard"
+    if dash_src.is_dir():
+        shutil.copytree(
+            dash_src,
+            out / "dashboard",
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"),
+        )
+
     for sub in ("tenders", "catalogs", "uploads", "exports"):
         d = out / "data" / sub
         d.mkdir(parents=True)
@@ -64,7 +73,7 @@ def main() -> int:
                 "2. copy .env.example .env",
                 "3. Fill AGENT_LLM_API_KEY and TENDERS_HOST_PATH in .env",
                 "4. Run start.bat  (or: docker compose up -d)",
-                "5. Open http://localhost:3000",
+                "5. Open http://localhost:3000 (чат) or http://localhost:3100 (дашборд ТЕНАГ)",
                 "",
                 "Details: INSTALL.md",
                 "",

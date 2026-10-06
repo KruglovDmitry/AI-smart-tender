@@ -7,6 +7,7 @@
 ## Что получите
 
 - UI на `http://localhost:3000` (чат-модели через Connections в UI; Ollama не нужна)
+- Дашборд ТЕНАГ на `http://localhost:3100` (мониторинг площадок, скачанные тендеры, статус)
 - Вложения файлов в чат + Knowledge
 - Tools: документы из папки тендеров / `data/`, fetch URL, platform agent, Excel
 
@@ -23,7 +24,7 @@ copy .env.example .env
 docker compose up -d
 ```
 
-Откройте [http://localhost:3000](http://localhost:3000).  
+Откройте [http://localhost:3000](http://localhost:3000) (чат) или [http://localhost:3100](http://localhost:3100) (дашборд ТЕНАГ).  
 Swagger tools: [http://localhost:8000/docs](http://localhost:8000/docs).
 
 Разработка (mount исходников):

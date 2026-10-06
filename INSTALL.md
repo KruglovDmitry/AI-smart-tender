@@ -10,11 +10,12 @@
 - `.env.example`
 - `start.bat`
 - `data/`
+- `dashboard/` (локальная сборка дашборда ТЕНАГ)
 - `prompts/tender-agent-system.txt`
 - `INSTALL.md`
 
 Исходники `tools-server` не нужны — образ берётся с Docker Hub
-(`dim4098/ai-smart-tender-tools`).
+(`dim4098/ai-smart-tender-tools`). Дашборд собирается из папки `dashboard/`.
 
 ## 2. Настроить `.env`
 
@@ -51,8 +52,10 @@ docker compose up -d
 
 Первый раз скачает образы (Open WebUI + tools-server с Playwright — несколько ГБ).
 
-Открыть: http://localhost:3000  
-Swagger tools: http://localhost:8000/docs
+Открыть:
+- чат Open WebUI: http://localhost:3000
+- дашборд ТЕНАГ: http://localhost:3100
+- Swagger tools: http://localhost:8000/docs
 
 ## 4. Первичная настройка в UI (обычно делает установщик)
 

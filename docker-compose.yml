@@ -65,6 +65,23 @@ services:
     shm_size: "1gb"
     restart: unless-stopped
 
+  dashboard:
+    build: ./dashboard
+    image: ${DASHBOARD_IMAGE:-tenag-dashboard:1.0.0}
+    container_name: tender-dashboard
+    ports:
+      - "${DASHBOARD_PORT:-3100}:8000"
+    environment:
+      - DATA_ROOT=/data
+      - TOOLS_SERVER_URL=http://tools-server:8000
+      - SEEN_TENDERS_DB=${SEEN_TENDERS_DB:-/data/_state/seen_tenders.sqlite3}
+    volumes:
+      - ${DATA_HOST_PATH:-./data}:/data
+      - ${TENDERS_HOST_PATH:-./data/tenders}:/data/tenders
+    depends_on:
+      - tools-server
+    restart: unless-stopped
+
 volumes:
   open-webui-data:
   browser-profile:

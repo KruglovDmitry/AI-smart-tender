@@ -11,3 +11,12 @@ services:
       - ${DATA_HOST_PATH:-./data}:/data
       - ${TENDERS_HOST_PATH:-./data/tenders}:/data/tenders
       - browser-profile:/tmp/tender-browser-profile
+
+  dashboard:
+    image: tenag-dashboard:dev
+    build: ./dashboard
+    volumes:
+      - ./dashboard/app:/app/app
+      - ./dashboard/static:/app/static
+      - ${DATA_HOST_PATH:-./data}:/data
+      - ${TENDERS_HOST_PATH:-./data/tenders}:/data/tenders

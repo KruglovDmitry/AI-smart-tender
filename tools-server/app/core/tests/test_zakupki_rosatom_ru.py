@@ -49,4 +49,10 @@ def test_extract_tender_id() -> None:
         == "1234567"
     )
     assert extract_tender_id("https://zakupki.rosatom.ru/?id=555666") == "555666"
+    assert (
+        extract_tender_id(
+            "https://zakupki.rosatom.ru/?link=procurements&number=248356&procId=abc"
+        )
+        == "248356"
+    )
     assert extract_tender_id("", "Номер закупки 9876543210") == "9876543210"

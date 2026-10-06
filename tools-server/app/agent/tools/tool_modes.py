@@ -12,6 +12,11 @@ TOOLS_PLATFORM: tuple[str, ...] = (
     "mark_processed",
     "goto_next_page",
     "finish",
+    # Rosatom AtomForm API (не для ЕИС)
+    "rosatom_search",
+    "rosatom_open_procurement",
+    "rosatom_list_files",
+    "rosatom_download_files",
     "dom_snapshot",
     "click_element",
     "fill_element",

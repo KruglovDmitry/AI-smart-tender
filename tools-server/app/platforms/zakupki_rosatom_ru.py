@@ -1,4 +1,4 @@
-"""Rosatom (zakupki.rosatom.ru) SPA adapter — URL search + deep DOM."""
+"""Rosatom (zakupki.rosatom.ru) SPA adapter — primary path: URL search + deep DOM."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import asyncio
 import logging
 import re
 from typing import Any
-from urllib.parse import parse_qs, quote, urlencode, urljoin, urlparse, urlunparse
+from urllib.parse import parse_qs, quote, urlencode, urljoin, urlparse
 
 from ..core.browser import dom as browser_dom
 from ..core.browser.page_kind import detect_page_kind
@@ -16,8 +16,8 @@ from .base import CardRef, DocRef, SearchSpec, StepResult
 
 logger = logging.getLogger(__name__)
 
-# Heuristic SPA adapter — selectors/URL patterns are unconfirmed without a live
-# platform log. Prefer URL search template; DOM is the fallback.
+# Primary platform path (AtomForm API tools removed).
+# Prefer URL template ?link=procurements&search=; DOM fill if SPA shell/blocked.
 
 HOST = "zakupki.rosatom.ru"
 

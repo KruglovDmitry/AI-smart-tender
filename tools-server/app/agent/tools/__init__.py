@@ -9,7 +9,6 @@ from ...domain.tender_id import platform_from_url, resolve_tender_id
 from ..context import PlatformAgentContext, make_context
 from .dom import build_dom_tools
 from .platform import build_platform_tools
-from .rosatom import build_rosatom_tools
 from .tool_modes import (
     TOOLS_BY_VISION_MODE,
     TOOLS_DOM,
@@ -58,10 +57,9 @@ def normalize_tools_mode(mode: str | None) -> str:
 
 
 def build_tools(ctx: PlatformAgentContext) -> list[StructuredTool]:
-    """Compose adapter + Rosatom API + DOM tools in PLATFORM order."""
+    """Compose adapter + DOM tools in PLATFORM order."""
     by_name: dict[str, StructuredTool] = {}
     by_name.update(build_platform_tools(ctx))
-    by_name.update(build_rosatom_tools(ctx))
     by_name.update(build_dom_tools(ctx))
     order = tool_names_for_mode()
     missing = [n for n in order if n not in by_name]

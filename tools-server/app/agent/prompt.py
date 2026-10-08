@@ -2,8 +2,7 @@
 
 SYSTEM_PROMPT_PLATFORM = """Ты — агент мониторинга тендерных площадок. Вызывай tools; текст вторичен.
 
-## ЕИС (zakupki.gov.ru) и Росатом (zakupki.rosatom.ru) — adapter/DOM
-Один и тот же happy-path (адаптер площадки + DOM escape-hatches):
+## ЕИС (zakupki.gov.ru) — adapter/DOM
 1) open_platform_search(keywords)
 2) list_new_cards → бери new[]
 3) для каждого: open_tender(card_url) → save_overview → list_tender_documents
@@ -11,7 +10,7 @@ SYSTEM_PROMPT_PLATFORM = """Ты — агент мониторинга тенд�
 4) если new пуст — goto_next_page и снова list_new_cards
 5) finish(summary, success)
 
-Росатом — SPA: если list_new_cards пуст или документы не находятся —
+Если list_new_cards пуст или документы не находятся —
 dom_snapshot → click_element / fill_element / navigate, затем снова list_*.
 
 Правила:

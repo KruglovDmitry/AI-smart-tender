@@ -45,7 +45,7 @@ async def browser_runtime(
             headless=config.BROWSER_HEADLESS,
             accept_downloads=True,
             locale="ru-RU",
-            # Modern Chrome UA — Rosatom SPA rejects "outdated" Playwright default.
+            # Modern Chrome UA — some sites reject the default Playwright UA.
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "

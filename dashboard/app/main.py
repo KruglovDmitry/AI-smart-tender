@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -137,26 +137,3 @@ async def index():
 
 if STATIC_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
-
-@app.api_route("/api/proxy/{path:path}", methods=["GET", "POST"])
-async def generic_proxy(path: str, request: Request):
-    """Optional thin proxy (e.g. download_file)."""
-    url = f"{TOOLS_SERVER_URL}/{path}"
-    try:
-        async with httpx.AsyncClient(timeout=PROXY_TIMEOUT) as client:
-            body = await request.body()
-            r = await client.request(
-                request.method,
-                url,
-                content=body,
-                params=dict(request.query_params),
-                headers={
-                    k: v
-                    for k, v in request.headers.items()
-                    if k.lower() in {"content-type", "accept"}
-                },
-            )
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
-    return _proxy_json(r)

@@ -1,4 +1,4 @@
-"""Playwright browser session for the tender browser agent."""
+"""Playwright session for platform adapters and the monitoring agent."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import AsyncIterator
 
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
 
@@ -23,8 +23,6 @@ class BrowserRuntime:
     downloads_dir: Path
     known_pages: set[int] = field(default_factory=set)
     downloaded_files: list[str] = field(default_factory=list)
-    last_screenshot_b64: str | None = None
-    last_screenshot_meta: dict[str, Any] = field(default_factory=dict)
 
     def adopt(self, page: Page) -> None:
         self.page = page

@@ -1,4 +1,4 @@
-"""Tool name set for platform agent (DOM + adapters; no screen/vision)."""
+"""Tool name set for platform agent (DOM + adapters)."""
 
 from __future__ import annotations
 
@@ -18,24 +18,6 @@ TOOLS_PLATFORM: tuple[str, ...] = (
     "navigate",
 )
 
-# Back-compat aliases used by older imports/tests
-TOOLS_DOM = TOOLS_PLATFORM
-TOOLS_HYBRID = TOOLS_PLATFORM
-TOOLS_BY_VISION_MODE: dict[str, tuple[str, ...]] = {
-    "dom": TOOLS_PLATFORM,
-    "hybrid": TOOLS_PLATFORM,
-    "platform": TOOLS_PLATFORM,
-}
 
-
-def normalize_vision_mode(mode: str | None, default: str = "platform") -> str:
-    """Deprecated: vision modes removed; always resolve to platform."""
-    _ = (mode or default or "platform").strip().lower()
-    return "platform"
-
-
-def tool_names_for_mode(
-    vision_mode: str | None = None, default: str = "platform"
-) -> tuple[str, ...]:
-    _ = normalize_vision_mode(vision_mode, default=default)
+def tool_names_for_mode() -> tuple[str, ...]:
     return TOOLS_PLATFORM

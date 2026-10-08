@@ -29,14 +29,7 @@ FETCH_TIMEOUT_SEC = float(os.getenv("FETCH_TIMEOUT_SEC", "30"))
 BROWSER_HEADLESS = os.getenv("BROWSER_HEADLESS", "true").lower() in {"1", "true", "yes"}
 BROWSER_VIEWPORT_WIDTH = int(os.getenv("BROWSER_VIEWPORT_WIDTH", "1280"))
 BROWSER_VIEWPORT_HEIGHT = int(os.getenv("BROWSER_VIEWPORT_HEIGHT", "900"))
-BROWSER_MAX_STEPS = int(os.getenv("BROWSER_MAX_STEPS", "20"))
 BROWSER_NAV_TIMEOUT_MS = int(os.getenv("BROWSER_NAV_TIMEOUT_MS", "60000"))
-# Off by default on VPS (no access to tender platforms). Set true to enable.
-BROWSER_AGENT_ENABLED = os.getenv("BROWSER_AGENT_ENABLED", "false").lower() in {
-    "1",
-    "true",
-    "yes",
-}
 BROWSER_DOWNLOADS_DIR = Path(
     os.getenv("BROWSER_DOWNLOADS_DIR", str(DATA_ROOT / "tenders" / "_browser"))
 ).resolve()
@@ -60,13 +53,6 @@ AGENT_LLM_BASE_URL = os.getenv("AGENT_LLM_BASE_URL", "").rstrip("/")
 AGENT_LLM_API_KEY = os.getenv("AGENT_LLM_API_KEY", "")
 AGENT_LLM_MODEL = os.getenv("AGENT_LLM_MODEL", "deepseek-flash")
 AGENT_PRIMARY_MODEL = os.getenv("AGENT_PRIMARY_MODEL", "") or AGENT_LLM_MODEL
-# Legacy VL fields (used by /health browser_agent section; vision layer removed)
-AGENT_VL_MODEL = os.getenv("AGENT_VL_MODEL", "qwen-vl-plus")
-AGENT_VL_ENABLED = os.getenv("AGENT_VL_ENABLED", "false").lower() in {
-    "1",
-    "true",
-    "yes",
-}
 
 # Platform monitoring agent (LangChain + SQLite dedup)
 PLATFORM_MAX_STEPS = int(os.getenv("PLATFORM_MAX_STEPS", "90"))

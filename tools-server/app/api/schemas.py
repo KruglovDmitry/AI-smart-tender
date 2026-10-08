@@ -16,8 +16,6 @@ class PlatformTaskBody(BaseModel):
         None,
         description="platform only.",
     )
-    # Deprecated — ignored (vision layer removed).
-    vision_mode: str | None = Field(None, description="Deprecated, ignored.")
 
 
 class TenderDownloadBody(BaseModel):
@@ -30,8 +28,6 @@ class TenderDownloadBody(BaseModel):
         default=False,
         description="If true, run platform agent loop instead of direct adapter path.",
     )
-    # Deprecated — ignored.
-    vision_mode: str | None = Field(None, description="Deprecated, ignored.")
     max_steps: int | None = Field(None, ge=5, le=200)
     instruction: str | None = None
 

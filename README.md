@@ -99,8 +99,6 @@ LangChain-агент в стиле **AI-booking**: `create_openai_tools_agent` +
 - ищет тендеры на платформе (`platform_url` + `keywords`)
 - дедуплицирует через SQLite (`data/_state/seen_tenders.sqlite3`)
 - открывает **новые** карточки и скачивает документацию
-- `qwen-max` — tool-calling через AgentExecutor
-- `qwen-vl-plus` — внутри tool `screenshot` (подсказки по UI)
 
 Пример:
 
@@ -124,7 +122,7 @@ Invoke-RestMethod http://127.0.0.1:8000/run_tender_download `
 
 ## Platform agent notes
 
-Режимы `tools_mode`: `full` | `browser` | `platform` (high-level adapter tools).
+Режим tools: `platform` (adapter + DOM). Старые `full` / `browser` / vision сняты.
 
 ## Как устроено чтение документов
 

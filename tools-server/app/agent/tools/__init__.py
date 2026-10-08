@@ -9,29 +9,18 @@ from ...domain.tender_id import platform_from_url, resolve_tender_id
 from ..context import PlatformAgentContext, make_context
 from .dom import build_dom_tools
 from .platform import build_platform_tools
-from .tool_modes import (
-    TOOLS_BY_VISION_MODE,
-    TOOLS_DOM,
-    TOOLS_HYBRID,
-    TOOLS_PLATFORM,
-    normalize_vision_mode,
-    tool_names_for_mode,
-)
+from .tool_modes import TOOLS_PLATFORM, tool_names_for_mode
 
 __all__ = [
     "PlatformAgentContext",
     "SeenTenderStore",
     "AGENT_TOOL_MODES",
     "PLATFORM_TOOL_NAMES",
-    "TOOLS_BY_VISION_MODE",
-    "TOOLS_DOM",
-    "TOOLS_HYBRID",
     "TOOLS_PLATFORM",
     "build_langchain_tools",
     "build_tools",
     "make_context",
     "normalize_tools_mode",
-    "normalize_vision_mode",
     "tool_names_for_mode",
     "platform_from_url",
     "resolve_tender_id",
@@ -71,8 +60,6 @@ def build_tools(ctx: PlatformAgentContext) -> list[StructuredTool]:
 def build_langchain_tools(
     ctx: PlatformAgentContext,
     mode: str | None = None,
-    vision_mode: str | None = None,
 ) -> list[StructuredTool]:
     normalize_tools_mode(mode)
-    _ = vision_mode  # deprecated, ignored
     return build_tools(ctx)

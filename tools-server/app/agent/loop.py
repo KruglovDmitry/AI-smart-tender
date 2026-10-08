@@ -252,13 +252,8 @@ async def run_platform_task(
     download_subdir: str | None = None,
     instruction: str | None = None,
     tools_mode: str | None = None,
-    vision_mode: str | None = None,
 ) -> dict[str, Any]:
-    """
-    Tool-calling loop (platform = DOM + adapters).
-    vision_mode is deprecated and ignored.
-    """
-    _ = vision_mode
+    """Tool-calling loop (platform = DOM + adapters)."""
     platform_url = (platform_url or "").strip()
     keywords = (keywords or "").strip()
     if not platform_url or not keywords:

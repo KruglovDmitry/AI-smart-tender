@@ -48,7 +48,7 @@ app = FastAPI(
     version="1.3.0",
     description=(
         "Tools for the tender agent: server documents, URL fetch, "
-        "Excel export, platform monitoring agent, optional legacy browser agent."
+        "Excel export, and the platform monitoring agent."
     ),
 )
 
@@ -135,31 +135,6 @@ class WriteExcelBody(BaseModel):
     )
 
 
-class BrowserTaskBody(BaseModel):
-    task: str = Field(
-        ...,
-        description=(
-            "Natural-language task for the browser agent, e.g. "
-            "'Скачай все документы со страницы тендера и кратко опиши лот'."
-        ),
-    )
-    url: str | None = Field(
-        None,
-        description="Optional starting URL (agent will navigate here first).",
-    )
-    max_steps: int | None = Field(
-        None,
-        description=f"Max tool steps (default {config.BROWSER_MAX_STEPS}).",
-    )
-    download_subdir: str | None = Field(
-        None,
-        description=(
-            "Optional folder name under data/tenders/ for downloads "
-            "(default data/tenders/_browser)."
-        ),
-    )
-
-
 def _public_base(request: Request) -> str:
     configured = config.TOOLS_PUBLIC_BASE_URL
     if configured:
@@ -180,14 +155,6 @@ def health():
             "max_steps": config.PLATFORM_MAX_STEPS,
             "max_new_tenders": config.PLATFORM_MAX_NEW_TENDERS,
             "mode_default": getattr(config, "PLATFORM_AGENT_MODE", "platform"),
-        },
-        "browser_agent": {
-            "enabled": config.BROWSER_AGENT_ENABLED,
-            "llm_configured": llm_ok,
-            "model": config.AGENT_LLM_MODEL,
-            "vl_model": getattr(config, "AGENT_VL_MODEL", ""),
-            "vl_enabled": getattr(config, "AGENT_VL_ENABLED", False),
-            "headless": config.BROWSER_HEADLESS,
         },
     }
 
@@ -338,43 +305,3 @@ def api_download_file(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         content_disposition_type="attachment",
     )
-
-
-@app.post(
-    "/run_browser_task",
-    summary="Run browser agent on a tender URL / task",
-    description=(
-        "DISABLED by default (BROWSER_AGENT_ENABLED=false): tender platforms "
-        "are not reachable from the server. Enable only when VPN/access is available."
-    ),
-    include_in_schema=config.BROWSER_AGENT_ENABLED,
-)
-async def api_run_browser_task(body: BrowserTaskBody):
-    if not config.BROWSER_AGENT_ENABLED:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Browser agent is disabled (BROWSER_AGENT_ENABLED=false). "
-                "Tender platforms are not accessible from this server."
-            ),
-        )
-    try:
-        from .browser_tool.agent import run_browser_task
-
-        return await run_browser_task(
-            task=body.task,
-            url=body.url,
-            max_steps=body.max_steps,
-            download_subdir=body.download_subdir,
-        )
-    except ImportError as e:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Playwright is not installed in the container: {e}",
-        ) from e
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e)) from e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Browser agent failed: {e}") from e

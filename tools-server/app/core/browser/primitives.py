@@ -51,6 +51,42 @@ def _err(action: str, message: str, **data: Any) -> dict[str, Any]:
     return {"ok": False, "action": action, "message": message, **data}
 
 
+async def navigate(rt: BrowserRuntime, url: str) -> dict[str, Any]:
+    url = (url or "").strip()
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return _err("navigate", "URL must be http(s) with host")
+    try:
+        resp = await rt.page.goto(url, wait_until="domcontentloaded")
+        await _settle(rt.page, short=False)
+        status = getattr(resp, "status", None) if resp is not None else None
+        kind_info = await detect_page_kind(rt)
+        title = kind_info.get("title") or ""
+        not_found = status == 404 or kind_info.get("page_kind") == "not_found"
+        if not_found:
+            return _err(
+                "navigate",
+                "Страница не найдена (404 / page_kind=not_found). "
+                "Не выдумывай URL — вернись на выдачу и navigate по exact href.",
+                url=rt.page.url,
+                title=title,
+                http_status=status,
+                not_found=True,
+                page_kind="not_found",
+                page_kind_reason=kind_info.get("page_kind_reason"),
+            )
+        return _ok(
+            "navigate",
+            f"Opened {rt.page.url} (page_kind={kind_info.get('page_kind')})",
+            url=rt.page.url,
+            title=title,
+            http_status=status,
+            **{k: v for k, v in kind_info.items() if k not in {"url", "title"}},
+        )
+    except Exception as e:
+        return _err("navigate", str(e), url=rt.page.url)
+
+
 async def get_page_text(rt: BrowserRuntime, max_chars: int = 12000) -> dict[str, Any]:
     page = rt.page
     try:

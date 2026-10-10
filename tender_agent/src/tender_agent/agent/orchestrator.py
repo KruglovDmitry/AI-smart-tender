@@ -16,10 +16,10 @@ from ..observability.logging import get_logger
 from ..sites.profiles import remember_success
 from ..storage.repository import Repository, profile_is_fresh
 from ..tenders.discovery import inspect_element
-from ..tenders.extraction import card_from_raw
+from ..tenders.extraction import apply_page_reading, card_from_raw
 from ..tenders.models import Observation
 from ..tenders.ranking import rank_tenders
-from .planner import TaskParseError, consult, parse_task
+from .planner import TaskParseError, consult, parse_task, read_card
 from .policy import decide
 from .recovery import clear_failure, note_failure, should_stop_repeat
 from .state import Action, Progress
@@ -87,29 +87,51 @@ def _absorb(obs: Observation, task_keyword: str, keyword_applied: bool, sort_req
     return found
 
 
-async def _download_all(
+async def _open_cards(
     runtime: BrowserRuntime,
     settings: Settings,
     host: str,
+    task,
     results: list[TenderResult],
     progress: Progress,
-) -> list:
+    llm: LLMClient | None,
+    started: float,
+    errors: list[str],
+) -> tuple[list[TenderResult], list]:
+    opened: list[TenderResult] = []
     saved = []
     for tender in results:
-        if progress.actions >= settings.max_actions or len(saved) >= settings.max_downloads:
-            break
-        if tender.url and runtime.current_page.url != tender.url:
-            await _goto(runtime, tender.url, settings, host)
-            progress.actions += 1
-        obs = await get_page_state(runtime, progress.search_placeholder or None)
-        for ref in obs.file_refs:
-            if len(saved) >= settings.max_downloads:
-                break
-            record = await download_file(runtime, obs, ref, settings, tender.url)
-            saved.append(record)
-            progress.actions += 1
+        if progress.actions >= task.max_actions or (time.monotonic() - started) >= task.timeout_seconds:
+            opened.append(tender)
+            continue
+        if not tender.url:
+            opened.append(tender)
+            continue
+        try:
+            if runtime.current_page.url != tender.url:
+                await _goto(runtime, tender.url, settings, host)
+                progress.actions += 1
             obs = await get_page_state(runtime, progress.search_placeholder or None)
-    return saved
+            reading = None
+            if llm is not None and getattr(llm, "read_card", None) and progress.llm_calls < settings.max_llm_calls:
+                progress.llm_calls += 1
+                try:
+                    reading = await read_card(llm, task, obs)
+                except Exception as exc:
+                    errors.append(f"Модель не прочитала карточку: {exc}")
+            updated, refs = apply_page_reading(tender, obs, reading)
+            if task.download_documents:
+                for ref in refs:
+                    if len(saved) >= settings.max_downloads or progress.actions >= task.max_actions:
+                        break
+                    saved.append(await download_file(runtime, obs, ref, settings, tender.url))
+                    progress.actions += 1
+                    obs = await get_page_state(runtime, progress.search_placeholder or None)
+            opened.append(updated)
+        except Exception as exc:
+            errors.append(str(exc))
+            opened.append(tender)
+    return opened, saved
 
 
 async def execute(
@@ -229,12 +251,19 @@ async def execute(
 
     results = rank_tenders(collected, sort_by=task.sort_by, limit=task.limit)
     downloads = []
-    if task.download_documents and results and progress.phase != "needs_user":
-        progress.phase = "downloading"
-        try:
-            downloads = await _download_all(runtime, settings, host, results, progress)
-        except Exception as exc:
-            errors.append(str(exc))
+    if results and progress.phase != "needs_user":
+        progress.phase = "downloading" if task.download_documents else "extracting"
+        results, downloads = await _open_cards(
+            runtime,
+            settings,
+            host,
+            task,
+            results,
+            progress,
+            llm,
+            started,
+            errors,
+        )
 
     pages_left = bool(last_obs and last_obs.next_ref and progress.pages >= task.max_pages)
     if progress.phase == "needs_user" or any("Нужен вход" in item for item in errors):

@@ -1,8 +1,8 @@
 from tender_agent.api.schemas import TenderResult
 from tender_agent.storage.repository import SiteProfile, profile_is_fresh
 from tender_agent.tenders.discovery import fallback_cards, pick_search
-from tender_agent.tenders.extraction import card_from_raw, parse_date
-from tender_agent.tenders.models import Element, RawCard
+from tender_agent.tenders.extraction import apply_page_reading, card_from_raw, parse_date
+from tender_agent.tenders.models import Element, Observation, RawCard
 from tender_agent.tenders.ranking import rank_tenders
 
 
@@ -89,6 +89,58 @@ def test_fallback_cards_from_links() -> None:
     assert len(cards) == 1
     assert cards[0].href.endswith("/7")
     assert cards[0].sources["title"] == "link"
+
+
+def test_page_reading_keeps_only_values_present_on_the_page() -> None:
+    obs = Observation(
+        url="https://example.com/tenders/9",
+        text_excerpt="Организатор Акционерное общество «Ильменит». Окончание приема заявок 22.07.2026. Прием заявок. 1 200 000 руб.",
+        elements=[
+            Element(ref=4, tag="a", name="spec.pdf", href="https://example.com/files/spec.pdf", download=True),
+            Element(ref=5, tag="a", name="Назад к поиску", href="https://example.com/search"),
+        ],
+        file_refs=[4],
+    )
+    tender = _card(
+        id="9",
+        title="Сервер",
+        url="https://example.com/tenders/9",
+        matched_keyword="сервер",
+        verification_status="needs_review",
+        published_at=None,
+    )
+    updated, refs = apply_page_reading(
+        tender,
+        obs,
+        {
+            "customer": "Акционерное общество «Ильменит»",
+            "published_at": "22.07.2026",
+            "deadline": "22.07.2026",
+            "price_text": "1 200 000 руб",
+            "status": "Прием заявок",
+            "document_refs": [4, 5, 99],
+        },
+    )
+    assert updated.customer == "Акционерное общество «Ильменит»"
+    assert updated.deadline == "2026-07-22"
+    assert updated.published_at is None
+    assert updated.price == 1_200_000
+    assert updated.currency == "RUB"
+    assert updated.status == "Прием заявок"
+    assert updated.verification_status == "needs_review"
+    assert refs == [4]
+    assert updated.document_urls == ["https://example.com/files/spec.pdf"]
+
+
+def test_page_reading_ignores_customer_missing_from_the_page() -> None:
+    obs = Observation(url="https://example.com/tenders/1", text_excerpt="Поставка серверов")
+    updated, refs = apply_page_reading(
+        _card(),
+        obs,
+        {"customer": "Выдуманный заказчик", "document_refs": [3]},
+    )
+    assert updated.customer is None
+    assert refs == []
 
 
 def test_stale_profile_selector_is_not_fresh() -> None:

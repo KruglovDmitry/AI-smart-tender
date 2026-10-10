@@ -34,6 +34,7 @@ class TenderResult(BaseModel):
     status: str | None = None
     matched_keyword: str | None = None
     verification_status: VerificationStatus = "incomplete"
+    document_urls: list[str] = Field(default_factory=list)
     sources: dict[str, str] = Field(default_factory=dict)
 
 

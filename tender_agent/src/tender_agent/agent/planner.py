@@ -96,6 +96,16 @@ def observation_for_model(obs: Observation) -> dict:
     }
 
 
+async def read_card(llm: LLMClient | None, task: TaskSpec, obs: Observation) -> dict | None:
+    method = getattr(llm, "read_card", None)
+    if llm is None or method is None:
+        return None
+    data = await method(task.model_dump(), observation_for_model(obs))
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
 async def consult(llm: LLMClient | None, task: TaskSpec, obs: Observation) -> Action | None:
     if llm is None:
         return None

@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="utf-8"><title>Закупки</title></head>
+<body>
+  <h1>Закупки</h1>
+  <div id="list">
+    <article class="tender-card" data-id="201" data-published="2026-02-01">
+      <a class="title" href="/tenders/201">Поставка серверного оборудования</a>
+      <div class="customer">Заказчик</div>
+    </article>
+  </div>
+  <button type="button" id="more">Показать ещё</button>
+  <script>
+    document.getElementById("more").addEventListener("click", function () {
+      document.getElementById("list").insertAdjacentHTML(
+        "beforeend",
+        '<article class="tender-card" data-id="308" data-published="2026-10-08"><a class="title" href="/tenders/308">Поставка серверного оборудования</a><div class="customer">Заказчик</div></article>'
+      );
+      this.remove();
+    });
+  </script>
+</body>
+</html>

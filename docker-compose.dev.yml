@@ -10,7 +10,10 @@ services:
       - ./tools-server/app:/app/app
       - ${DATA_HOST_PATH:-./data}:/data
       - ${TENDERS_HOST_PATH:-./data/tenders}:/data/tenders
-      - browser-profile:/tmp/tender-browser-profile
+
+  tender-agent:
+    image: tender-agent:dev
+    build: ./tender_agent
 
   dashboard:
     image: tenag-dashboard:dev

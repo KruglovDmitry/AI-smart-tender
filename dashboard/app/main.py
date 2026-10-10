@@ -15,6 +15,7 @@ from . import data_scan
 
 DATA_ROOT = Path(os.getenv("DATA_ROOT", "/data")).resolve()
 TOOLS_SERVER_URL = os.getenv("TOOLS_SERVER_URL", "http://tools-server:8000").rstrip("/")
+AGENT_URL = os.getenv("TENDER_AGENT_URL", "http://tender-agent:8010").rstrip("/")
 SEEN_DB = Path(
     os.getenv("SEEN_TENDERS_DB", str(DATA_ROOT / "_state" / "seen_tenders.sqlite3"))
 )
@@ -64,20 +65,33 @@ async def api_status():
         tools_error = str(e)
 
     seen = data_scan.seen_tenders_count(SEEN_DB)
+    agent_health: dict | None = None
+    agent_error: str | None = None
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+            r = await client.get(f"{AGENT_URL}/health")
+            r.raise_for_status()
+            agent_health = r.json()
+    except Exception as e:
+        agent_error = str(e)
     return {
         "dashboard": "ok",
         "data_root": str(DATA_ROOT),
         "tenders_count": len(tenders),
         "files_count": data_scan.count_tender_files(tenders),
         "seen_tenders_count": seen,
-        "agent_llm_configured": bool(
-            tools_health and tools_health.get("agent_llm_configured")
-        ),
+        "agent_llm_configured": bool(agent_health and agent_health.get("llm_configured")),
         "tools_server": {
             "url": TOOLS_SERVER_URL,
             "ok": tools_health is not None,
             "error": tools_error,
             "health": tools_health,
+        },
+        "tender_agent": {
+            "url": AGENT_URL,
+            "ok": agent_health is not None,
+            "error": agent_error,
+            "health": agent_health,
         },
         "activity": data_scan.recent_agent_logs(DATA_ROOT, limit=20),
     }
@@ -92,27 +106,28 @@ async def api_tenders(limit: int = 200):
 
 @app.post("/api/run/platform")
 async def api_run_platform(body: PlatformRunBody):
-    payload = body.model_dump(exclude_none=True)
-    try:
-        async with httpx.AsyncClient(timeout=PROXY_TIMEOUT) as client:
-            r = await client.post(
-                f"{TOOLS_SERVER_URL}/run_platform_task", json=payload
-            )
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"tools-server unreachable: {e}") from e
-    return _proxy_json(r)
+    task = (
+        f"С площадки {body.platform_url} верни последние {body.max_new_tenders} "
+        f'закупок по ключевому слову "{body.keywords}" и скачай документы.'
+    )
+    if body.instruction:
+        task = f"{task} {body.instruction}"
+    return await _search(task)
 
 
 @app.post("/api/run/tender")
 async def api_run_tender(body: TenderDownloadRunBody):
-    payload = body.model_dump(exclude_none=True)
+    extra = f" {body.instruction}" if body.instruction else ""
+    task = f'Открой {body.tender_url} и скачай документы по ключевому слову "документы".{extra}'
+    return await _search(task)
+
+
+async def _search(task: str):
     try:
         async with httpx.AsyncClient(timeout=PROXY_TIMEOUT) as client:
-            r = await client.post(
-                f"{TOOLS_SERVER_URL}/run_tender_download", json=payload
-            )
+            r = await client.post(f"{AGENT_URL}/search_tenders", json={"task": task})
     except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"tools-server unreachable: {e}") from e
+        raise HTTPException(status_code=502, detail=f"tender-agent unreachable: {e}") from e
     return _proxy_json(r)
 
 

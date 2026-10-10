@@ -15,7 +15,11 @@ _SNAPSHOT_JS = """() => {
     const box = el.getBoundingClientRect();
     return box.width > 0 && box.height > 0;
   };
-  const textOf = (el) => String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+  const textOf = (el) => {
+    if (!el || typeof el !== 'object') return '';
+    return String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+  };
+  if (!document.body) return { pending: true };
   const labelFor = (el) => {
     if (el.id) {
       const lab = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
@@ -127,8 +131,44 @@ def limit_elements(elements: list[Element], limit: int = 60) -> list[Element]:
     return sorted(elements, key=rank)[:limit]
 
 
+def _snapshot_retryable(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "innertext" in message
+        or "execution context was destroyed" in message
+        or "navigation" in message
+    )
+
+
 async def get_page_state(runtime: BrowserRuntime, preferred_placeholder: str | None = None) -> Observation:
-    raw = await runtime.current_page.evaluate(_SNAPSHOT_JS)
+    page = runtime.current_page
+    raw: dict | None = None
+    last_error: Exception | None = None
+    for _ in range(8):
+        try:
+            loaded = await page.evaluate(_SNAPSHOT_JS)
+        except Exception as exc:
+            if not _snapshot_retryable(exc):
+                raise
+            last_error = exc
+            await page.wait_for_timeout(400)
+            continue
+        if isinstance(loaded, dict) and not loaded.get("pending"):
+            raw = loaded
+            break
+        await page.wait_for_timeout(400)
+    if raw is None:
+        if last_error is not None:
+            raise last_error
+        raw = {
+            "url": page.url,
+            "title": "",
+            "headings": [],
+            "text": "",
+            "has_password": False,
+            "elements": [],
+            "cards": [],
+        }
     elements = limit_elements([Element.model_validate(item) for item in raw.get("elements") or []])
     cards = [RawCard.model_validate(item) for item in raw.get("cards") or []]
     if not cards:

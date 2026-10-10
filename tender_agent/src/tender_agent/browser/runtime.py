@@ -21,12 +21,24 @@ class BrowserRuntime:
 
     async def __aenter__(self) -> BrowserRuntime:
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(headless=self.settings.headless)
+        self._browser = await self._playwright.chromium.launch(
+            headless=self.settings.headless,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
         assert self._browser is not None
+        version = self._browser.version
         self.context = await self._browser.new_context(
             accept_downloads=True,
             locale="ru-RU",
             viewport={"width": 1280, "height": 900},
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                f"Chrome/{version} Safari/537.36"
+            ),
+        )
+        await self.context.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
         await self.context.route("**/*", self._guard)
         self.page = await self.context.new_page()

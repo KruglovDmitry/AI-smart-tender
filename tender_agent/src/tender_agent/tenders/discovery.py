@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from urllib.parse import urlparse
 
 from ..sites.generic import CARD_HREF_RE, FILE_RE, NEXT_RE, SEARCH_RE, SECTION_RE, SORT_RE, SUBMIT_RE
@@ -97,6 +98,11 @@ def fallback_cards(elements: list[Element]) -> list[RawCard]:
         if el.download or FILE_RE.search(href):
             continue
         path = urlparse(href).path or ""
+        query = urlparse(href).query
+        if re.search(r"/search(?:/|$)", path, re.I) or "tags[" in query:
+            continue
+        if re.fullmatch(r"показать(?:\s+все|\s+ещ[её])?", title, re.I):
+            continue
         if not (CARD_HREF_RE.search(path) or CARD_HREF_RE.search(title)):
             continue
         seen.add(href)

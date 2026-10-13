@@ -43,7 +43,8 @@ class BrowserRuntime:
         await self.context.route("**/*", self._guard)
         self.page = await self.context.new_page()
         self.page.set_default_timeout(15_000)
-        self.page.set_default_navigation_timeout(20_000)
+        # Площадки (Росэлторг) иногда отдают главную дольше 20 с.
+        self.page.set_default_navigation_timeout(45_000)
         return self
 
     async def __aexit__(self, *_exc: Any) -> None:

@@ -24,7 +24,7 @@ from .planner import TaskParseError, consult, parse_task, read_card
 from .policy import decide
 from .recovery import clear_failure, note_failure, should_stop_repeat
 from .vision import run_vision_step
-from ..sites.known import sorted_by_date_url
+from ..sites.known import search_url, sorted_by_date_url
 from .state import Action, Progress
 
 log = get_logger()
@@ -371,6 +371,7 @@ async def execute(
                     await _goto(runtime, sorted_url, settings, host)
                     progress.sort_applied = True
                     progress.site_sort_used = True
+                    progress.sort_verified = True  # параметры площадки известны: первая страница и есть новейшие
                     step_rec["outcome"] = "sort_by_url"
                     continue
                 helped, spent = await _try_vision(
@@ -378,9 +379,23 @@ async def execute(
                     "нужна сортировка по дате публикации (сначала новые), кнопку сортировки в DOM не нашёл", errors)
                 started += spent
                 if helped:
+                    progress.sort_verified = True
                     step_rec["outcome"] = "sort_by_vision"
                     continue
                 errors.append("Сортировка по дате на сайте не подтверждена: «последние» выбраны только среди прочитанных записей.")
+            if (
+                action.tool == "fill"
+                and not progress.keyword_applied
+                and not progress.search_url_tried
+                and progress.failures
+            ):
+                # Поле не отправляется из DOM — пробуем известный адрес выдачи площадки.
+                known_search = search_url(last_obs.url, keyword)
+                if known_search:
+                    progress.search_url_tried = True
+                    await _goto(runtime, known_search, settings, host)
+                    step_rec["outcome"] = "search_by_url"
+                    continue
             if should_stop_repeat(progress, action, last_obs.signature, settings.max_retries):
                 step_rec["outcome"] = "repeat_stop"
                 step_error = True
@@ -461,7 +476,10 @@ async def execute(
         elif (time.monotonic() - started) >= task.timeout_seconds:
             errors.append("Истекло время задания.")
 
-    results = rank_tenders(collected, sort_by=task.sort_by, limit=task.limit)
+    # Если выдачу отсортировал сам сайт, его порядок и есть ответ: у части карточек в списке нет дат,
+    # и пересортировка по ним подняла бы старые записи с датой над новыми без неё.
+    order = None if progress.sort_verified else task.sort_by
+    results = rank_tenders(collected, sort_by=order, limit=task.limit)
     downloads = []
     if results and progress.phase != "needs_user":
         progress.phase = "downloading" if task.download_documents else "extracting"

@@ -51,7 +51,13 @@ def pick_search(elements: list[Element], preferred: str | None = None) -> Elemen
 _BUTTON_INPUTS = {"submit", "button", "image"}
 
 
+# «Расширенный поиск», «Показать ещё», «Подписаться» — не отправка запроса.
+_NOT_SUBMIT_RE = re.compile(r"расширен|показать\s+ещ|подписат|сохранить|сбросить|очистить", re.I)
+_EXACT_SUBMIT_RE = re.compile(r"^\s*(?:найти|искать|поиск|search|find)\s*$", re.I)
+
+
 def pick_submit(elements: list[Element], search: Element | None) -> Element | None:
+    candidates: list[Element] = []
     for el in elements:
         if search is not None and el.ref == search.ref:
             continue
@@ -60,9 +66,14 @@ def pick_submit(elements: list[Element], search: Element | None) -> Element | No
         # Поле ввода кнопкой не бывает, какой бы ни была его role (на ЕИС у поиска role="search", type="dirname").
         if el.tag == "input" and (el.input_type or "text") not in _BUTTON_INPUTS:
             continue
-        if SUBMIT_RE.search(_blob(el)) or el.input_type == "submit":
-            return el
-    return None
+        blob = _blob(el)
+        if _NOT_SUBMIT_RE.search(blob):
+            continue
+        if SUBMIT_RE.search(blob) or el.input_type == "submit":
+            candidates.append(el)
+    # Точная кнопка «Найти» важнее любой другой подходящей (ТЭК-Торг: сначала идёт «Расширенный поиск»).
+    exact = [el for el in candidates if _EXACT_SUBMIT_RE.match(el.name or el.value or "")]
+    return (exact or candidates or [None])[0]
 
 
 def pick_sort(elements: list[Element]) -> Element | None:

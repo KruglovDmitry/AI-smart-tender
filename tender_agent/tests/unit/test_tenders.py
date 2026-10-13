@@ -1,8 +1,11 @@
+from tender_agent.agent.planner import card_for_model
 from tender_agent.api.schemas import TenderResult
+from tender_agent.browser.observations import limit_elements
 from tender_agent.storage.repository import SiteProfile, profile_is_fresh
 from tender_agent.tenders.discovery import fallback_cards, pick_search
-from tender_agent.tenders.extraction import apply_page_reading, card_from_raw, parse_date
-from tender_agent.tenders.models import Element, Observation, RawCard
+from tender_agent.tenders.extraction import apply_labeled_fields, apply_page_reading, card_from_raw, parse_date
+from tender_agent.tenders.fields import build_fields, cards_from_blocks
+from tender_agent.tenders.models import Element, Observation, PageField, RawCard
 from tender_agent.tenders.ranking import rank_tenders
 
 
@@ -141,6 +144,109 @@ def test_page_reading_ignores_customer_missing_from_the_page() -> None:
     )
     assert updated.customer is None
     assert refs == []
+
+
+def test_result_block_reads_price_and_dates_without_a_site_selector() -> None:
+    text = (
+        "44-ФЗ Запрос котировок № 0813500000126018903 Подача заявок "
+        "Объект закупки Выполнение работ по демонтажу и установке дверей "
+        "Организация, осуществляющая размещение ГОСУДАРСТВЕННОЕ КАЗЕННОЕ УЧРЕЖДЕНИЕ "
+        "Начальная цена 7 980 000,00 ₽ Размещено 12.10.2026 Обновлено 12.10.2026 "
+        "Окончание подачи заявок 19.10.2026"
+    )
+    cards = cards_from_blocks(
+        [{"text": text, "href": "https://zakupki.gov.ru/epz/order/notice/zk20/view/common-info.html?regNumber=0813500000126018903"}]
+    )
+    assert len(cards) == 1
+    card = card_from_raw(cards[0], keyword="сервер", keyword_applied=True, sort_required=True)
+    assert card is not None
+    assert card.id == "0813500000126018903"
+    assert card.title.startswith("Выполнение работ")
+    assert card.price == 7_980_000
+    assert card.published_at == "2026-10-12"
+    assert card.deadline == "2026-10-19"
+    assert card.customer.startswith("ГОСУДАРСТВЕННОЕ КАЗЕННОЕ УЧРЕЖДЕНИЕ")
+    assert card.status == "Подача заявок"
+
+
+def test_field_id_fills_card_from_the_pair_not_the_excerpt() -> None:
+    obs = Observation(
+        url="https://example.com/tenders/9",
+        text_excerpt="Меню площадки",
+        fields=[
+            PageField(id=4, label="Начальная цена", value="7 980 000,00 ₽"),
+            PageField(id=5, label="Размещено", value="12.10.2026"),
+            PageField(id=6, label="Окончание подачи заявок", value="19.10.2026"),
+            PageField(id=7, label="Обновлено", value="11.10.2026"),
+            PageField(id=8, label="Заказчик", value="Региональный центр закупок"),
+        ],
+    )
+    updated, _refs = apply_page_reading(
+        _card(published_at=None, price=None, customer=None),
+        obs,
+        {"customer": 8, "published_at": 7, "deadline": 6, "price": 4},
+    )
+    assert updated.customer == "Региональный центр закупок"
+    assert updated.published_at is None
+    assert updated.deadline == "2026-10-19"
+    assert updated.price == 7_980_000
+    labeled = apply_labeled_fields(
+        _card(published_at=None, price=None, customer=None),
+        obs.fields,
+    )
+    assert labeled.published_at == "2026-10-12"
+    assert labeled.price == 7_980_000
+
+
+def test_quote_is_checked_against_the_whole_content_block() -> None:
+    menu = "Главное меню " * 40
+    obs = Observation(
+        url="https://example.com/tenders/9",
+        text_excerpt=menu[:800],
+        content_text=menu + "Начальная цена 50 000 руб. Размещено 01.02.2026.",
+    )
+    updated, _refs = apply_page_reading(
+        _card(published_at=None, price=None),
+        obs,
+        {"price_quote": "50 000 руб", "published_quote": "01.02.2026"},
+    )
+    assert updated.price == 50_000
+    assert updated.published_at == "2026-02-01"
+
+
+def test_card_payload_sends_fields_instead_of_the_page_text() -> None:
+    obs = Observation(
+        url="https://example.com/tenders/9",
+        content_text="меню " * 500,
+        fields=build_fields(
+            [
+                {"label": "Заказчик", "value": "Завод", "source": "struct"},
+                {"label": "Размещено", "value": "12.10.2026", "source": "struct"},
+                {"label": "Окончание подачи заявок", "value": "19.10.2026", "source": "struct"},
+                {"label": "Начальная цена", "value": "10 000,00 ₽", "source": "struct"},
+                {"label": "Пункт меню", "value": "Контакты", "source": "adjacent"},
+            ],
+            "",
+        ),
+    )
+    payload = card_for_model(obs)
+    assert "content" not in payload
+    labels = [item["label"] for item in payload["fields"]]
+    assert "Пункт меню" not in labels
+    assert "Начальная цена" in labels
+
+
+def test_limit_elements_keeps_document_links() -> None:
+    controls = [Element(ref=index, tag="input", name=f"field-{index}") for index in range(1, 70)]
+    pdf = Element(ref=90, tag="a", name="spec.pdf", href="https://example.com/spec.pdf", download=True)
+    kept = limit_elements([*controls, pdf], limit=60)
+    assert any(item.ref == 90 for item in kept)
+
+
+def test_element_href_object_does_not_fail_validation() -> None:
+    element = Element.model_validate({"ref": 1, "href": {}, "name": {}})
+    assert element.href is None
+    assert element.name == ""
 
 
 def test_stale_profile_selector_is_not_fresh() -> None:

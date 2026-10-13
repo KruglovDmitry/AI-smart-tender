@@ -15,8 +15,8 @@ from ..llm.base import LLMClient
 from ..observability.logging import get_logger
 from ..sites.profiles import remember_success
 from ..storage.repository import Repository, profile_is_fresh
-from ..tenders.discovery import inspect_element
-from ..tenders.extraction import apply_page_reading, card_from_raw
+from ..tenders.discovery import inspect_element, pick_documents_tab
+from ..tenders.extraction import apply_labeled_fields, apply_page_reading, card_from_raw
 from ..tenders.models import Observation
 from ..tenders.ranking import rank_tenders
 from .planner import TaskParseError, consult, parse_task, read_card
@@ -73,6 +73,17 @@ async def _act(runtime: BrowserRuntime, action: Action, settings: Settings, host
         await scroll_page(runtime)
 
 
+def _card_needs_model(tender: TenderResult, download_documents: bool) -> bool:
+    if download_documents:
+        return True
+    return not (
+        tender.customer
+        and tender.published_at
+        and tender.deadline
+        and tender.price is not None
+    )
+
+
 def _absorb(obs: Observation, task_keyword: str, keyword_applied: bool, sort_required: bool) -> list[TenderResult]:
     found: list[TenderResult] = []
     for raw in obs.cards:
@@ -112,14 +123,28 @@ async def _open_cards(
                 await _goto(runtime, tender.url, settings, host)
                 progress.actions += 1
             obs = await get_page_state(runtime, progress.search_placeholder or None)
+            tender = apply_labeled_fields(tender, obs.fields)
             reading = None
-            if llm is not None and getattr(llm, "read_card", None) and progress.llm_calls < settings.max_llm_calls:
-                progress.llm_calls += 1
+            need_model = _card_needs_model(tender, task.download_documents)
+            if need_model and llm is not None and getattr(llm, "read_card", None):
+                progress.card_reads += 1
                 try:
                     reading = await read_card(llm, task, obs)
                 except Exception as exc:
                     errors.append(f"Модель не прочитала карточку: {exc}")
             updated, refs = apply_page_reading(tender, obs, reading)
+            if task.download_documents and not refs:
+                tab = pick_documents_tab(obs.elements)
+                if tab is not None and progress.actions < task.max_actions:
+                    await _act(
+                        runtime,
+                        Action(tool="click", element_ref=tab.ref, expected="changed", note="documents"),
+                        settings,
+                        host,
+                    )
+                    progress.actions += 1
+                    obs = await get_page_state(runtime, progress.search_placeholder or None)
+                    updated, refs = apply_page_reading(updated, obs, None)
             if task.download_documents:
                 for ref in refs:
                     if len(saved) >= settings.max_downloads or progress.actions >= task.max_actions:
@@ -304,6 +329,7 @@ async def execute(
             "pages_visited": len(dict.fromkeys(progress.visited)),
             "actions": progress.actions,
             "llm_calls": progress.llm_calls,
+            "card_reads": progress.card_reads,
             "site_sort_used": progress.site_sort_used,
             "profile_rejected": progress.profile_rejected,
         },

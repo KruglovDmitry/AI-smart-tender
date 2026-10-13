@@ -77,6 +77,18 @@ def pick_section(elements: list[Element]) -> Element | None:
     return None
 
 
+def pick_documents_tab(elements: list[Element]) -> Element | None:
+    """Вкладка или ссылка «документы» на карточке, без привязки к адресу площадки."""
+    for el in elements:
+        href = el.href or ""
+        name = (el.name or "").strip()
+        if not href or el.download or FILE_RE.search(href) or FILE_RE.search(name):
+            continue
+        if re.search(r"документ", name, re.I) and len(name) <= 40:
+            return el
+    return None
+
+
 def file_refs(elements: list[Element]) -> list[int]:
     found: list[int] = []
     for el in elements:

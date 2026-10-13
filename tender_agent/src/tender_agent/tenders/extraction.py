@@ -5,7 +5,8 @@ from datetime import datetime
 
 from ..api.schemas import TenderResult
 from ..sites.generic import FILE_RE
-from .models import Element, Observation, RawCard
+from .fields import known_values, label_kind
+from .models import Element, Observation, PageField, RawCard
 
 _ISO = re.compile(r"(\d{4}-\d{2}-\d{2})")
 _DOT = re.compile(r"(\d{2}\.\d{2}\.\d{4})")
@@ -92,10 +93,46 @@ def card_from_raw(raw: RawCard, *, keyword: str, keyword_applied: bool, sort_req
 
 
 def _page_blob(obs: Observation) -> str:
-    parts = [obs.title, obs.text_excerpt, *obs.headings]
+    parts = [obs.title, obs.content_text, obs.text_excerpt, *obs.headings]
+    for field in obs.fields:
+        parts.append(f"{field.label} {field.value}")
     for element in obs.elements:
         parts.extend([element.name, element.label, element.href or ""])
     return " ".join(part for part in parts if part)
+
+
+def apply_labeled_fields(tender: TenderResult, fields: list[PageField]) -> TenderResult:
+    """Заполняет пустые поля однозначными подписями, без модели."""
+    updated = tender.model_copy(deep=True)
+    known = known_values(fields)
+    customer = (known.get("customer") or "").strip()
+    if customer and not updated.customer:
+        updated.customer = customer
+        updated.sources["customer"] = "label"
+    published = parse_date(known.get("published"))
+    deadline = parse_date(known.get("deadline"))
+    if deadline and not updated.deadline:
+        updated.deadline = deadline
+        updated.sources["deadline"] = "label"
+    if published and not updated.published_at:
+        updated.published_at = published
+        updated.sources["published_at"] = "label"
+        if updated.matched_keyword and updated.verification_status == "needs_review":
+            updated.verification_status = "verified"
+    price, currency = parse_price(None, known.get("price"), None)
+    if price is not None and updated.price is None:
+        updated.price = price
+        updated.currency = updated.currency or currency
+        updated.sources["price"] = "label"
+    status = (known.get("status") or "").strip()
+    if status and not updated.status:
+        updated.status = status
+        updated.sources["status"] = "label"
+    titled = (known.get("title") or "").strip()
+    if titled and (not updated.title or updated.title.startswith("№")):
+        updated.title = titled[:300]
+        updated.sources["title"] = "label"
+    return updated
 
 
 def _text(value: object) -> str:
@@ -132,39 +169,83 @@ def _element(obs: Observation, ref: int) -> Element | None:
     return None
 
 
+def _field(obs: Observation, raw: object) -> PageField | None:
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int) or (isinstance(raw, str) and raw.isdigit()):
+        wanted = int(raw)
+        for field in obs.fields:
+            if field.id == wanted:
+                return field
+    return None
+
+
+def _accepted_value(field: PageField, expected: str) -> str | None:
+    kind = label_kind(field.label)
+    if expected == "published" and re.search(r"обнов", field.label, re.I):
+        return None
+    if expected == "published" and kind in {"deadline", "price", "customer", "title", "status"}:
+        return None
+    if expected == "deadline" and kind in {"published", "price", "customer", "title"}:
+        return None
+    if expected == "price" and kind in {"published", "deadline", "customer", "title"}:
+        return None
+    if expected == "customer" and kind in {"published", "deadline", "price"}:
+        return None
+    return field.value.strip() or None
+
+
+def _from_model(obs: Observation, payload: dict, blob: str, key: str, quote_key: str, expected: str) -> tuple[str, str]:
+    field = _field(obs, payload.get(key))
+    if field is not None:
+        value = _accepted_value(field, expected)
+        return (value or ""), "field"
+    quote = _text(payload.get(quote_key))
+    if not quote and isinstance(payload.get(key), str) and not str(payload.get(key)).isdigit():
+        quote = _text(payload.get(key))
+    if quote and _on_page(quote, blob):
+        return quote, "llm"
+    return "", ""
+
+
 def apply_page_reading(tender: TenderResult, obs: Observation, data: dict | None) -> tuple[TenderResult, list[int]]:
-    """Дополняет карточку только теми значениями, которые есть на открытой странице."""
+    """Дополняет карточку номером поля или цитатой из полного текста блока."""
     updated = tender.model_copy(deep=True)
     blob = _page_blob(obs)
     payload = data or {}
-    customer = _text(payload.get("customer"))
-    if customer and not updated.customer and _on_page(customer, blob):
+    customer, customer_source = _from_model(obs, payload, blob, "customer", "customer_quote", "customer")
+    if customer and not updated.customer:
         updated.customer = customer
-        updated.sources["customer"] = "llm"
-    deadline = _date_on_page(_text(payload.get("deadline")), blob)
-    published = _date_on_page(_text(payload.get("published_at")), blob)
-    low = blob.casefold()
-    if published and published == deadline and "публикац" not in low and "размещен" not in low:
-        published = None
+        updated.sources["customer"] = customer_source
+    deadline_text, deadline_source = _from_model(obs, payload, blob, "deadline", "deadline_quote", "deadline")
+    published_text, published_source = _from_model(obs, payload, blob, "published_at", "published_quote", "published")
+    deadline = parse_date(deadline_text) if deadline_text else None
+    published = parse_date(published_text) if published_text else None
+    if published_source == "llm":
+        low = blob.casefold()
+        if published and published == deadline and "публикац" not in low and "размещен" not in low:
+            published = None
     if deadline and not updated.deadline:
         updated.deadline = deadline
-        updated.sources["deadline"] = "llm"
+        updated.sources["deadline"] = deadline_source
     if published and not updated.published_at:
         updated.published_at = published
-        updated.sources["published_at"] = "llm"
+        updated.sources["published_at"] = published_source
         if updated.matched_keyword and updated.verification_status == "needs_review":
             updated.verification_status = "verified"
-    price_text = _text(payload.get("price_text"))
-    if price_text and updated.price is None and _on_page(price_text, blob):
+    price_text, price_source = _from_model(obs, payload, blob, "price", "price_quote", "price")
+    if not price_text:
+        price_text, price_source = _from_model(obs, payload, blob, "price_text", "price_quote", "price")
+    if price_text and updated.price is None:
         price, currency = parse_price(None, price_text, None)
         if price is not None:
             updated.price = price
             updated.currency = updated.currency or currency
-            updated.sources["price"] = "llm"
-    status = _text(payload.get("status"))
-    if status and not updated.status and _on_page(status, blob):
+            updated.sources["price"] = price_source
+    status, status_source = _from_model(obs, payload, blob, "status", "status_quote", "status")
+    if status and not updated.status:
         updated.status = status
-        updated.sources["status"] = "llm"
+        updated.sources["status"] = status_source
     known = {element.ref for element in obs.elements}
     refs: list[int] = []
     for item in payload.get("document_refs") or []:

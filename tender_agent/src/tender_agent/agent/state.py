@@ -39,6 +39,7 @@ class Progress:
     pages: int = 0
     actions: int = 0
     llm_calls: int = 0
+    card_reads: int = 0
     failures: dict[str, int] = field(default_factory=dict)
     visited: list[str] = field(default_factory=list)
     profile_rejected: bool = False

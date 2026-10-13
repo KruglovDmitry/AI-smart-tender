@@ -5,6 +5,7 @@ import re
 from ..api.schemas import TaskSpec
 from ..config import Settings
 from ..llm.base import LLMClient
+from ..sites.generic import FILE_RE
 from ..tenders.models import Observation
 from .state import Action
 
@@ -75,6 +76,44 @@ def parse_task(text: str, settings: Settings) -> TaskSpec:
     )
 
 
+def _document_elements(obs: Observation) -> list[dict]:
+    documents = []
+    for el in obs.elements:
+        blob = f"{el.name} {el.href or ''}"
+        if el.ref in obs.file_refs or el.download or FILE_RE.search(el.href or "") or FILE_RE.search(el.name or ""):
+            documents.append(
+                {"ref": el.ref, "name": el.name[:160], "href": (el.href or "")[:200]}
+            )
+        elif re.search(r"документ|скачать|файл|вложен", blob, re.I):
+            documents.append(
+                {"ref": el.ref, "name": el.name[:160], "href": (el.href or "")[:200]}
+            )
+        if len(documents) >= 30:
+            break
+    return documents
+
+
+def card_for_model(obs: Observation) -> dict:
+    """В карточку уходят пары полей. Полный текст блока — только если пар мало."""
+    documents = _document_elements(obs)
+    if len(obs.fields) >= 4:
+        return {
+            "url": obs.url,
+            "title": obs.title,
+            "fields": [
+                {"id": field.id, "label": field.label[:90], "value": field.value[:300]}
+                for field in obs.fields[:80]
+            ],
+            "documents": documents,
+        }
+    return {
+        "url": obs.url,
+        "title": obs.title,
+        "content": (obs.content_text or obs.text_excerpt)[:12000],
+        "documents": documents,
+    }
+
+
 def observation_for_model(obs: Observation) -> dict:
     return {
         "url": obs.url,
@@ -100,7 +139,7 @@ async def read_card(llm: LLMClient | None, task: TaskSpec, obs: Observation) -> 
     method = getattr(llm, "read_card", None)
     if llm is None or method is None:
         return None
-    data = await method(task.model_dump(), observation_for_model(obs))
+    data = await method(task.model_dump(), card_for_model(obs))
     if not isinstance(data, dict):
         return None
     return data

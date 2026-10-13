@@ -18,7 +18,7 @@ def _store(settings: Settings, text: str, result: TaskResult, trace: RunTrace | 
     if not settings.store_enabled or result.task is None:
         return
     try:
-        store = TenderStore(settings.data_dir / "_agent" / "agent.sqlite3")
+        store = TenderStore(settings.db_url or settings.data_dir / "_agent" / "agent.sqlite3")
         saved = store.save_run(text, result, str(trace.dir) if trace else None)
         keys = {key for key in store.keys_new_in_run(saved["run_id"])}
         for tender in result.results:

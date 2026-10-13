@@ -69,6 +69,8 @@ services:
       - TENDER_AGENT_MAX_PAGES=${TENDER_AGENT_MAX_PAGES:-5}
       - TENDER_AGENT_DEFAULT_LIMIT=${TENDER_AGENT_DEFAULT_LIMIT:-5}
       - TENDER_AGENT_TRACE=${TENDER_AGENT_TRACE:-true}
+      # База закупок (сервис postgres ниже); дашборд будет читать её же.
+      - TENDER_AGENT_DB_URL=postgresql+psycopg://${POSTGRES_USER:-tenders}:${POSTGRES_PASSWORD:-tenders}@postgres:5432/${POSTGRES_DB:-tenders}
       - TENDER_AGENT_TRACE_SCREENSHOTS=${TENDER_AGENT_TRACE_SCREENSHOTS:-errors}
       # Запасной шаг по скриншотам (ai_vision): Qwen-VL планирует, UI-TARS на d10 даёт координаты.
       - TENDER_AGENT_VISION_ENABLED=${TENDER_AGENT_VISION_ENABLED:-false}
@@ -89,6 +91,29 @@ services:
       - ${DATA_HOST_PATH:-./data}:/data
       - ${TENDERS_HOST_PATH:-./data/tenders}:/data/tenders
     shm_size: "1gb"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # База найденных закупок: пишет tender-agent, читает дашборд (следующая итерация).
+  postgres:
+    image: postgres:16-alpine
+    container_name: tender-postgres
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-tenders}
+      - POSTGRES_USER=${POSTGRES_USER:-tenders}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-tenders}
+    ports:
+      # Только с этого ПК: для DBeaver/psql. Наружу не публикуем.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tenders} -d ${POSTGRES_DB:-tenders}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
     restart: unless-stopped
 
   dashboard:
@@ -112,3 +137,4 @@ services:
 
 volumes:
   open-webui-data:
+  postgres-data:

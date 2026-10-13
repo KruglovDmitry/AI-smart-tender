@@ -15,6 +15,9 @@ dependencies = [
   "playwright==1.50.0",
   "pydantic>=2.0",
   "uvicorn>=0.34",
+  # База закупок: Postgres в Docker, SQLite для CLI и тестов.
+  "sqlalchemy>=2.0",
+  "psycopg[binary]>=3.1",
 ]
 
 [project.optional-dependencies]

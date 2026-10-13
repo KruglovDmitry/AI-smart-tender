@@ -64,6 +64,7 @@ def _settings() -> Settings:
         trace_enabled=_flag("TENDER_AGENT_TRACE", True),
         trace_screenshots=os.getenv("TENDER_AGENT_TRACE_SCREENSHOTS", "errors"),
         store_enabled=_flag("TENDER_AGENT_STORE", True),
+        db_url=os.getenv("TENDER_AGENT_DB_URL", ""),
     )
 
 
@@ -116,5 +117,5 @@ def list_tenders(platform: str | None = None, q: str | None = None, since: str |
     from .storage.tenders import TenderStore
 
     settings = _settings()
-    store = TenderStore(settings.data_dir / "_agent" / "agent.sqlite3")
+    store = TenderStore(settings.db_url or settings.data_dir / "_agent" / "agent.sqlite3")
     return {"tenders": store.search(platform=platform, text=q, since=since, limit=max(1, min(limit, 500)))}

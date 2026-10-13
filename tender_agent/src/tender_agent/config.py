@@ -65,6 +65,8 @@ class Settings:
     trace_screenshots: str = "errors"
     # База найденных закупок в data_dir/_agent/agent.sqlite3 (storage/tenders.py).
     store_enabled: bool = True
+    # SQLAlchemy URL базы закупок; пусто — SQLite в data_dir/_agent/agent.sqlite3.
+    db_url: str = ""
     data_dir: Path = _REPO_ROOT / "data" / "tenders"
 
     @classmethod
@@ -91,5 +93,6 @@ class Settings:
             trace_enabled=_flag("TENDER_AGENT_TRACE", True),
             trace_screenshots=os.getenv("TENDER_AGENT_TRACE_SCREENSHOTS", "errors"),
             store_enabled=_flag("TENDER_AGENT_STORE", True),
+            db_url=os.getenv("TENDER_AGENT_DB_URL", ""),
             data_dir=data_dir,
         )

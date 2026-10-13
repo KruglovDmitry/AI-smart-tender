@@ -1,6 +1,8 @@
-"""База найденных закупок: всё, что агент вернул в прогонах, в одной SQLite.
+"""База найденных закупок: всё, что агент вернул в прогонах.
 
-Файл тот же, что у профилей площадок: ``data/tenders/_agent/agent.sqlite3``.
+Адрес базы — ``TENDER_AGENT_DB_URL`` (SQLAlchemy URL). В Docker это Postgres из
+сервиса ``postgres`` (его же будет читать дашборд); без переменной — SQLite в
+``data/tenders/_agent/agent.sqlite3`` (CLI, тесты).
 
 Таблицы:
 - ``tenders`` — закупка на площадке. Ключ: площадка + номер, а если номера нет — ссылка.
@@ -13,69 +15,100 @@
 
 from __future__ import annotations
 
-import json
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
+from sqlalchemy import (
+    JSON,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    UniqueConstraint,
+    and_,
+    create_engine,
+    func,
+    insert,
+    or_,
+    select,
+    update,
+)
+from sqlalchemy.engine import Connection, Engine
+
 from ..api.schemas import DownloadRecord, TaskResult, TenderResult
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS tenders (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    platform TEXT NOT NULL,
-    tender_key TEXT NOT NULL,
-    external_id TEXT,
-    url TEXT,
-    title TEXT,
-    customer TEXT,
-    price REAL,
-    currency TEXT,
-    published_at TEXT,
-    deadline TEXT,
-    status TEXT,
-    verification_status TEXT,
-    matched_keyword TEXT,
-    sources TEXT,
-    first_seen TEXT NOT NULL,
-    last_seen TEXT NOT NULL,
-    seen_count INTEGER NOT NULL DEFAULT 1,
-    UNIQUE (platform, tender_key)
-);
-CREATE INDEX IF NOT EXISTS tenders_published ON tenders (platform, published_at);
-CREATE TABLE IF NOT EXISTS tender_documents (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tender_id INTEGER NOT NULL REFERENCES tenders(id),
-    name TEXT,
-    url TEXT NOT NULL,
-    local_path TEXT,
-    size INTEGER,
-    downloaded_at TEXT,
-    UNIQUE (tender_id, url)
-);
-CREATE TABLE IF NOT EXISTS search_runs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    created_at TEXT NOT NULL,
-    platform TEXT,
-    start_url TEXT,
-    query TEXT,
-    task_text TEXT,
-    status TEXT,
-    result_count INTEGER,
-    new_count INTEGER,
-    errors TEXT,
-    stats TEXT,
-    trace_dir TEXT
-);
-CREATE TABLE IF NOT EXISTS run_tenders (
-    run_id INTEGER NOT NULL REFERENCES search_runs(id),
-    tender_id INTEGER NOT NULL REFERENCES tenders(id),
-    position INTEGER NOT NULL,
-    is_new INTEGER NOT NULL,
-    PRIMARY KEY (run_id, tender_id)
-);
-"""
+metadata = MetaData()
+
+tenders = Table(
+    "tenders",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("platform", String(255), nullable=False),
+    Column("tender_key", String(1024), nullable=False),
+    Column("external_id", String(255)),
+    Column("url", Text),
+    Column("title", Text),
+    Column("customer", Text),
+    Column("price", Float),
+    Column("currency", String(16)),
+    Column("published_at", String(10)),  # YYYY-MM-DD, как в ответе агента
+    Column("deadline", String(10)),
+    Column("status", Text),
+    Column("verification_status", String(32)),
+    Column("matched_keyword", String(255)),
+    Column("sources", JSON),
+    Column("first_seen", DateTime(timezone=True), nullable=False),
+    Column("last_seen", DateTime(timezone=True), nullable=False),
+    Column("seen_count", Integer, nullable=False, default=1),
+    UniqueConstraint("platform", "tender_key", name="uq_tenders_platform_key"),
+)
+Index("ix_tenders_platform_published", tenders.c.platform, tenders.c.published_at)
+
+tender_documents = Table(
+    "tender_documents",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("tender_id", Integer, ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False),
+    Column("name", Text),
+    Column("url", Text, nullable=False),
+    Column("local_path", Text),
+    Column("size", Integer),
+    Column("downloaded_at", DateTime(timezone=True)),
+    UniqueConstraint("tender_id", "url", name="uq_documents_tender_url"),
+)
+
+search_runs = Table(
+    "search_runs",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("platform", String(255)),
+    Column("start_url", Text),
+    Column("query", Text),
+    Column("task_text", Text),
+    Column("status", String(32)),
+    Column("result_count", Integer),
+    Column("new_count", Integer),
+    Column("errors", JSON),
+    Column("stats", JSON),
+    Column("trace_dir", Text),
+)
+
+run_tenders = Table(
+    "run_tenders",
+    metadata,
+    Column("run_id", Integer, ForeignKey("search_runs.id", ondelete="CASCADE"), primary_key=True),
+    Column("tender_id", Integer, ForeignKey("tenders.id", ondelete="CASCADE"), primary_key=True),
+    Column("position", Integer, nullable=False),
+    Column("is_new", Integer, nullable=False),
+)
 
 _FIELDS = (
     "external_id", "url", "title", "customer", "price", "currency", "published_at",
@@ -91,35 +124,49 @@ def tender_key(tender: TenderResult) -> str:
     return (tender.id or "").strip() or (tender.url or "").strip()
 
 
-class TenderStore:
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
-            conn.executescript(_SCHEMA)
+def sqlite_url(path: Path) -> str:
+    return f"sqlite:///{path.as_posix()}"
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path)
-        conn.row_factory = sqlite3.Row
-        return conn
+
+_ENGINES: dict[str, Engine] = {}
+
+
+def _engine(url: str) -> Engine:
+    # Один движок на адрес: пул соединений Postgres не пересоздаётся на каждый запрос.
+    if url not in _ENGINES:
+        engine = create_engine(url, pool_pre_ping=True, future=True)
+        metadata.create_all(engine)
+        _ENGINES[url] = engine
+    return _ENGINES[url]
+
+
+class TenderStore:
+    def __init__(self, url: str | Path) -> None:
+        if isinstance(url, Path):
+            url.parent.mkdir(parents=True, exist_ok=True)
+            url = sqlite_url(url)
+        self.url = url
+        self.engine = _engine(url)
 
     # ---------- запись ----------
 
     def save_run(self, text: str, result: TaskResult, trace_dir: str | None = None) -> dict:
-        """Сохраняет закупки и документы прогона. Возвращает {"run_id", "new"} для ответа агента."""
-        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        """Сохраняет закупки и документы прогона. Возвращает {"run_id", "new"}."""
+        now = datetime.now(timezone.utc)
         task = result.task
         start_url = task.url if task else ""
         site = platform_of(start_url)
         new_count = 0
-        with self._connect() as conn:
+        with self.engine.begin() as conn:
             run_id = conn.execute(
-                "INSERT INTO search_runs (created_at, platform, start_url, query, task_text, status, result_count,"
-                " new_count, errors, stats, trace_dir) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
-                (now, site, start_url, (task.keywords[0] if task and task.keywords else None), text, result.status,
-                 len(result.results), json.dumps(result.errors, ensure_ascii=False),
-                 json.dumps(result.stats, ensure_ascii=False), trace_dir),
-            ).lastrowid
+                insert(search_runs).values(
+                    created_at=now, platform=site, start_url=start_url,
+                    query=(task.keywords[0] if task and task.keywords else None), task_text=text,
+                    status=result.status, result_count=len(result.results), new_count=0,
+                    errors=list(result.errors), stats=dict(result.stats), trace_dir=trace_dir,
+                )
+            ).inserted_primary_key[0]
+            seen_ids: set[int] = set()
             for position, tender in enumerate(result.results, start=1):
                 key = tender_key(tender)
                 if not key:
@@ -129,96 +176,94 @@ class TenderStore:
                 if site and (platform == site or platform.endswith("." + site)):
                     platform = site
                 tender_id, is_new = self._upsert(conn, platform, key, tender, now)
+                if tender_id in seen_ids:
+                    continue
+                seen_ids.add(tender_id)
                 new_count += int(is_new)
-                conn.execute(
-                    "INSERT OR REPLACE INTO run_tenders (run_id, tender_id, position, is_new) VALUES (?, ?, ?, ?)",
-                    (run_id, tender_id, position, int(is_new)),
-                )
+                conn.execute(insert(run_tenders).values(run_id=run_id, tender_id=tender_id, position=position,
+                                                        is_new=int(is_new)))
                 names = {doc.get("url"): doc.get("name") for doc in tender.documents}
-                for url in tender.document_urls:
-                    conn.execute(
-                        "INSERT INTO tender_documents (tender_id, name, url) VALUES (?, ?, ?)"
-                        " ON CONFLICT(tender_id, url) DO UPDATE SET name = COALESCE(excluded.name, name)",
-                        (tender_id, names.get(url), url),
-                    )
+                for doc_url in tender.document_urls:
+                    self._upsert_document(conn, tender_id, doc_url, name=names.get(doc_url))
                 for download in result.downloads:
                     if download.status == "saved" and download.tender_url == tender.url:
-                        self._save_download(conn, tender_id, download, now)
-            conn.execute("UPDATE search_runs SET new_count = ? WHERE id = ?", (new_count, run_id))
-        return {"run_id": run_id, "new": new_count}
+                        self._upsert_document(conn, tender_id, download.source_url, name=download.name,
+                                              local_path=download.path, size=download.size, downloaded_at=now)
+            conn.execute(update(search_runs).where(search_runs.c.id == run_id).values(new_count=new_count))
+        return {"run_id": int(run_id), "new": new_count}
 
-    def _upsert(self, conn: sqlite3.Connection, platform: str, key: str, tender: TenderResult, now: str) -> tuple[int, bool]:
-        values = {
-            "external_id": tender.id,
-            "url": tender.url,
-            "title": tender.title,
-            "customer": tender.customer,
-            "price": tender.price,
-            "currency": tender.currency,
-            "published_at": tender.published_at,
-            "deadline": tender.deadline,
-            "status": tender.status,
-            "verification_status": tender.verification_status,
-            "matched_keyword": tender.matched_keyword,
-        }
-        row = conn.execute("SELECT id FROM tenders WHERE platform = ? AND tender_key = ?", (platform, key)).fetchone()
+    def _upsert(self, conn: Connection, platform: str, key: str, tender: TenderResult,
+                now: datetime) -> tuple[int, bool]:
+        values = {field: getattr(tender, "id" if field == "external_id" else field) for field in _FIELDS}
+        row = conn.execute(
+            select(tenders.c.id).where(and_(tenders.c.platform == platform, tenders.c.tender_key == key))
+        ).first()
         if row is None:
-            cursor = conn.execute(
-                f"INSERT INTO tenders (platform, tender_key, {', '.join(_FIELDS)}, sources, first_seen, last_seen)"
-                f" VALUES (?, ?, {', '.join('?' for _ in _FIELDS)}, ?, ?, ?)",
-                (platform, key, *(values[f] for f in _FIELDS), json.dumps(tender.sources, ensure_ascii=False), now, now),
-            )
-            return int(cursor.lastrowid), True
+            new_id = conn.execute(
+                insert(tenders).values(platform=platform, tender_key=key, sources=dict(tender.sources),
+                                       first_seen=now, last_seen=now, seen_count=1, **values)
+            ).inserted_primary_key[0]
+            return int(new_id), True
         # Новое значение заменяет старое, пустое — не затирает.
-        sets = ", ".join(f"{f} = COALESCE(?, {f})" for f in _FIELDS)
+        changes = {field: value for field, value in values.items() if value is not None}
         conn.execute(
-            f"UPDATE tenders SET {sets}, sources = ?, last_seen = ?, seen_count = seen_count + 1 WHERE id = ?",
-            (*(values[f] for f in _FIELDS), json.dumps(tender.sources, ensure_ascii=False), now, row["id"]),
+            update(tenders).where(tenders.c.id == row.id).values(
+                sources=dict(tender.sources), last_seen=now, seen_count=tenders.c.seen_count + 1, **changes
+            )
         )
-        return int(row["id"]), False
+        return int(row.id), False
 
-    def _save_download(self, conn: sqlite3.Connection, tender_id: int, download: DownloadRecord, now: str) -> None:
-        conn.execute(
-            "INSERT INTO tender_documents (tender_id, name, url, local_path, size, downloaded_at) VALUES (?, ?, ?, ?, ?, ?)"
-            " ON CONFLICT(tender_id, url) DO UPDATE SET local_path = excluded.local_path, size = excluded.size,"
-            " downloaded_at = excluded.downloaded_at, name = COALESCE(name, excluded.name)",
-            (tender_id, download.name, download.source_url, download.path, download.size, now),
-        )
-
-    def keys_new_in_run(self, run_id: int) -> list[str]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT t.tender_key FROM run_tenders r JOIN tenders t ON t.id = r.tender_id WHERE r.run_id = ? AND r.is_new = 1",
-                (run_id,),
-            ).fetchall()
-        return [row["tender_key"] for row in rows]
+    def _upsert_document(self, conn: Connection, tender_id: int, url: str, **values) -> None:
+        values = {key: value for key, value in values.items() if value is not None}
+        row = conn.execute(
+            select(tender_documents.c.id, tender_documents.c.name).where(
+                and_(tender_documents.c.tender_id == tender_id, tender_documents.c.url == url)
+            )
+        ).first()
+        if row is None:
+            conn.execute(insert(tender_documents).values(tender_id=tender_id, url=url, **values))
+            return
+        if row.name:
+            # Название со страницы карточки понятнее имени скачанного файла.
+            values.pop("name", None)
+        if values:
+            conn.execute(update(tender_documents).where(tender_documents.c.id == row.id).values(**values))
 
     # ---------- чтение ----------
 
+    def keys_new_in_run(self, run_id: int) -> list[str]:
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                select(tenders.c.tender_key)
+                .join(run_tenders, run_tenders.c.tender_id == tenders.c.id)
+                .where(and_(run_tenders.c.run_id == run_id, run_tenders.c.is_new == 1))
+            ).all()
+        return [row.tender_key for row in rows]
+
     def search(self, *, platform: str | None = None, text: str | None = None, since: str | None = None,
                limit: int = 50) -> list[dict]:
-        where, args = [], []
+        query = select(tenders)
         if platform:
-            where.append("t.platform LIKE ?")
-            args.append(f"%{platform.lower().removeprefix('www.')}%")
+            query = query.where(tenders.c.platform.like(f"%{platform.lower().removeprefix('www.')}%"))
         if text:
-            where.append("(t.title LIKE ? OR t.customer LIKE ? OR t.external_id LIKE ?)")
-            args += [f"%{text}%"] * 3
+            pattern = f"%{text}%"
+            query = query.where(or_(tenders.c.title.ilike(pattern), tenders.c.customer.ilike(pattern),
+                                    tenders.c.external_id.ilike(pattern)))
         if since:
-            where.append("t.first_seen >= ?")
-            args.append(since)
-        sql = (
-            "SELECT t.*, (SELECT json_group_array(json_object('name', d.name, 'url', d.url, 'local_path', d.local_path))"
-            " FROM tender_documents d WHERE d.tender_id = t.id) AS documents FROM tenders t"
-            + (" WHERE " + " AND ".join(where) if where else "")
-            + " ORDER BY COALESCE(t.published_at, substr(t.first_seen, 1, 10)) DESC, t.id DESC LIMIT ?"
-        )
-        with self._connect() as conn:
-            rows = conn.execute(sql, (*args, limit)).fetchall()
-        out = []
+            query = query.where(tenders.c.first_seen >= datetime.fromisoformat(since).replace(tzinfo=timezone.utc))
+        query = query.order_by(func.coalesce(tenders.c.published_at, "").desc(), tenders.c.id.desc()).limit(limit)
+        with self.engine.connect() as conn:
+            rows = [dict(row._mapping) for row in conn.execute(query)]
+            ids = [row["id"] for row in rows]
+            docs: dict[int, list[dict]] = {}
+            if ids:
+                for doc in conn.execute(select(tender_documents).where(tender_documents.c.tender_id.in_(ids))):
+                    docs.setdefault(doc.tender_id, []).append(
+                        {"name": doc.name, "url": doc.url, "local_path": doc.local_path}
+                    )
         for row in rows:
-            item = dict(row)
-            item["sources"] = json.loads(item["sources"] or "{}")
-            item["documents"] = [d for d in json.loads(item["documents"] or "[]") if d.get("url")]
-            out.append(item)
-        return out
+            row["documents"] = docs.get(row["id"], [])
+            for key in ("first_seen", "last_seen"):
+                if isinstance(row[key], datetime):
+                    row[key] = row[key].isoformat()
+        return rows

@@ -27,6 +27,15 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 app = FastAPI(title="TENAG Dashboard", version="1.0.0")
 
 
+@app.middleware("http")
+async def no_stale_ui(request, call_next):
+    """Страница и статика всегда перепроверяются: иначе после обновления браузер держит старый app.js."""
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 class PlatformRunBody(BaseModel):
     platform_url: str
     keywords: str

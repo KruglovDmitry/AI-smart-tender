@@ -18,6 +18,7 @@ from ..api.schemas import TaskSpec
 from ..browser.runtime import BrowserRuntime
 from ..config import Settings
 from ..observability.logging import get_logger
+from ..observability.trace import current_trace
 
 log = get_logger()
 
@@ -61,6 +62,9 @@ async def run_vision_step(runtime: BrowserRuntime, settings: Settings, task: Tas
         return VisionOutcome(False, "ai_vision не установлен")
     av_settings = load_settings()
     av_settings.headless = settings.headless
+    trace = current_trace.get()
+    if trace is not None:
+        av_settings.runs_dir = trace.vision_dir()
     agent = VisionAgent(av_settings, mode="planner", extract=False)
     goal = vision_goal(task, reason, keyword_applied)
     log.info("vision step: %s", reason)

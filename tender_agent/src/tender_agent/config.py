@@ -60,6 +60,9 @@ class Settings:
     vision_enabled: bool = False
     vision_max_calls: int = 2
     vision_max_steps: int = 10
+    # Трейс прогона: data_dir/_agent/runs/… (см. observability/trace.py).
+    trace_enabled: bool = True
+    trace_screenshots: str = "errors"
     data_dir: Path = _REPO_ROOT / "data" / "tenders"
 
     @classmethod
@@ -83,5 +86,7 @@ class Settings:
             vision_enabled=_flag("TENDER_AGENT_VISION_ENABLED", False),
             vision_max_calls=int(os.getenv("TENDER_AGENT_VISION_MAX_CALLS", "2")),
             vision_max_steps=int(os.getenv("TENDER_AGENT_VISION_MAX_STEPS", "10")),
+            trace_enabled=_flag("TENDER_AGENT_TRACE", True),
+            trace_screenshots=os.getenv("TENDER_AGENT_TRACE_SCREENSHOTS", "errors"),
             data_dir=data_dir,
         )

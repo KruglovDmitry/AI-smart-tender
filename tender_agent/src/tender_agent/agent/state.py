@@ -41,6 +41,7 @@ class Progress:
     llm_calls: int = 0
     card_reads: int = 0
     vision_calls: int = 0
+    last_vision: dict | None = None
     failures: dict[str, int] = field(default_factory=dict)
     visited: list[str] = field(default_factory=list)
     profile_rejected: bool = False

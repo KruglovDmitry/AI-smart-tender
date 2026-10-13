@@ -58,6 +58,11 @@ def _settings() -> Settings:
         max_pages=int(os.getenv("TENDER_AGENT_MAX_PAGES", "5")),
         max_downloads=int(os.getenv("TENDER_AGENT_MAX_DOWNLOADS", "20")),
         max_download_bytes=int(os.getenv("TENDER_AGENT_MAX_DOWNLOAD_BYTES", "20000000")),
+        vision_enabled=_flag("TENDER_AGENT_VISION_ENABLED", False),
+        vision_max_calls=int(os.getenv("TENDER_AGENT_VISION_MAX_CALLS", "2")),
+        vision_max_steps=int(os.getenv("TENDER_AGENT_VISION_MAX_STEPS", "10")),
+        trace_enabled=_flag("TENDER_AGENT_TRACE", True),
+        trace_screenshots=os.getenv("TENDER_AGENT_TRACE_SCREENSHOTS", "errors"),
     )
 
 

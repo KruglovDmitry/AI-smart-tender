@@ -13,6 +13,7 @@ from ..browser.verification import page_changed
 from ..config import Settings
 from ..llm.base import LLMClient
 from ..observability.logging import get_logger
+from ..observability.trace import current_trace
 from ..sites.profiles import remember_success
 from ..storage.repository import Repository, profile_is_fresh
 from ..tenders.discovery import inspect_element, pick_documents_tab
@@ -113,6 +114,41 @@ def _absorb(obs: Observation, task_keyword: str, keyword_applied: bool, sort_req
     return found
 
 
+def _element_brief(obs: Observation, ref: int | None) -> dict | None:
+    if ref is None:
+        return None
+    for el in obs.elements:
+        if el.ref == ref:
+            return {"ref": ref, "tag": el.tag, "name": (el.name or el.placeholder or "")[:80], "href": (el.href or "")[:120]}
+    return {"ref": ref, "missing": True}
+
+
+def _observation_record(obs: Observation, progress: Progress) -> dict:
+    return {
+        "phase": "loop",
+        "url": obs.url,
+        "page_kind": obs.page_kind,
+        "signature": obs.signature,
+        "title": obs.title[:120],
+        "elements": len(obs.elements),
+        "cards": len(obs.cards),
+        "card_titles": [card.title[:60] for card in obs.cards[:5]],
+        "fields": len(obs.fields),
+        "content_chars": len(obs.content_text),
+        "search": _element_brief(obs, obs.search_ref),
+        "submit": _element_brief(obs, obs.submit_ref),
+        "sort": _element_brief(obs, obs.sort_ref),
+        "next": _element_brief(obs, obs.next_ref),
+        "flags": {"keyword_applied": progress.keyword_applied, "sort_applied": progress.sort_applied,
+                  "pages": progress.pages, "accepted": progress.accepted},
+    }
+
+
+def _action_record(action: Action, obs: Observation) -> dict:
+    return {"tool": action.tool, "target": _element_brief(obs, action.element_ref), "value": action.value,
+            "submit": _element_brief(obs, action.submit_ref), "note": action.note, "expected": action.expected}
+
+
 async def _try_vision(runtime: BrowserRuntime, settings: Settings, task, progress: Progress,
                       reason: str, errors: list[str]) -> tuple[bool, float]:
     """Один vision-шаг, если он включён и не исчерпан. Возвращает (помог ли, сколько секунд занял)."""
@@ -121,7 +157,10 @@ async def _try_vision(runtime: BrowserRuntime, settings: Settings, task, progres
     progress.vision_calls += 1
     progress.failures.clear()
     outcome = await run_vision_step(runtime, settings, task, reason, progress.keyword_applied)
-    errors.append(outcome.note)
+    errors.append(outcome.note[:300])
+    # Попадёт в запись того шага цикла, который вызвал зрение.
+    progress.last_vision = {"reason": reason, "ok": outcome.ok, "note": outcome.note,
+                            "seconds": round(outcome.seconds, 1), "trace": outcome.trace_dir}
     if outcome.ok:
         # Цель vision-шага — выдача по запросу (и сортировка, если её просили): дальше её не повторяем.
         progress.keyword_applied = True
@@ -165,7 +204,14 @@ async def _open_cards(
                 except Exception as exc:
                     errors.append(f"Модель не прочитала карточку: {exc}")
             updated, refs = apply_page_reading(tender, obs, reading)
-            if task.download_documents and not refs:
+            card_trace = current_trace.get()
+            if card_trace is not None:
+                card_trace.log_step({
+                    "phase": "card", "url": obs.url, "page_kind": obs.page_kind, "fields": len(obs.fields),
+                    "content_chars": len(obs.content_text), "model_used": reading is not None,
+                    "result": {k: getattr(updated, k) for k in ("customer", "published_at", "deadline", "price", "status")},
+                    "sources": updated.sources, "document_refs": refs,
+                })
                 tab = pick_documents_tab(obs.elements)
                 if tab is not None and progress.actions < task.max_actions:
                     await _act(
@@ -188,6 +234,10 @@ async def _open_cards(
         except Exception as exc:
             errors.append(str(exc))
             opened.append(tender)
+            card_trace = current_trace.get()
+            if card_trace is not None:
+                card_trace.log_step({"phase": "card", "url": tender.url, "error": f"{type(exc).__name__}: {exc}"})
+                await card_trace.snapshot(runtime.current_page, error=True)
     return opened, saved
 
 
@@ -200,10 +250,13 @@ async def execute(
     llm: LLMClient | None = None,
 ) -> TaskResult:
     started = time.monotonic()
+    trace = current_trace.get()
     try:
         task = parse_task(text, settings)
     except TaskParseError as exc:
         return TaskResult(status="failed", errors=[str(exc)])
+    if trace is not None:
+        trace.task(task)
     ok, reason = validate_navigation_url(task.url, settings)
     if not ok:
         return TaskResult(status="failed", task=task, errors=[reason])
@@ -226,105 +279,130 @@ async def execute(
     progress.visited.append(task.url)
 
     while progress.actions < task.max_actions and (time.monotonic() - started) < task.timeout_seconds:
-        progress.phase = "observing"
-        last_obs = await get_page_state(runtime, (profile.search_placeholder if profile else "") or progress.search_placeholder or None)
-        if last_obs.url not in progress.visited:
-            progress.visited.append(last_obs.url)
-        if profile and not profile_checked and profile.card_selector and last_obs.page_kind == "tender_list":
-            count = await runtime.current_page.locator(profile.card_selector).count()
-            profile_checked = True
-            if not profile_is_fresh(last_obs.page_kind, count):
-                repo.add_error(host)
-                progress.profile_rejected = True
-                profile = None
-        _sync_flags(last_obs, progress, keyword, bool(task.sort_by))
-        progress.phase = "planning"
-        action = decide(last_obs, progress, task)
-        if action.tool == "consult_llm":
-            if progress.llm_calls >= settings.max_llm_calls:
-                errors.append("Исчерпан лимит вызовов модели.")
-                break
-            progress.llm_calls += 1
-            try:
-                suggested = await consult(llm, task, last_obs)
-            except Exception as exc:
-                errors.append(f"Модель не выбрала действие: {exc}")
-                suggested = None
-            if suggested is None:
-                helped, spent = await _try_vision(
-                    runtime, settings, task, progress, "незнакомая страница, DOM-правила и модель не нашли действие", errors)
-                started += spent  # время vision-шага не съедает бюджет DOM-агента
-                if helped:
-                    continue
-                errors.append("Для незнакомой страницы нет правила и нет ответа модели.")
-                break
-            action = suggested
-        if action.tool == "ask_user":
-            progress.phase = "needs_user"
-            errors.append("Нужен вход или проверка человека. Обход не выполняется.")
-            break
-        if action.tool == "finish":
-            if action.note and action.expected == "error":
-                errors.append(f"Страница ошибки: {action.note}")
-            elif not collected:
-                # DOM-агент сдаётся, ничего не собрав: даём шанс зрению найти поиск или выдачу.
-                helped, spent = await _try_vision(
-                    runtime, settings, task, progress, "DOM-агент не нашёл поиск или выдачу закупок", errors)
-                started += spent
-                if helped:
-                    continue
-            break
-        if should_stop_repeat(progress, action, last_obs.signature, settings.max_retries):
-            helped, spent = await _try_vision(
-                runtime, settings, task, progress, f"действие {action.tool} повторяется без изменения страницы", errors)
-            started += spent
-            if helped:
-                continue
-            errors.append("Одно и то же действие повторяется без изменения страницы.")
-            break
-        progress.phase = "executing"
-        log.info("action %s url=%s", action.tool, last_obs.url.split("?")[0])
+        step_rec: dict | None = None
+        step_error = False
         try:
-            if action.tool == "extract":
-                progress.phase = "extracting"
-                batch = _absorb(last_obs, keyword, progress.keyword_applied, bool(task.sort_by))
-                collected.extend(batch)
-                progress.accepted = len(rank_tenders(collected, sort_by=task.sort_by, limit=10_000))
-                progress.extracted.append(last_obs.signature)
-                progress.pages = max(progress.pages, 1)
-                search = inspect_element(last_obs, last_obs.search_ref)
-                if search and search.placeholder:
-                    progress.search_placeholder = search.placeholder
-            else:
-                await _act(runtime, action, settings, host)
-                after = await get_page_state(runtime, progress.search_placeholder or None)
-                progress.phase = "verifying"
-                if action.expected == "changed" and not page_changed(last_obs, after):
-                    raise RuntimeError("Страница не изменилась.")
-                if action.tool == "fill":
-                    titles = lambda obs: [card.title for card in obs.cards[:8]]  # noqa: E731
-                    if after.url == last_obs.url and titles(after) == titles(last_obs):
-                        raise RuntimeError("Поиск не применился: адрес и выдача не изменились.")
-                    progress.keyword_applied = True
-                if action.note == "sort":
-                    progress.sort_applied = True
-                    progress.site_sort_used = True
-                if action.note == "next":
-                    progress.pages += 1
-            progress.actions += 1
-            clear_failure(progress, action, last_obs.signature)
-        except Exception as exc:
-            progress.actions += 1
-            note_failure(progress, action, last_obs.signature)
-            errors.append(str(exc))
+            progress.phase = "observing"
+            last_obs = await get_page_state(runtime, (profile.search_placeholder if profile else "") or progress.search_placeholder or None)
+            if last_obs.url not in progress.visited:
+                progress.visited.append(last_obs.url)
+            if profile and not profile_checked and profile.card_selector and last_obs.page_kind == "tender_list":
+                count = await runtime.current_page.locator(profile.card_selector).count()
+                profile_checked = True
+                if not profile_is_fresh(last_obs.page_kind, count):
+                    repo.add_error(host)
+                    progress.profile_rejected = True
+                    profile = None
+            _sync_flags(last_obs, progress, keyword, bool(task.sort_by))
+            step_rec = _observation_record(last_obs, progress)
+            progress.phase = "planning"
+            action = decide(last_obs, progress, task)
+            step_rec["rule"] = _action_record(action, last_obs)
+            if action.tool == "consult_llm":
+                if progress.llm_calls >= settings.max_llm_calls:
+                    errors.append("Исчерпан лимит вызовов модели.")
+                    break
+                progress.llm_calls += 1
+                try:
+                    suggested = await consult(llm, task, last_obs)
+                except Exception as exc:
+                    errors.append(f"Модель не выбрала действие: {exc}")
+                    suggested = None
+                if suggested is None:
+                    step_rec["outcome"] = "no_action"
+                    helped, spent = await _try_vision(
+                        runtime, settings, task, progress, "незнакомая страница, DOM-правила и модель не нашли действие", errors)
+                    started += spent  # время vision-шага не съедает бюджет DOM-агента
+                    if helped:
+                        continue
+                    errors.append("Для незнакомой страницы нет правила и нет ответа модели.")
+                    break
+                action = suggested
+            step_rec["action"] = _action_record(action, last_obs)
+            if action.tool == "ask_user":
+                step_rec["outcome"] = "needs_user"
+                progress.phase = "needs_user"
+                errors.append("Нужен вход или проверка человека. Обход не выполняется.")
+                break
+            if action.tool == "finish":
+                step_rec["outcome"] = "finish"
+                if action.note and action.expected == "error":
+                    errors.append(f"Страница ошибки: {action.note}")
+                elif not collected:
+                    # DOM-агент сдаётся, ничего не собрав: даём шанс зрению найти поиск или выдачу.
+                    helped, spent = await _try_vision(
+                        runtime, settings, task, progress, "DOM-агент не нашёл поиск или выдачу закупок", errors)
+                    started += spent
+                    if helped:
+                        continue
+                break
             if should_stop_repeat(progress, action, last_obs.signature, settings.max_retries):
+                step_rec["outcome"] = "repeat_stop"
+                step_error = True
                 helped, spent = await _try_vision(
-                    runtime, settings, task, progress, f"действие {action.tool} не удалось: {exc}", errors)
+                    runtime, settings, task, progress, f"действие {action.tool} повторяется без изменения страницы", errors)
                 started += spent
                 if helped:
                     continue
-                errors.append("Повтор неудачного действия остановлен.")
+                errors.append("Одно и то же действие повторяется без изменения страницы.")
                 break
+            progress.phase = "executing"
+            log.info("action %s url=%s", action.tool, last_obs.url.split("?")[0])
+            try:
+                if action.tool == "extract":
+                    progress.phase = "extracting"
+                    batch = _absorb(last_obs, keyword, progress.keyword_applied, bool(task.sort_by))
+                    collected.extend(batch)
+                    progress.accepted = len(rank_tenders(collected, sort_by=task.sort_by, limit=10_000))
+                    progress.extracted.append(last_obs.signature)
+                    step_rec["extracted"] = [{"id": t.id, "title": t.title[:80], "url": t.url,
+                                              "status": t.verification_status} for t in batch]
+                    progress.pages = max(progress.pages, 1)
+                    search = inspect_element(last_obs, last_obs.search_ref)
+                    if search and search.placeholder:
+                        progress.search_placeholder = search.placeholder
+                else:
+                    await _act(runtime, action, settings, host)
+                    after = await get_page_state(runtime, progress.search_placeholder or None)
+                    progress.phase = "verifying"
+                    if action.expected == "changed" and not page_changed(last_obs, after):
+                        raise RuntimeError("Страница не изменилась.")
+                    if action.tool == "fill":
+                        titles = lambda obs: [card.title for card in obs.cards[:8]]  # noqa: E731
+                        if after.url == last_obs.url and titles(after) == titles(last_obs):
+                            raise RuntimeError("Поиск не применился: адрес и выдача не изменились.")
+                        progress.keyword_applied = True
+                    if action.note == "sort":
+                        progress.sort_applied = True
+                        progress.site_sort_used = True
+                    if action.note == "next":
+                        progress.pages += 1
+                progress.actions += 1
+                clear_failure(progress, action, last_obs.signature)
+                step_rec["outcome"] = step_rec.get("outcome") or "ok"
+            except Exception as exc:
+                progress.actions += 1
+                note_failure(progress, action, last_obs.signature)
+                errors.append(str(exc))
+                step_rec["outcome"] = "error"
+                step_rec["error"] = f"{type(exc).__name__}: {exc}"
+                step_error = True
+                if should_stop_repeat(progress, action, last_obs.signature, settings.max_retries):
+                    helped, spent = await _try_vision(
+                        runtime, settings, task, progress, f"действие {action.tool} не удалось: {exc}", errors)
+                    started += spent
+                    if helped:
+                        continue
+                    errors.append("Повтор неудачного действия остановлен.")
+                    break
+        finally:
+            if step_rec is not None and progress.last_vision:
+                step_rec["vision"] = progress.last_vision
+            progress.last_vision = None
+            if trace is not None and step_rec is not None:
+                trace.log_step(step_rec)
+                await trace.snapshot(runtime.current_page, error=step_error,
+                                     text=last_obs.content_text if last_obs else "")
     else:
         if progress.actions >= task.max_actions:
             errors.append("Исчерпан лимит действий.")

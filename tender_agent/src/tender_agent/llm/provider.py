@@ -6,6 +6,7 @@ import re
 import httpx
 
 from ..config import Settings
+from ..observability.trace import current_trace
 
 _SYSTEM = (
     "Ты выбираешь одно следующее действие браузера для поиска закупок. "
@@ -41,10 +42,23 @@ class OpenAICompatibleClient:
         return bool(self.settings.llm_base_url and self.settings.llm_api_key and self.settings.llm_model)
 
     async def decide(self, task: dict, observation: dict) -> dict:
-        return await self._complete(_SYSTEM, task, observation)
+        return await self._traced("decide", _SYSTEM, task, observation)
 
     async def read_card(self, task: dict, observation: dict) -> dict:
-        return await self._complete(_CARD_SYSTEM, task, observation)
+        return await self._traced("read_card", _CARD_SYSTEM, task, observation)
+
+    async def _traced(self, kind: str, system: str, task: dict, observation: dict) -> dict:
+        trace = current_trace.get()
+        self._last_raw = ""
+        try:
+            data = await self._complete(system, task, observation)
+        except Exception as exc:
+            if trace is not None:
+                trace.log_llm(kind, observation, self._last_raw, f"{type(exc).__name__}: {exc}")
+            raise
+        if trace is not None:
+            trace.log_llm(kind, observation, self._last_raw)
+        return data
 
     async def _complete(self, system: str, task: dict, observation: dict) -> dict:
         if not self.configured:
@@ -68,6 +82,7 @@ class OpenAICompatibleClient:
             )
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]
+            self._last_raw = content
         match = re.search(r"\{.*\}", content, re.S)
         if not match:
             raise RuntimeError("Модель не вернула JSON.")

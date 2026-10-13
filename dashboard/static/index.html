@@ -15,133 +15,168 @@
       <div class="t2">ТЕНАГ<br>Тендерный агент</div>
     </div>
     <nav class="nav">
-      <button type="button" class="it active" data-panel="dashboard">▦ Dashboard</button>
-      <button type="button" class="it" data-panel="run">▶ Запуск мониторинга</button>
-      <button type="button" class="it" data-panel="tenders">📥 Скачанные тендеры</button>
+      <button type="button" class="it active" data-panel="dashboard">▦ Сводка</button>
+      <button type="button" class="it" data-panel="tenders">📋 Закупки</button>
+      <button type="button" class="it" data-panel="runs">🕘 Прогоны</button>
+      <button type="button" class="it" data-panel="run">▶ Поиск на площадке</button>
       <button type="button" class="it" data-panel="status">⚙ Статус системы</button>
     </nav>
     <div class="user">
       <div class="av">Т</div>
-      <div><div class="un">ТЕНАГ</div><div class="up">Мониторинг · v1</div></div>
+      <div><div class="un">ТЕНАГ</div><div class="up">База закупок · v2</div></div>
     </div>
   </aside>
 
   <main class="main">
     <div class="head">
       <div>
-        <h1 id="page-title">Dashboard</h1>
-        <div class="sub" id="page-sub">Реальные данные с диска и tools-server</div>
+        <h1 id="page-title">Сводка</h1>
+        <div class="sub" id="page-sub">Найденные закупки из базы tender-agent</div>
       </div>
       <div class="quick">
-        <button type="button" class="qb cyan" data-goto="run">▶ Мониторинг площадки</button>
-        <button type="button" class="qb orange" data-goto="run-card">📄 Одна карточка</button>
+        <button type="button" class="qb cyan" data-goto="run">▶ Новый поиск</button>
+        <button type="button" class="qb orange" data-goto="tenders-new">✦ Новые за неделю</button>
         <button type="button" class="qb" id="btn-refresh">↻ Обновить</button>
       </div>
     </div>
 
-    <!-- Дашборд -->
+    <div class="banner" id="db-banner"></div>
+
+    <!-- Сводка -->
     <section class="panel active" id="panel-dashboard">
       <div class="kpis">
         <div class="kpi">
-          <div class="top"><div class="ic b">📁</div><div class="lb">Скачанные тендеры</div></div>
-          <div class="val" id="kpi-tenders">—</div>
-          <div class="dl" id="kpi-tenders-hint">папки в /data/tenders</div>
+          <div class="top"><div class="ic b">📋</div><div class="lb">Закупок в базе</div></div>
+          <div class="val" id="kpi-total">—</div>
+          <div class="dl" id="kpi-platforms">—</div>
         </div>
         <div class="kpi">
-          <div class="top"><div class="ic p">📄</div><div class="lb">Файлы документов</div></div>
-          <div class="val" id="kpi-files">—</div>
-          <div class="dl">без manifest.json</div>
+          <div class="top"><div class="ic g">✦</div><div class="lb">Новых сегодня</div></div>
+          <div class="val" id="kpi-today">—</div>
+          <div class="dl">впервые найдены с 00:00 UTC</div>
         </div>
         <div class="kpi">
-          <div class="top"><div class="ic g">🤖</div><div class="lb">Agent LLM</div></div>
-          <div class="val" id="kpi-llm" style="font-size:22px">—</div>
-          <div class="dl" id="kpi-llm-hint">agent_llm_configured</div>
+          <div class="top"><div class="ic p">📅</div><div class="lb">Новых за 7 дней</div></div>
+          <div class="val" id="kpi-week">—</div>
+          <div class="dl" id="kpi-runs">—</div>
         </div>
         <div class="kpi">
-          <div class="top"><div class="ic o">👁</div><div class="lb">Seen tenders</div></div>
-          <div class="val" id="kpi-seen">—</div>
-          <div class="dl">записи в sqlite</div>
+          <div class="top"><div class="ic o">🤖</div><div class="lb">Агент</div></div>
+          <div class="val" id="kpi-agent" style="font-size:22px">—</div>
+          <div class="dl" id="kpi-agent-hint">—</div>
         </div>
       </div>
 
       <div class="row2">
         <div class="card" style="margin-bottom:0">
-          <h3>Скачанные тендеры <span class="sm" id="tenders-updated">—</span></h3>
-          <div class="thead">
-            <span>Площадка</span><span>ID</span><span>Файлов</span><span>Путь</span><span>Дата</span>
+          <h3>Площадки <span class="sm">по базе</span></h3>
+          <div class="thead t-platforms">
+            <span>Площадка</span><span>Закупок</span><span>Новых 7д</span><span>Последний прогон</span><span>Итог</span>
           </div>
-          <div id="tenders-preview"></div>
+          <div id="platforms-list"></div>
         </div>
         <div class="card" style="margin-bottom:0">
-          <h3>Активность <span class="sm">логи агента</span></h3>
-          <div id="activity-list"></div>
+          <h3>Последние прогоны <span class="sm"><a href="#" data-goto="runs">все</a></span></h3>
+          <div id="recent-runs"></div>
         </div>
+      </div>
+    </section>
+
+    <!-- Закупки -->
+    <section class="panel" id="panel-tenders">
+      <div class="card">
+        <form class="filters" id="filters">
+          <div class="field"><label for="f-q">Текст</label>
+            <input id="f-q" placeholder="название, заказчик или номер"></div>
+          <div class="field"><label for="f-platform">Площадка</label>
+            <select id="f-platform"><option value="">все</option></select></div>
+          <div class="field"><label for="f-new">Новые</label>
+            <select id="f-new">
+              <option value="">все</option><option value="1">за сутки</option>
+              <option value="7">за 7 дней</option><option value="30">за 30 дней</option>
+            </select></div>
+          <div class="field"><label for="f-from">Опубликованы с</label><input id="f-from" type="date"></div>
+          <div class="field"><label for="f-to">по</label><input id="f-to" type="date"></div>
+          <div class="field"><label for="f-min">Цена от, ₽</label><input id="f-min" type="number" min="0" step="1000"></div>
+          <div class="field"><label for="f-max">до, ₽</label><input id="f-max" type="number" min="0" step="1000"></div>
+          <div class="field"><label for="f-sort">Сортировка</label>
+            <select id="f-sort">
+              <option value="published">дата публикации</option>
+              <option value="first_seen">когда найдена</option>
+              <option value="deadline">срок подачи</option>
+              <option value="price">цена</option>
+            </select></div>
+          <label class="check"><input type="checkbox" id="f-verified"> только подтверждённые</label>
+          <div class="form-actions">
+            <button type="submit" class="btn primary">Показать</button>
+            <button type="button" class="btn secondary" id="f-reset">Сбросить</button>
+          </div>
+        </form>
+      </div>
+      <div class="card">
+        <h3>Закупки <span class="sm" id="tenders-count">—</span></h3>
+        <div class="thead t-tenders">
+          <span>Опубликована</span><span>Площадка</span><span>Номер</span><span>Предмет закупки</span>
+          <span>Заказчик</span><span>Цена</span><span>Подача до</span>
+        </div>
+        <div id="tenders-list"></div>
+        <div class="pager">
+          <button type="button" class="btn secondary" id="pg-prev">← Назад</button>
+          <span id="pg-info">—</span>
+          <button type="button" class="btn secondary" id="pg-next">Вперёд →</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Прогоны -->
+    <section class="panel" id="panel-runs">
+      <div class="card">
+        <h3>Прогоны агента <span class="sm" id="runs-count">—</span></h3>
+        <div class="thead t-runs">
+          <span>Время</span><span>Площадка</span><span>Запрос</span><span>Итог</span><span>Найдено / новых</span><span>Ошибки и трейс</span>
+        </div>
+        <div id="runs-list"></div>
       </div>
     </section>
 
     <!-- Запуск -->
     <section class="panel" id="panel-run">
       <div class="card">
-        <h3>Мониторинг площадки</h3>
+        <h3>Поиск на площадке</h3>
         <form class="form-grid" id="form-platform">
           <div class="field">
             <label for="platform_url">Площадка</label>
-            <select id="platform_url" name="platform_url">
+            <select id="platform_url">
               <option value="https://zakupki.gov.ru/">ЕИС — zakupki.gov.ru</option>
+              <option value="https://www.roseltorg.ru/">Росэлторг — roseltorg.ru</option>
+              <option value="https://www.sberbank-ast.ru/">Сбер-АСТ — sberbank-ast.ru</option>
+              <option value="https://www.tektorg.ru/">ТЭК-Торг — tektorg.ru</option>
+              <option value="https://www.fabrikant.ru/">Фабрикант — fabrikant.ru</option>
+              <option value="https://etpgpb.ru/">ЭТП ГПБ — etpgpb.ru</option>
+              <option value="https://zakupki.mos.ru/purchase/list">Портал поставщиков — zakupki.mos.ru</option>
+              <option value="https://www.b2b-center.ru/market/">B2B-Center — b2b-center.ru</option>
+              <option value="custom">Другая площадка…</option>
             </select>
           </div>
-          <div class="field">
-            <label for="keywords">Ключевые слова</label>
-            <input id="keywords" name="keywords" required placeholder="например: канцтовары">
+          <div class="field" id="custom-url-field" hidden>
+            <label for="custom_url">Адрес площадки</label>
+            <input id="custom_url" placeholder="https://…">
           </div>
           <div class="field">
-            <label for="max_new_tenders">Макс. новых тендеров</label>
-            <input id="max_new_tenders" name="max_new_tenders" type="number" min="1" max="50" value="2">
+            <label for="keywords">Ключевое слово</label>
+            <input id="keywords" required placeholder="например: сервер">
           </div>
           <div class="field">
-            <label for="download_subdir">Подпапка загрузки (опционально)</label>
-            <input id="download_subdir" name="download_subdir" placeholder="например: zakupki_gov_ru">
+            <label for="max_new_tenders">Сколько последних закупок</label>
+            <input id="max_new_tenders" type="number" min="1" max="50" value="5">
           </div>
+          <label class="check"><input type="checkbox" id="download_documents"> скачать документы закупок</label>
           <div class="form-actions">
-            <button type="submit" class="btn primary" id="btn-platform">▶ Запустить мониторинг</button>
+            <button type="submit" class="btn primary" id="btn-platform">▶ Найти</button>
           </div>
-          <p class="hint">Запрос синхронный и может занять несколько минут. Не закрывайте вкладку.</p>
+          <p class="hint">Поиск занимает от одной до нескольких минут. Найденное сразу попадает в базу и видно во вкладке «Закупки».</p>
           <div class="status-box" id="platform-status"></div>
         </form>
-      </div>
-
-      <div class="card" id="run-card">
-        <h3>Одна карточка</h3>
-        <form class="form-grid" id="form-tender">
-          <div class="field">
-            <label for="tender_url">URL карточки тендера</label>
-            <input id="tender_url" name="tender_url" required placeholder="https://…">
-          </div>
-          <div class="field">
-            <label for="max_files">Макс. файлов</label>
-            <input id="max_files" name="max_files" type="number" min="1" max="30" value="5">
-          </div>
-          <div class="field">
-            <label for="tender_subdir">Подпапка загрузки (опционально)</label>
-            <input id="tender_subdir" name="download_subdir" placeholder="">
-          </div>
-          <div class="form-actions">
-            <button type="submit" class="btn orange" id="btn-tender">📄 Скачать документы</button>
-          </div>
-          <p class="hint">Проксирует POST /run_tender_download на tools-server.</p>
-          <div class="status-box" id="tender-status"></div>
-        </form>
-      </div>
-    </section>
-
-    <!-- Тендеры -->
-    <section class="panel" id="panel-tenders">
-      <div class="card">
-        <h3>Все скачанные тендеры <span class="sm" id="tenders-full-count">0</span></h3>
-        <div class="thead">
-          <span>Площадка</span><span>ID</span><span>Файлов</span><span>Путь</span><span>Дата</span>
-        </div>
-        <div id="tenders-full"></div>
       </div>
     </section>
 
@@ -153,8 +188,15 @@
       </div>
     </section>
 
-    <footer>ТЕНАГ · Тендерный Агент · дашборд v1 · чат Open WebUI отдельно</footer>
+    <footer>ТЕНАГ · Тендерный Агент · дашборд v2 · данные из базы tender-agent (Postgres)</footer>
   </main>
+</div>
+
+<div class="drawer" id="drawer" hidden>
+  <div class="drawer-body">
+    <button type="button" class="drawer-close" id="drawer-close" aria-label="Закрыть">×</button>
+    <div id="drawer-content"></div>
+  </div>
 </div>
 <script src="/static/app.js"></script>
 </body>

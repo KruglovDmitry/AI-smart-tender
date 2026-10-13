@@ -43,7 +43,8 @@ def search_applied(obs: Observation, keyword: str) -> bool:
         return True
     if stem in unquote(obs.url).casefold():
         return True
-    hits = sum(1 for card in obs.cards if stem in (card.title or "").casefold())
+    # Смотрим и текст блока: на Сбер-АСТ в названии часто тип процедуры, а предмет — ниже.
+    hits = sum(1 for card in obs.cards if stem in f"{card.title or ''} {card.block_text or ''}".casefold())
     return hits * 3 >= len(obs.cards)
 
 

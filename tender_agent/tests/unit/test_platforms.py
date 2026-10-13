@@ -59,3 +59,9 @@ def test_submit_prefers_exact_find_over_advanced_search() -> None:
 def test_known_search_url() -> None:
     assert search_url("https://www.tektorg.ru/procedures", "сервер") == "https://www.tektorg.ru/procedures?name=%D1%81%D0%B5%D1%80%D0%B2%D0%B5%D1%80"
     assert search_url("https://example.com/", "сервер") is None
+
+
+def test_search_applied_uses_block_text() -> None:
+    cards = [RawCard(title="Электронный открытый аукцион", href=f"https://x.ru/{i}", block_text=f"№ {i}\nПоставка сервера")
+             for i in range(4)]
+    assert search_applied(Observation(url="https://www.sberbank-ast.ru/UnitedPurchaseList.html", cards=cards), "сервер")

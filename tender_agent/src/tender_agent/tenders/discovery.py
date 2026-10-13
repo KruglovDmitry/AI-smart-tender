@@ -3,7 +3,17 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-from ..sites.generic import CARD_HREF_RE, FILE_RE, NEXT_RE, SEARCH_RE, SECTION_RE, SORT_RE, SUBMIT_RE
+from ..sites.generic import (
+    CARD_HREF_RE,
+    FILE_RE,
+    NEXT_RE,
+    SEARCH_RE,
+    SECTION_RE,
+    SORT_MENU_RE,
+    SORT_RE,
+    SORT_WRONG_RE,
+    SUBMIT_RE,
+)
 from .models import Element, Observation, RawCard
 
 
@@ -57,7 +67,15 @@ def pick_submit(elements: list[Element], search: Element | None) -> Element | No
 
 def pick_sort(elements: list[Element]) -> Element | None:
     for el in elements:
-        if SORT_RE.search(_blob(el)):
+        blob = _blob(el)
+        if SORT_RE.search(blob) and not SORT_WRONG_RE.search(blob):
+            return el
+    return None
+
+
+def pick_sort_menu(elements: list[Element]) -> Element | None:
+    for el in elements:
+        if SORT_MENU_RE.search(_blob(el)) and el.tag in {"button", "a", "select"} | {"input"}:
             return el
     return None
 
@@ -123,6 +141,10 @@ def fallback_cards(elements: list[Element], page_url: str = "") -> list[RawCard]
         if el.download or FILE_RE.search(href):
             continue
         path = urlparse(href).path or ""
+        if re.search(r"/(?:favorites?|izbrannoe|login|auth|register)(?:/|$)", path, re.I) or re.fullmatch(
+            r"избранное|войти|регистрация|просмотр|подробнее", title, re.I
+        ):
+            continue
         query = urlparse(href).query
         if re.search(r"/search(?:/|$)", path, re.I) or "tags[" in query:
             continue
@@ -145,6 +167,8 @@ def bind_controls(obs: Observation, preferred_placeholder: str | None = None) ->
     obs.submit_ref = submit.ref if submit else None
     sort = pick_sort(obs.elements)
     obs.sort_ref = sort.ref if sort else None
+    menu = pick_sort_menu(obs.elements) if sort is None else None
+    obs.sort_menu_ref = menu.ref if menu else None
     nxt = pick_next(obs.elements)
     obs.next_ref = nxt.ref if nxt else None
     obs.file_refs = file_refs(obs.elements)

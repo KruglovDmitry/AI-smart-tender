@@ -24,9 +24,26 @@ from .planner import TaskParseError, consult, parse_task, read_card
 from .policy import decide
 from .recovery import clear_failure, note_failure, should_stop_repeat
 from .vision import run_vision_step
+from ..sites.known import sorted_by_date_url
 from .state import Action, Progress
 
 log = get_logger()
+
+
+def search_applied(obs: Observation, keyword: str) -> bool:
+    """Выдача отфильтрована по запросу: слово есть в адресе или хотя бы в трети названий.
+
+    Основа слова (первые 5 букв) ловит «серверного», «серверов» и т. п.
+    """
+    from urllib.parse import unquote
+
+    stem = keyword.casefold()[: max(4, min(len(keyword), 5))]
+    if not stem or len(obs.cards) < 3:
+        return True
+    if stem in unquote(obs.url).casefold():
+        return True
+    hits = sum(1 for card in obs.cards if stem in (card.title or "").casefold())
+    return hits * 3 >= len(obs.cards)
 
 
 def _sync_flags(obs: Observation, progress: Progress, keyword: str, sort_required: bool) -> None:
@@ -35,12 +52,11 @@ def _sync_flags(obs: Observation, progress: Progress, keyword: str, sort_require
         keyword
         and not progress.keyword_applied
         and obs.page_kind in {"tender_list", "empty"}
+        and search_applied(obs, keyword)
         and obs.search_value
         and obs.search_value.casefold() == keyword.casefold()
     ):
         progress.keyword_applied = True
-    if sort_required and progress.keyword_applied and not progress.sort_applied and obs.sort_ref is None:
-        progress.sort_applied = True
 
 
 async def _goto(runtime: BrowserRuntime, url: str, settings: Settings, host: str) -> None:
@@ -71,9 +87,14 @@ async def _act(runtime: BrowserRuntime, action: Action, settings: Settings, host
     if action.tool == "fill" and action.element_ref is not None:
         before_url = runtime.current_page.url
         await fill_field(runtime, action.element_ref, action.value or "")
+        submitted = False
         if action.submit_ref is not None:
-            await click_element(runtime, action.submit_ref)
-        else:
+            try:
+                await click_element(runtime, action.submit_ref)
+                submitted = True
+            except Exception as exc:  # кнопка перекрыта баннером или подсказками
+                log.info("submit click failed, pressing Enter: %s", str(exc).splitlines()[0])
+        if not submitted:
             await press_key(runtime, "Enter")
         await _wait_for_results(runtime, before_url)
         return
@@ -336,6 +357,30 @@ async def execute(
                     if helped:
                         continue
                 break
+            if (
+                task.sort_by
+                and progress.keyword_applied
+                and not progress.sort_applied
+                and not progress.sort_fallback_done
+                and action.tool in {"extract", "finish"}
+                and last_obs.page_kind == "tender_list"
+            ):
+                progress.sort_fallback_done = True
+                sorted_url = sorted_by_date_url(last_obs.url)
+                if sorted_url:
+                    await _goto(runtime, sorted_url, settings, host)
+                    progress.sort_applied = True
+                    progress.site_sort_used = True
+                    step_rec["outcome"] = "sort_by_url"
+                    continue
+                helped, spent = await _try_vision(
+                    runtime, settings, task, progress,
+                    "нужна сортировка по дате публикации (сначала новые), кнопку сортировки в DOM не нашёл", errors)
+                started += spent
+                if helped:
+                    step_rec["outcome"] = "sort_by_vision"
+                    continue
+                errors.append("Сортировка по дате на сайте не подтверждена: «последние» выбраны только среди прочитанных записей.")
             if should_stop_repeat(progress, action, last_obs.signature, settings.max_retries):
                 step_rec["outcome"] = "repeat_stop"
                 step_error = True
@@ -355,6 +400,9 @@ async def execute(
                     collected.extend(batch)
                     progress.accepted = len(rank_tenders(collected, sort_by=task.sort_by, limit=10_000))
                     progress.extracted.append(last_obs.signature)
+                    dates = [t.published_at for t in batch if t.published_at]
+                    if progress.sort_applied and len(dates) >= 3 and dates == sorted(dates, reverse=True):
+                        progress.sort_verified = True
                     step_rec["extracted"] = [{"id": t.id, "title": t.title[:80], "url": t.url,
                                               "status": t.verification_status} for t in batch]
                     progress.pages = max(progress.pages, 1)
@@ -371,10 +419,14 @@ async def execute(
                         titles = lambda obs: [card.title for card in obs.cards[:8]]  # noqa: E731
                         if after.url == last_obs.url and titles(after) == titles(last_obs):
                             raise RuntimeError("Поиск не применился: адрес и выдача не изменились.")
+                        if not search_applied(after, keyword):
+                            raise RuntimeError("Поиск не применился: в выдаче нет записей с ключевым словом.")
                         progress.keyword_applied = True
                     if action.note == "sort":
                         progress.sort_applied = True
                         progress.site_sort_used = True
+                    if action.note == "sort_menu":
+                        progress.sort_menu_opened = True
                     if action.note == "next":
                         progress.pages += 1
                 progress.actions += 1

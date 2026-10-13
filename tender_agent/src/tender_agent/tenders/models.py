@@ -74,6 +74,7 @@ class Observation(BaseModel):
     search_value: str = ""
     submit_ref: int | None = None
     sort_ref: int | None = None
+    sort_menu_ref: int | None = None
     next_ref: int | None = None
     file_refs: list[int] = Field(default_factory=list)
     signature: str = ""

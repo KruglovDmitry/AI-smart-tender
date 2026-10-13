@@ -43,9 +43,15 @@ def validate_navigation_url(url: str, settings: Settings | None = None) -> tuple
     return True, ""
 
 
+def _base_domain(host: str) -> str:
+    """fabrikant.ru для www.fabrikant.ru, sberbank-ast.ru для utp.sberbank-ast.ru."""
+    parts = host.lower().removeprefix("www.").split(".")
+    return ".".join(parts[-2:]) if len(parts) >= 2 else host
+
+
 def same_site(url: str, task_host: str) -> bool:
     host = (urlparse(url).hostname or "").lower()
-    root = (task_host or "").lower()
+    root = _base_domain(task_host or "")
     return bool(host) and (host == root or host.endswith("." + root))
 
 

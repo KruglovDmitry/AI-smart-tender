@@ -173,13 +173,14 @@ _SNAPSHOT_JS = """() => {
     if (similar.length < 3) continue;
     const dated = similar.filter(el => /\\d{2}\\.\\d{2}\\.\\d{4}/.test(textOf(el)) || /\\d[\\d\\s]{2,}[.,]\\d{2}/.test(textOf(el)));
     const group = dated.length >= 3 ? dated : similar;
-    const score = group.length * 1000 - average;
+    // Список с датами или суммами важнее любого меню: меню бывает длиннее выдачи (ЭТП ГПБ).
+    const score = (dated.length >= 3 ? 100000 : 0) + group.length * 1000 - average;
     if (score > chosenScore) {
       chosen = group;
       chosenScore = score;
     }
   }
-  for (const el of chosen.slice(0, 12)) {
+  for (const el of chosen.slice(0, 60)) {
     const href = noticeHref(el);
     const text = linesOf(el).slice(0, 1800);
     const key = href || text.slice(0, 80);
@@ -237,8 +238,9 @@ _SNAPSHOT_JS = """() => {
 
 
 def _signature(obs: Observation) -> str:
-    titles = "|".join((card.title or "") for card in obs.cards[:8])
-    raw = f"{obs.url}|{obs.page_kind}|{titles}|{obs.search_value}"
+    # Число карточек и последние названия: после «Показать ещё» адрес и первые карточки те же.
+    titles = "|".join((card.title or "") for card in obs.cards[:8] + obs.cards[-4:])
+    raw = f"{obs.url}|{obs.page_kind}|{len(obs.cards)}|{titles}|{obs.search_value}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 

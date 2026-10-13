@@ -33,6 +33,10 @@ class Progress:
     phase: Phase = "initializing"
     keyword_applied: bool = False
     sort_applied: bool = False
+    sort_menu_opened: bool = False
+    sort_fallback_done: bool = False
+    # Даты на первой странице отсортированной выдачи идут по убыванию — дальше листать незачем.
+    sort_verified: bool = False
     site_sort_used: bool = False
     extracted: list[str] = field(default_factory=list)
     accepted: int = 0

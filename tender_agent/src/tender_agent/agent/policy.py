@@ -22,9 +22,13 @@ def decide(obs: Observation, progress: Progress, task: TaskSpec) -> Action:
         )
     if task.sort_by and not progress.sort_applied and obs.sort_ref:
         return Action(tool="click", element_ref=obs.sort_ref, expected="changed", note="sort")
+    if task.sort_by and not progress.sort_applied and obs.sort_menu_ref and not progress.sort_menu_opened:
+        return Action(tool="click", element_ref=obs.sort_menu_ref, expected="changed", note="sort_menu")
     if obs.cards and obs.signature not in progress.extracted:
         return Action(tool="extract", expected="cards")
-    need_more = bool(task.sort_by) or progress.accepted < task.limit
+    need_more = progress.accepted < task.limit or (
+        bool(task.sort_by) and not (progress.sort_applied and progress.sort_verified)
+    )
     if need_more and obs.next_ref and progress.pages < task.max_pages:
         return Action(tool="click", element_ref=obs.next_ref, expected="changed", note="next")
     section = pick_section(obs.elements)

@@ -58,6 +58,8 @@ class RawCard(BaseModel):
     currency: str | None = None
     status: str | None = None
     sources: dict[str, str] = Field(default_factory=dict)
+    # Текст блока карточки в выдаче: по нему модель дочитывает поля (tenders/refine.py).
+    block_text: str | None = None
 
 
 class Observation(BaseModel):

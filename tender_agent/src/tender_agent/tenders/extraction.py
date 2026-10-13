@@ -257,10 +257,13 @@ def apply_page_reading(tender: TenderResult, obs: Observation, data: dict | None
         if element and element.ref not in refs and _is_document(element):
             refs.append(element.ref)
     urls: list[str] = []
+    documents: list[dict[str, str]] = []
     for ref in [*refs, *obs.file_refs]:
         element = _element(obs, ref)
         href = (element.href if element else "") or ""
         if href and href not in urls:
             urls.append(href)
+            documents.append({"name": (element.name or element.label or "").strip()[:200], "url": href})
     updated.document_urls = urls
+    updated.documents = documents
     return updated, refs or list(obs.file_refs)

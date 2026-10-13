@@ -63,6 +63,7 @@ def _settings() -> Settings:
         vision_max_steps=int(os.getenv("TENDER_AGENT_VISION_MAX_STEPS", "10")),
         trace_enabled=_flag("TENDER_AGENT_TRACE", True),
         trace_screenshots=os.getenv("TENDER_AGENT_TRACE_SCREENSHOTS", "errors"),
+        store_enabled=_flag("TENDER_AGENT_STORE", True),
     )
 
 
@@ -99,3 +100,21 @@ async def search_tenders(body: SearchTendersBody):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Tender search failed: {exc}") from exc
     return result.model_dump(mode="json")
+
+
+@app.get(
+    "/tenders",
+    summary="Saved tenders from previous searches",
+    operation_id="list_saved_tenders",
+    description=(
+        "Return tenders already found by the browser agent and stored in its database, newest first. "
+        "Filter by platform host (e.g. zakupki.gov.ru), by text in title/customer/number, "
+        "or by first_seen date (YYYY-MM-DD) to see what is new. Does not open any website."
+    ),
+)
+def list_tenders(platform: str | None = None, q: str | None = None, since: str | None = None, limit: int = 50):
+    from .storage.tenders import TenderStore
+
+    settings = _settings()
+    store = TenderStore(settings.data_dir / "_agent" / "agent.sqlite3")
+    return {"tenders": store.search(platform=platform, text=q, since=since, limit=max(1, min(limit, 500)))}

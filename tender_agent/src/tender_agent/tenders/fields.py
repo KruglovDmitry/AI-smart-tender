@@ -247,6 +247,7 @@ def cards_from_blocks(blocks: list[dict] | None) -> list[RawCard]:
                 price_text=known.get("price"),
                 status=status,
                 sources={"title": "block", "price": "block", "published_at": "block"},
+                block_text=text[:1800],
             )
         )
         if len(cards) >= 60:

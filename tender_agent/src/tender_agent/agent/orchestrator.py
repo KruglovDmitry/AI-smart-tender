@@ -19,6 +19,7 @@ from ..storage.repository import Repository, profile_is_fresh
 from ..tenders.discovery import inspect_element, pick_documents_tab
 from ..tenders.extraction import apply_labeled_fields, apply_page_reading, card_from_raw
 from ..tenders.models import Observation
+from ..tenders.refine import apply_reading, blocks_for_model
 from ..tenders.ranking import rank_tenders
 from .planner import TaskParseError, consult, parse_task, read_card
 from .policy import decide
@@ -185,6 +186,7 @@ async def _try_vision(runtime: BrowserRuntime, settings: Settings, task, progres
     if outcome.ok:
         # Цель vision-шага — выдача по запросу (и сортировка, если её просили): дальше её не повторяем.
         progress.keyword_applied = True
+        progress.vision_check_pending = True
         if task.sort_by:
             progress.sort_applied = True
     return outcome.ok, outcome.seconds
@@ -314,6 +316,14 @@ async def execute(
                     repo.add_error(host)
                     progress.profile_rejected = True
                     profile = None
+            if progress.vision_check_pending and last_obs.page_kind == "tender_list":
+                progress.vision_check_pending = False
+                if not search_applied(last_obs, keyword):
+                    # Vision дошёл до выдачи, но запрос слетел: ищем заново, сортировку после этого не подтверждаем.
+                    progress.keyword_applied = False
+                    progress.sort_applied = False
+                    progress.sort_verified = False
+                    errors.append("После vision-шага выдача без запроса — поиск повторён.")
             _sync_flags(last_obs, progress, keyword, bool(task.sort_by))
             step_rec = _observation_record(last_obs, progress)
             progress.phase = "planning"
@@ -411,6 +421,15 @@ async def execute(
             try:
                 if action.tool == "extract":
                     progress.phase = "extracting"
+                    if llm is not None and getattr(llm, "read_list", None) and progress.list_reads < 3:
+                        todo, blocks = blocks_for_model(last_obs.cards)
+                        if blocks:
+                            progress.list_reads += 1
+                            try:
+                                reading = await llm.read_list({"keyword": keyword}, {"blocks": blocks})
+                                step_rec["list_refined"] = apply_reading(todo, reading)
+                            except Exception as exc:
+                                errors.append(f"Модель не дочитала выдачу: {exc}")
                     batch = _absorb(last_obs, keyword, progress.keyword_applied, bool(task.sort_by))
                     collected.extend(batch)
                     progress.accepted = len(rank_tenders(collected, sort_by=task.sort_by, limit=10_000))
@@ -536,6 +555,7 @@ async def execute(
             "llm_calls": progress.llm_calls,
             "card_reads": progress.card_reads,
             "vision_calls": progress.vision_calls,
+            "list_reads": progress.list_reads,
             "site_sort_used": progress.site_sort_used,
             "profile_rejected": progress.profile_rejected,
         },

@@ -38,6 +38,9 @@ class Progress:
     # Даты на первой странице отсортированной выдачи идут по убыванию — дальше листать незачем.
     sort_verified: bool = False
     search_url_tried: bool = False
+    list_reads: int = 0
+    # После vision-шага проверить, что поиск не слетел (ЭТП ГПБ: сортировка сбросила запрос).
+    vision_check_pending: bool = False
     site_sort_used: bool = False
     extracted: list[str] = field(default_factory=list)
     accepted: int = 0

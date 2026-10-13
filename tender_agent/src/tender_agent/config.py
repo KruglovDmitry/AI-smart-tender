@@ -63,6 +63,8 @@ class Settings:
     # Трейс прогона: data_dir/_agent/runs/… (см. observability/trace.py).
     trace_enabled: bool = True
     trace_screenshots: str = "errors"
+    # База найденных закупок в data_dir/_agent/agent.sqlite3 (storage/tenders.py).
+    store_enabled: bool = True
     data_dir: Path = _REPO_ROOT / "data" / "tenders"
 
     @classmethod
@@ -88,5 +90,6 @@ class Settings:
             vision_max_steps=int(os.getenv("TENDER_AGENT_VISION_MAX_STEPS", "10")),
             trace_enabled=_flag("TENDER_AGENT_TRACE", True),
             trace_screenshots=os.getenv("TENDER_AGENT_TRACE_SCREENSHOTS", "errors"),
+            store_enabled=_flag("TENDER_AGENT_STORE", True),
             data_dir=data_dir,
         )

@@ -35,7 +35,11 @@ class TenderResult(BaseModel):
     matched_keyword: str | None = None
     verification_status: VerificationStatus = "incomplete"
     document_urls: list[str] = Field(default_factory=list)
+    # Документы с названиями: [{"name": "...", "url": "..."}].
+    documents: list[dict[str, str]] = Field(default_factory=list)
     sources: dict[str, str] = Field(default_factory=dict)
+    # Закупка впервые попала в базу в этом прогоне (None — база не велась).
+    is_new: bool | None = None
 
 
 class DownloadRecord(BaseModel):

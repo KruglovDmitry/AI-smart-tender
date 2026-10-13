@@ -91,7 +91,8 @@ class OpenAICompatibleClient:
                 },
             ],
         }
-        async with httpx.AsyncClient(timeout=30) as client:
+        # Чтение 15 блоков выдачи у DeepSeek занимает до минуты.
+        async with httpx.AsyncClient(timeout=90) as client:
             response = await client.post(
                 f"{self.settings.llm_base_url}/chat/completions",
                 headers={"Authorization": f"Bearer {self.settings.llm_api_key}"},

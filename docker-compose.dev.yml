@@ -13,7 +13,10 @@ services:
 
   tender-agent:
     image: tender-agent:dev
-    build: ./tender_agent
+    build:
+      context: ./tender_agent
+      additional_contexts:
+        ai_vision: ${AI_VISION_PATH:-../AI-vision}
 
   dashboard:
     image: tenag-dashboard:dev

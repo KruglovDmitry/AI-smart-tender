@@ -134,6 +134,12 @@ def build_fields(pairs: list[dict] | None, text: str = "") -> list[PageField]:
         kind = label_kind(label)
         if source == "adjacent" and not (kind and value_ok(kind, value)):
             continue
+        # Соседние контейнеры часто склеивают подпись со значением («Размещено 13.10.2026» → «Обновлено …»).
+        # Такая «подпись» уже содержит данные и даёт второе, ложное значение поля.
+        if source == "adjacent" and (
+            len(label) > 40 or _DATE.search(label) or _MONEY_TEXT.search(label) or _INLINE.match(label.strip())
+        ):
+            continue
         _add(found, seen, label, value)
     for label, value in pairs_from_text(text):
         _add(found, seen, label, value)
@@ -184,6 +190,9 @@ def cards_from_blocks(blocks: list[dict] | None) -> list[RawCard]:
         if len(title) < 8:
             continue
         number = _NUMBER.search(text)
+        # Блок без номера, цены и срока подачи — не закупка (новости, статьи, баннеры).
+        if not (number or known.get("price") or known.get("deadline")):
+            continue
         status = known.get("status")
         if not status:
             found_status = _STATUS.search(text)

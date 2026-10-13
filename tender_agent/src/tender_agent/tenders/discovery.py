@@ -38,12 +38,17 @@ def pick_search(elements: list[Element], preferred: str | None = None) -> Elemen
     return best
 
 
+_BUTTON_INPUTS = {"submit", "button", "image"}
+
+
 def pick_submit(elements: list[Element], search: Element | None) -> Element | None:
-    del search
     for el in elements:
+        if search is not None and el.ref == search.ref:
+            continue
         if el.tag not in {"button", "input"} and el.role != "button":
             continue
-        if el.input_type in {"text", "search", "password"}:
+        # Поле ввода кнопкой не бывает, какой бы ни была его role (на ЕИС у поиска role="search", type="dirname").
+        if el.tag == "input" and (el.input_type or "text") not in _BUTTON_INPUTS:
             continue
         if SUBMIT_RE.search(_blob(el)) or el.input_type == "submit":
             return el
@@ -98,14 +103,22 @@ def file_refs(elements: list[Element]) -> list[int]:
     return found
 
 
-def fallback_cards(elements: list[Element]) -> list[RawCard]:
+def fallback_cards(elements: list[Element], page_url: str = "") -> list[RawCard]:
     """Ссылки на карточки, если на странице нет размеченной выдачи."""
     found: list[RawCard] = []
     seen: set[str] = set()
+    page_host = (urlparse(page_url).hostname or "").removeprefix("www.")
     for el in elements:
         href = (el.href or "").strip()
         title = (el.name or "").strip()
         if len(title) < 8 or not href or href in seen:
+            continue
+        # Карточка закупки живёт на той же площадке; соцсети и партнёры — нет.
+        host = (urlparse(href).hostname or "").removeprefix("www.")
+        if page_host and host and host != page_host and not host.endswith("." + page_host):
+            continue
+        # Текст SVG-стилей вместо названия ссылки-иконки.
+        if "{" in title and "}" in title:
             continue
         if el.download or FILE_RE.search(href):
             continue

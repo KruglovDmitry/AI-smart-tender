@@ -2,9 +2,9 @@ from tender_agent.agent.planner import card_for_model
 from tender_agent.api.schemas import TenderResult
 from tender_agent.browser.observations import limit_elements
 from tender_agent.storage.repository import SiteProfile, profile_is_fresh
-from tender_agent.tenders.discovery import fallback_cards, pick_search
+from tender_agent.tenders.discovery import fallback_cards, pick_search, pick_submit
 from tender_agent.tenders.extraction import apply_labeled_fields, apply_page_reading, card_from_raw, parse_date
-from tender_agent.tenders.fields import build_fields, cards_from_blocks
+from tender_agent.tenders.fields import build_fields, cards_from_blocks, known_values
 from tender_agent.tenders.models import Element, Observation, PageField, RawCard
 from tender_agent.tenders.ranking import rank_tenders
 
@@ -254,3 +254,45 @@ def test_stale_profile_selector_is_not_fresh() -> None:
     assert profile_is_fresh("tender_list", 2) is True
     assert profile_is_fresh("home", 0) is True
     assert SiteProfile(host="example.com").error_count == 0
+
+
+def test_submit_is_never_the_search_field_itself() -> None:
+    # Главная ЕИС: у поля поиска role="search" и type="dirname", отдельной кнопки нет.
+    search = Element(ref=1, tag="input", role="search", input_type="dirname", placeholder="Введите номер или наименование")
+    other = Element(ref=2, tag="input", input_type="checkbox", label="Искать точно, как в запросе")
+    assert pick_submit([search, other], search) is None
+    button = Element(ref=3, tag="button", name="Найти")
+    assert pick_submit([search, other, button], search).ref == 3
+
+
+def test_fallback_cards_skip_other_hosts_and_svg_text() -> None:
+    cards = fallback_cards(
+        [
+            Element(ref=1, tag="a", name=".st0 { fill-rule: evenodd; } tender", href="https://example.com/tenders/1"),
+            Element(ref=2, tag="a", name="Канал ЕИС о закупках", href="https://t.me/gis_eiszakupki"),
+            Element(ref=3, tag="a", name="Поставка серверного оборудования", href="https://www.example.com/tenders/7"),
+        ],
+        "https://example.com/epz/home.html",
+    )
+    assert [card.href for card in cards] == ["https://www.example.com/tenders/7"]
+
+
+def test_news_block_is_not_a_tender() -> None:
+    news = [
+        {"href": f"https://example.com/news/{i}", "text": f"12.10.2026\nНовость о работе единой информационной системы в сфере закупок номер {i}"}
+        for i in range(3)
+    ]
+    assert cards_from_blocks(news) == []
+
+
+def test_adjacent_pair_with_value_in_label_is_ignored() -> None:
+    # ЕИС: соседние контейнеры дают «Объект закупки <название>» → «Заказчик …» и «Размещено <дата>» → «Обновлено <дата>».
+    text = "Объект закупки\nСерверное оборудование (сетевое хранилище данных)\nРазмещено\n13.10.2026\nОбновлено\n13.10.2026"
+    pairs = [
+        {"label": "Объект закупки Серверное оборудование (сетевое хранилище данных)", "value": "Заказчик АНО «Центр»", "source": "adjacent"},
+        {"label": "Размещено 13.10.2026", "value": "Обновлено 13.10.2026", "source": "adjacent"},
+        {"label": "Объект закупки Поставка сервера", "value": "Заказчик ГБУ «Поликлиника»", "source": "adjacent"},
+    ]
+    known = known_values(build_fields(pairs, text))
+    assert known["title"] == "Серверное оборудование (сетевое хранилище данных)"
+    assert known["published"] == "13.10.2026"

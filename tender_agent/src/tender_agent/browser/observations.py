@@ -334,7 +334,7 @@ async def get_page_state(runtime: BrowserRuntime, preferred_placeholder: str | N
     if not cards:
         cards = cards_from_blocks(list(raw.get("blocks") or []))
     if not cards:
-        cards = fallback_cards(elements)
+        cards = fallback_cards(elements, str(raw.get("url") or runtime.current_page.url))
     obs = Observation(
         url=str(raw.get("url") or runtime.current_page.url),
         title=str(raw.get("title") or ""),

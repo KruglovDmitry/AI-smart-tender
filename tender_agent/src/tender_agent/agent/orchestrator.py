@@ -28,9 +28,11 @@ log = get_logger()
 
 
 def _sync_flags(obs: Observation, progress: Progress, keyword: str, sort_required: bool) -> None:
+    # Слово в поле ещё не значит, что поиск выполнен: засчитываем только на странице выдачи.
     if (
         keyword
         and not progress.keyword_applied
+        and obs.page_kind in {"tender_list", "empty"}
         and obs.search_value
         and obs.search_value.casefold() == keyword.casefold()
     ):
@@ -48,18 +50,30 @@ async def _goto(runtime: BrowserRuntime, url: str, settings: Settings, host: str
     await runtime.current_page.goto(url, wait_until="domcontentloaded")
 
 
+async def _wait_for_results(runtime: BrowserRuntime, before_url: str, timeout_ms: int = 8_000) -> None:
+    """После отправки поиска ждём смены адреса и загрузки, а не фиксированные 1,5 с."""
+    page = runtime.current_page
+    waited = 0
+    while waited < timeout_ms and page.url == before_url:
+        await page.wait_for_timeout(250)
+        waited += 250
+    try:
+        await page.wait_for_load_state("domcontentloaded", timeout=max(1_000, timeout_ms - waited))
+        await page.wait_for_load_state("networkidle", timeout=3_000)
+    except Exception as exc:
+        if "timeout" not in str(exc).lower():
+            raise
+
+
 async def _act(runtime: BrowserRuntime, action: Action, settings: Settings, host: str) -> None:
     if action.tool == "fill" and action.element_ref is not None:
+        before_url = runtime.current_page.url
         await fill_field(runtime, action.element_ref, action.value or "")
         if action.submit_ref is not None:
             await click_element(runtime, action.submit_ref)
         else:
             await press_key(runtime, "Enter")
-            try:
-                await runtime.current_page.wait_for_load_state("domcontentloaded", timeout=1_500)
-            except Exception as exc:
-                if "timeout" not in str(exc).lower():
-                    raise
+        await _wait_for_results(runtime, before_url)
         return
     if action.tool == "click" and action.element_ref is not None:
         await click_element(runtime, action.element_ref)
@@ -253,6 +267,9 @@ async def execute(
                 if action.expected == "changed" and not page_changed(last_obs, after):
                     raise RuntimeError("Страница не изменилась.")
                 if action.tool == "fill":
+                    titles = lambda obs: [card.title for card in obs.cards[:8]]  # noqa: E731
+                    if after.url == last_obs.url and titles(after) == titles(last_obs):
+                        raise RuntimeError("Поиск не применился: адрес и выдача не изменились.")
                     progress.keyword_applied = True
                 if action.note == "sort":
                     progress.sort_applied = True

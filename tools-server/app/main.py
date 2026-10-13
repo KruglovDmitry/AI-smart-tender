@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 import logging
 import sys
 
@@ -30,7 +29,6 @@ from pydantic import BaseModel, Field
 from . import config
 from .document_tool import list_directory, read_document, read_folder_documents
 from .excel_tool import resolve_export_file, write_excel
-from .api.routes import router as api_router
 from .web_tool import fetch_page
 
 _handler = logging.StreamHandler(sys.stdout)
@@ -41,15 +39,11 @@ _handler.setFormatter(
     )
 )
 logging.basicConfig(level=logging.INFO, handlers=[_handler], force=True)
-logging.getLogger("langchain").setLevel(logging.INFO)
 
 app = FastAPI(
     title="Tender Tools API",
-    version="1.3.0",
-    description=(
-        "Tools for the tender agent: server documents, URL fetch, "
-        "Excel export, and the platform monitoring agent."
-    ),
+    version="1.4.0",
+    description="Server documents, URL fetch, and Excel export.",
 )
 
 app.add_middleware(
@@ -59,9 +53,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-app.include_router(api_router)
 
 
 class ReadDocumentBody(BaseModel):
@@ -144,19 +135,7 @@ def _public_base(request: Request) -> str:
 
 @app.get("/health", summary="Health check")
 def health():
-    llm_ok = bool(config.AGENT_LLM_BASE_URL and config.AGENT_LLM_API_KEY)
-    return {
-        "status": "ok" if llm_ok else "degraded",
-        "data_root": str(config.DATA_ROOT),
-        "agent_llm_configured": llm_ok,
-        "primary_model": getattr(config, "AGENT_PRIMARY_MODEL", config.AGENT_LLM_MODEL),
-        "platform_agent": {
-            "model": config.AGENT_LLM_MODEL,
-            "max_steps": config.PLATFORM_MAX_STEPS,
-            "max_new_tenders": config.PLATFORM_MAX_NEW_TENDERS,
-            "mode_default": getattr(config, "PLATFORM_AGENT_MODE", "platform"),
-        },
-    }
+    return {"status": "ok", "data_root": str(config.DATA_ROOT)}
 
 
 @app.get(
@@ -260,8 +239,8 @@ def api_fetch_url(body: FetchUrlBody):
     "/write_excel",
     summary="Export tables to Excel for the user",
     description=(
-        "Create an .xlsx from structured tables (variant A): you extract rows from "
-        "the ТЗ / chat context, pass headers+rows for one or more sheets. "
+        "Create an .xlsx from structured tables: extract rows from the "
+        "source text, pass headers and rows for one or more sheets. "
         "Returns download_url — put it in the reply as a markdown link so the user "
         "can download the file in the browser. Do NOT invent table data."
     ),

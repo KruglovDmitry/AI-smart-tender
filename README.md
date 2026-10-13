@@ -91,38 +91,17 @@ Swagger: [http://localhost:8000/docs](http://localhost:8000/docs).
 
 Положите свои файлы в `data/tenders` и `data/catalogs` на диске сервера — агент увидит их через tools.
 
-## Platform agent (`run_platform_task`)
+## Поиск закупок (`tender-agent`, порт 8010)
 
-LangChain-агент в стиле **AI-booking**: `create_openai_tools_agent` + `AgentExecutor`
-(системный промпт в `agent/loop.py`).
-
-- ищет тендеры на платформе (`platform_url` + `keywords`)
-- дедуплицирует через SQLite (`data/_state/seen_tenders.sqlite3`)
-- открывает **новые** карточки и скачивает документацию
-
-Пример:
+Отдельный контейнер. Чат вызывает `search_tenders` и передаёт задание целиком. База и файлы пишутся в `data/tenders`.
 
 ```powershell
-curl -X POST http://localhost:8000/run_platform_task `
-  -H "Content-Type: application/json" `
-  -d '{"platform_url":"https://zakupki.gov.ru/","keywords":"счётчик газа","max_new_tenders":2}'
-```
-
-## Single tender download (`run_tender_download`)
-
-Тонкий вход: adapter `open_card` → `collect_documents` → `download` в `data/tenders/<host>/<tender_id>/` + `manifest.json`.
-
-Замена старого `run_browser_task` (удалён). Нужны те же `AGENT_LLM_*` / Playwright, что и для platform agent.
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8000/run_tender_download `
+Invoke-RestMethod http://127.0.0.1:8010/search_tenders `
   -Method POST -ContentType "application/json" `
-  -Body '{"tender_url":"https://zakupki.gov.ru/epz/order/notice/.../common-info.html?regNumber=..."}'
+  -Body '{"task":"С площадки https://zakupki.gov.ru верни последние 5 закупок по ключевому слову сервер"}'
 ```
 
-## Platform agent notes
-
-Режим tools: `platform` (adapter + DOM). Старые `full` / `browser` / vision сняты.
+`tools-server` на порту 8000 остаётся для документов, Excel и текстового чтения страницы. В Open WebUI должны быть оба сервера: Tender Tools и Tender Agent. Системный промпт модели обновите из `prompts/tender-agent-system.txt`.
 
 ## Как устроено чтение документов
 
@@ -162,6 +141,7 @@ AI-smart-tender/
 ├── docker-compose.yml
 ├── .env.example
 ├── prompts/tender-agent-system.txt
+├── tender_agent/          # универсальный браузерный поиск, инструмент search_tenders
 ├── tools-server/          # OpenAPI tools для Open WebUI
 │   ├── Dockerfile
 │   ├── requirements.txt

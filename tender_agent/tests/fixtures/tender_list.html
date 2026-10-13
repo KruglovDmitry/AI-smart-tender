@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="utf-8"><title>Список закупок</title></head>
+<body>
+  <h1>Закупки</h1>
+  <form action="/tenders" method="get">
+    <label for="q">Ключевое слово</label>
+    <input id="q" name="q" type="search" placeholder="Ключевое слово" value="__Q__">
+    <button type="submit">Найти</button>
+  </form>
+  <a href="/tenders?q=сервер&sort=date">Сначала новые</a>
+  <article class="tender-card" data-id="101" data-published="2026-03-01" data-deadline="2026-04-01">
+    <a class="title" href="/tenders/101">Поставка серверного оборудования</a>
+    <div class="customer">Заказчик А</div>
+    <div class="price" data-amount="5000000" data-currency="KZT">5 000 000 ₸</div>
+    <div class="status">Подача заявок</div>
+  </article>
+  <article class="tender-card" data-id="102" data-published="2026-01-15" data-deadline="2026-02-01">
+    <a class="title" href="/tenders/102">Сервер для архива</a>
+    <div class="customer">Заказчик Б</div>
+    <div class="price" data-amount="1000000" data-currency="KZT">1 000 000 ₸</div>
+    <div class="status">Подача заявок</div>
+  </article>
+  <a rel="next" href="/tenders?q=сервер&sort=date&page=2">Следующая</a>
+</body>
+</html>

@@ -25,6 +25,7 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       - tools-server
+      - tender-agent
     restart: unless-stopped
 
   tools-server:
@@ -39,27 +40,80 @@ services:
       - DEFAULT_MAX_FILES=${DEFAULT_MAX_FILES:-30}
       - FETCH_TIMEOUT_SEC=${FETCH_TIMEOUT_SEC:-30}
       - TOOLS_PUBLIC_BASE_URL=${TOOLS_PUBLIC_BASE_URL:-http://localhost:8000}
-      - BROWSER_HEADLESS=${BROWSER_HEADLESS:-true}
-      - BROWSER_VIEWPORT_WIDTH=${BROWSER_VIEWPORT_WIDTH:-1280}
-      - BROWSER_VIEWPORT_HEIGHT=${BROWSER_VIEWPORT_HEIGHT:-900}
-      - BROWSER_PROFILE_DIR=/tmp/tender-browser-profile
-      # Platform agent LLM (не то же самое, что ключи чата в Open WebUI)
-      - AGENT_LLM_BASE_URL=${AGENT_LLM_BASE_URL:-}
-      - AGENT_LLM_API_KEY=${AGENT_LLM_API_KEY:-}
-      - AGENT_LLM_MODEL=${AGENT_LLM_MODEL:-deepseek-flash}
-      - AGENT_PRIMARY_MODEL=${AGENT_PRIMARY_MODEL:-deepseek-flash}
-      - AGENT_DEBUG_LOGS=${AGENT_DEBUG_LOGS:-true}
-      - PLATFORM_MAX_STEPS=${PLATFORM_MAX_STEPS:-180}
-      - PLATFORM_MAX_NEW_TENDERS=${PLATFORM_MAX_NEW_TENDERS:-10}
-      - PLATFORM_MAX_FILES_PER_TENDER=${PLATFORM_MAX_FILES_PER_TENDER:-10}
-      - SEEN_TENDERS_DB=${SEEN_TENDERS_DB:-/data/_state/seen_tenders.sqlite3}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ${DATA_HOST_PATH:-./data}:/data
       - ${TENDERS_HOST_PATH:-./data/tenders}:/data/tenders
-      - browser-profile:/tmp/tender-browser-profile
+    restart: unless-stopped
+
+  tender-agent:
+    image: ${TENDER_AGENT_IMAGE:-tender-agent:0.1.0}
+    build:
+      context: ./tender_agent
+      additional_contexts:
+        # Соседний репозиторий AI-vision: библиотека ai_vision для vision-шага.
+        ai_vision: ${AI_VISION_PATH:-../AI-vision}
+    container_name: tender-agent
+    ports:
+      - "${TENDER_AGENT_PORT:-8010}:8010"
+    environment:
+      - TENDER_AGENT_DATA_DIR=/data/tenders
+      - TENDER_AGENT_HEADLESS=${BROWSER_HEADLESS:-true}
+      - TENDER_AGENT_LLM_BASE_URL=${AGENT_LLM_BASE_URL:-}
+      - TENDER_AGENT_LLM_API_KEY=${AGENT_LLM_API_KEY:-}
+      - TENDER_AGENT_LLM_MODEL=${AGENT_LLM_MODEL:-deepseek-flash}
+      - TENDER_AGENT_MAX_ACTIONS=${TENDER_AGENT_MAX_ACTIONS:-40}
+      - TENDER_AGENT_MAX_LLM_CALLS=${TENDER_AGENT_MAX_LLM_CALLS:-12}
+      - TENDER_AGENT_TIMEOUT_SECONDS=${TENDER_AGENT_TIMEOUT_SECONDS:-120}
+      - TENDER_AGENT_MAX_PAGES=${TENDER_AGENT_MAX_PAGES:-5}
+      - TENDER_AGENT_DEFAULT_LIMIT=${TENDER_AGENT_DEFAULT_LIMIT:-5}
+      - TENDER_AGENT_TRACE=${TENDER_AGENT_TRACE:-true}
+      # База закупок (сервис postgres ниже); дашборд будет читать её же.
+      - TENDER_AGENT_DB_URL=postgresql+psycopg://${POSTGRES_USER:-tenders}:${POSTGRES_PASSWORD:-tenders}@postgres:5432/${POSTGRES_DB:-tenders}
+      - TENDER_AGENT_TRACE_SCREENSHOTS=${TENDER_AGENT_TRACE_SCREENSHOTS:-errors}
+      # Запасной шаг по скриншотам (ai_vision): Qwen-VL планирует, UI-TARS на d10 даёт координаты.
+      - TENDER_AGENT_VISION_ENABLED=${TENDER_AGENT_VISION_ENABLED:-false}
+      - TENDER_AGENT_VISION_MAX_CALLS=${TENDER_AGENT_VISION_MAX_CALLS:-2}
+      - TENDER_AGENT_VISION_MAX_STEPS=${TENDER_AGENT_VISION_MAX_STEPS:-10}
+      - AV_TARS_BASE_URL=${AV_TARS_BASE_URL:-http://10.127.0.41:8000/v1}
+      - AV_TARS_MODEL=${AV_TARS_MODEL:-ui-tars}
+      - AV_TARS_API_KEY=${AV_TARS_API_KEY:-EMPTY}
+      - AV_HISTORY_IMAGES=${AV_HISTORY_IMAGES:-3}
+      - AV_PLANNER_BASE_URL=${AV_PLANNER_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
+      - AV_PLANNER_API_KEY=${AV_PLANNER_API_KEY:-}
+      - AV_PLANNER_MODEL=${AV_PLANNER_MODEL:-qwen3-vl-plus}
+      - AV_EXTRACT_MODEL=${AV_EXTRACT_MODEL:-qwen3.6-flash}
+      - AV_RUNS_DIR=/data/tenders/_agent/vision-runs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${DATA_HOST_PATH:-./data}:/data
+      - ${TENDERS_HOST_PATH:-./data/tenders}:/data/tenders
     shm_size: "1gb"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # База найденных закупок: пишет tender-agent, читает дашборд (следующая итерация).
+  postgres:
+    image: postgres:16-alpine
+    container_name: tender-postgres
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-tenders}
+      - POSTGRES_USER=${POSTGRES_USER:-tenders}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-tenders}
+    ports:
+      # Только с этого ПК: для DBeaver/psql. Наружу не публикуем.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tenders} -d ${POSTGRES_DB:-tenders}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
     restart: unless-stopped
 
   dashboard:
@@ -71,14 +125,16 @@ services:
     environment:
       - DATA_ROOT=/data
       - TOOLS_SERVER_URL=http://tools-server:8000
+      - TENDER_AGENT_URL=http://tender-agent:8010
       - SEEN_TENDERS_DB=${SEEN_TENDERS_DB:-/data/_state/seen_tenders.sqlite3}
     volumes:
       - ${DATA_HOST_PATH:-./data}:/data
       - ${TENDERS_HOST_PATH:-./data/tenders}:/data/tenders
     depends_on:
       - tools-server
+      - tender-agent
     restart: unless-stopped
 
 volumes:
   open-webui-data:
-  browser-profile:
+  postgres-data:

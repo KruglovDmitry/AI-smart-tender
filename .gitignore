@@ -18,9 +18,11 @@ tools-server/data/
 tmp-*.json
 __pycache__/
 *.pyc
+*.egg-info/
 .pytest_cache/
 .venv/
 venv/
+.tender-agent/
 .DS_Store
 Thumbs.db
 

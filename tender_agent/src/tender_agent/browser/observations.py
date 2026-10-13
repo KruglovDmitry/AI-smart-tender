@@ -186,10 +186,15 @@ _SNAPSHOT_JS = """() => {
     if (!key || seenBlocks.has(key)) continue;
     seenBlocks.add(key);
     const numberLink = [...el.querySelectorAll('a[href]')].find(anchor => /№\\s*\\d{5,}/.test(textOf(anchor)));
+    // Название закупки часто — текст ссылки на ту же карточку (а номер — отдельная ссылка рядом).
+    const titleLink = [...el.querySelectorAll('a[href]')]
+      .filter(anchor => hrefOf(anchor) === href && !/^№?\\s*\\d+$/.test(textOf(anchor)))
+      .sort((a, b) => textOf(b).length - textOf(a).length)[0];
     blocks.push({
       text,
       href,
       link_text: numberLink ? textOf(numberLink).slice(0, 180) : '',
+      title_link: titleLink ? textOf(titleLink).slice(0, 300) : '',
       pairs: pairsIn(el).slice(0, 20)
     });
   }

@@ -22,6 +22,7 @@ from ..tenders.ranking import rank_tenders
 from .planner import TaskParseError, consult, parse_task, read_card
 from .policy import decide
 from .recovery import clear_failure, note_failure, should_stop_repeat
+from .vision import run_vision_step
 from .state import Action, Progress
 
 log = get_logger()
@@ -110,6 +111,23 @@ def _absorb(obs: Observation, task_keyword: str, keyword_applied: bool, sort_req
         if card is not None:
             found.append(card)
     return found
+
+
+async def _try_vision(runtime: BrowserRuntime, settings: Settings, task, progress: Progress,
+                      reason: str, errors: list[str]) -> tuple[bool, float]:
+    """Один vision-шаг, если он включён и не исчерпан. Возвращает (помог ли, сколько секунд занял)."""
+    if not settings.vision_enabled or progress.vision_calls >= settings.vision_max_calls:
+        return False, 0.0
+    progress.vision_calls += 1
+    progress.failures.clear()
+    outcome = await run_vision_step(runtime, settings, task, reason, progress.keyword_applied)
+    errors.append(outcome.note)
+    if outcome.ok:
+        # Цель vision-шага — выдача по запросу (и сортировка, если её просили): дальше её не повторяем.
+        progress.keyword_applied = True
+        if task.sort_by:
+            progress.sort_applied = True
+    return outcome.ok, outcome.seconds
 
 
 async def _open_cards(
@@ -231,8 +249,13 @@ async def execute(
                 suggested = await consult(llm, task, last_obs)
             except Exception as exc:
                 errors.append(f"Модель не выбрала действие: {exc}")
-                break
+                suggested = None
             if suggested is None:
+                helped, spent = await _try_vision(
+                    runtime, settings, task, progress, "незнакомая страница, DOM-правила и модель не нашли действие", errors)
+                started += spent  # время vision-шага не съедает бюджет DOM-агента
+                if helped:
+                    continue
                 errors.append("Для незнакомой страницы нет правила и нет ответа модели.")
                 break
             action = suggested
@@ -243,8 +266,20 @@ async def execute(
         if action.tool == "finish":
             if action.note and action.expected == "error":
                 errors.append(f"Страница ошибки: {action.note}")
+            elif not collected:
+                # DOM-агент сдаётся, ничего не собрав: даём шанс зрению найти поиск или выдачу.
+                helped, spent = await _try_vision(
+                    runtime, settings, task, progress, "DOM-агент не нашёл поиск или выдачу закупок", errors)
+                started += spent
+                if helped:
+                    continue
             break
         if should_stop_repeat(progress, action, last_obs.signature, settings.max_retries):
+            helped, spent = await _try_vision(
+                runtime, settings, task, progress, f"действие {action.tool} повторяется без изменения страницы", errors)
+            started += spent
+            if helped:
+                continue
             errors.append("Одно и то же действие повторяется без изменения страницы.")
             break
         progress.phase = "executing"
@@ -283,6 +318,11 @@ async def execute(
             note_failure(progress, action, last_obs.signature)
             errors.append(str(exc))
             if should_stop_repeat(progress, action, last_obs.signature, settings.max_retries):
+                helped, spent = await _try_vision(
+                    runtime, settings, task, progress, f"действие {action.tool} не удалось: {exc}", errors)
+                started += spent
+                if helped:
+                    continue
                 errors.append("Повтор неудачного действия остановлен.")
                 break
     else:
@@ -347,6 +387,7 @@ async def execute(
             "actions": progress.actions,
             "llm_calls": progress.llm_calls,
             "card_reads": progress.card_reads,
+            "vision_calls": progress.vision_calls,
             "site_sort_used": progress.site_sort_used,
             "profile_rejected": progress.profile_rejected,
         },

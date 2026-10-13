@@ -56,6 +56,10 @@ class Settings:
     llm_base_url: str = ""
     llm_api_key: str = ""
     llm_model: str = ""
+    # Запасной шаг по скриншотам (библиотека ai_vision), см. agent/vision.py.
+    vision_enabled: bool = False
+    vision_max_calls: int = 2
+    vision_max_steps: int = 10
     data_dir: Path = _REPO_ROOT / "data" / "tenders"
 
     @classmethod
@@ -76,5 +80,8 @@ class Settings:
             llm_base_url=os.getenv("TENDER_AGENT_LLM_BASE_URL", "").rstrip("/"),
             llm_api_key=os.getenv("TENDER_AGENT_LLM_API_KEY", ""),
             llm_model=os.getenv("TENDER_AGENT_LLM_MODEL", ""),
+            vision_enabled=_flag("TENDER_AGENT_VISION_ENABLED", False),
+            vision_max_calls=int(os.getenv("TENDER_AGENT_VISION_MAX_CALLS", "2")),
+            vision_max_steps=int(os.getenv("TENDER_AGENT_VISION_MAX_STEPS", "10")),
             data_dir=data_dir,
         )

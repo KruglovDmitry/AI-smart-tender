@@ -31,6 +31,8 @@ _INLINE = re.compile(
     re.I,
 )
 _MAX_FIELDS = 80
+# Числовой идентификатор закупки в адресе карточки (/need/6245882, ?regNumber=0373…).
+_HREF_ID = re.compile(r"(?:/|=)(\d{6,})(?:[/?&#]|$)")
 
 
 def label_kind(label: str) -> str | None:
@@ -160,10 +162,14 @@ def known_values(fields: list[PageField]) -> dict[str, str]:
     return {kind: values[0] for kind, values in buckets.items() if len(values) == 1}
 
 
-def _title(known: dict[str, str], text: str, link_text: str) -> str:
+def _title(known: dict[str, str], text: str, link_text: str, title_link: str = "") -> str:
     titled = (known.get("title") or "").strip()
     if titled:
         return titled[:300]
+    # Текст ссылки на саму карточку: на zakupki.mos.ru это и есть название («Сервер»).
+    named = re.sub(r"\s+", " ", title_link or "").strip()
+    if len(named) >= 4 and label_kind(named) is None and not re.fullmatch(r"№?\s*\d+", named):
+        return named[:300]
     link = (link_text or "").strip()
     if len(link) >= 8 and not re.fullmatch(r"№?\s*\d+", link):
         return link[:300]
@@ -186,12 +192,13 @@ def cards_from_blocks(blocks: list[dict] | None) -> list[RawCard]:
             continue
         fields = build_fields(list(block.get("pairs") or []), text)
         known = known_values(fields)
-        title = _title(known, text, str(block.get("link_text") or ""))
-        if len(title) < 8:
+        title = _title(known, text, str(block.get("link_text") or ""), str(block.get("title_link") or ""))
+        if len(title) < 4:
             continue
         number = _NUMBER.search(text)
+        href_id = _HREF_ID.search(href)
         # Блок без номера, цены и срока подачи — не закупка (новости, статьи, баннеры).
-        if not (number or known.get("price") or known.get("deadline")):
+        if not (number or href_id or known.get("price") or known.get("deadline")):
             continue
         status = known.get("status")
         if not status:
@@ -200,7 +207,7 @@ def cards_from_blocks(blocks: list[dict] | None) -> list[RawCard]:
         seen.add(href)
         cards.append(
             RawCard(
-                id=number.group(1) if number else None,
+                id=number.group(1) if number else (href_id.group(1) if href_id else None),
                 title=title,
                 href=href,
                 customer=known.get("customer"),

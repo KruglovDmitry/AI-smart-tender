@@ -153,6 +153,11 @@ def api_db_tender(tender_id: int):
     return item
 
 
+@app.get("/api/db/methods")
+def api_db_methods(days: int = 30, platform: str | None = None):
+    return _db_call(db.methods_summary, days=max(1, min(days, 365)), platform=platform)
+
+
 @app.get("/api/db/runs")
 def api_db_runs(platform: str | None = None, limit: int = 50):
     return {"runs": _db_call(db.list_runs, platform=platform, limit=max(1, min(limit, 500)))}

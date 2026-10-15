@@ -170,3 +170,48 @@ def summary() -> dict:
         "platforms": [{"platform": name, **values} for name, values in sorted(per_platform.items())],
         "recent_runs": recent,
     }
+
+
+STAGE_ORDER = ("search", "sort", "navigate", "list", "card_fields", "documents_tab", "documents_files")
+SOURCE_GROUPS = {
+    "label": "rule", "block": "rule", "dom": "rule", "link": "rule", "page": "rule",
+    "field": "llm", "llm": "llm", "llm_block": "llm",
+}
+
+
+def methods_summary(*, days: int = 30, platform: str | None = None) -> dict:
+    """Как часто и насколько успешно работали эвристики, модель, известные адреса и зрение.
+
+    Счётчики берутся из stats.methods прогонов; источники полей — из tenders.sources.
+    """
+    tables = _tables()
+    runs, tenders = tables["search_runs"], tables["tenders"]
+    since = _since(days)
+    query = select(runs.c.platform, runs.c.stats).where(runs.c.created_at >= since)
+    if platform:
+        query = query.where(runs.c.platform == platform)
+    stages: dict[str, dict[str, dict[str, int]]] = {}
+    runs_count = 0
+    with engine().connect() as conn:
+        for row in conn.execute(query):
+            runs_count += 1
+            methods = (row.stats or {}).get("methods") or {}
+            for stage, by_method in methods.items():
+                for method, counts in by_method.items():
+                    item = stages.setdefault(stage, {}).setdefault(method, {"used": 0, "ok": 0})
+                    item["used"] += int(counts.get("used", 0))
+                    item["ok"] += int(counts.get("ok", 0))
+        sources: dict[str, dict[str, int]] = {}
+        fields_query = select(tenders.c.sources).where(tenders.c.last_seen >= since)
+        if platform:
+            fields_query = fields_query.where(tenders.c.platform == platform)
+        for row in conn.execute(fields_query):
+            for field, source in (row.sources or {}).items():
+                group = SOURCE_GROUPS.get(source, "other")
+                bucket = sources.setdefault(field, {})
+                bucket[group] = bucket.get(group, 0) + 1
+    ordered = [
+        {"stage": stage, "methods": [{"method": m, **c} for m, c in sorted(stages[stage].items())]}
+        for stage in sorted(stages, key=lambda s: STAGE_ORDER.index(s) if s in STAGE_ORDER else 99)
+    ]
+    return {"days": days, "runs": runs_count, "stages": ordered, "field_sources": sources}

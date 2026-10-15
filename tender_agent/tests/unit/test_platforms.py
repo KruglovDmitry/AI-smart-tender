@@ -74,3 +74,17 @@ def test_eis_filestore_links_are_documents() -> None:
                   href="https://zakupki.gov.ru/44fz/filestore/public/1.0/download/priz/file.html?uid=ABC")
     nav = Element(ref=2, tag="a", name="Журнал событий", href="https://zakupki.gov.ru/epz/order/notice/ea20/view/event-journal.html")
     assert file_refs([doc, nav]) == [1]
+
+
+def test_progress_method_counters() -> None:
+    from tender_agent.agent.state import Progress
+
+    progress = Progress()
+    progress.mark("search", "rule", False)
+    progress.mark("search", "known_url", None)
+    progress.mark_ok("search", "known_url")
+    progress.mark("sort", "vision", True)
+    assert progress.methods == {
+        "search": {"rule": {"used": 1, "ok": 0}, "known_url": {"used": 1, "ok": 1}},
+        "sort": {"vision": {"used": 1, "ok": 1}},
+    }

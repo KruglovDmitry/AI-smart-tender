@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -60,4 +60,5 @@ class TaskResult(BaseModel):
     results: list[TenderResult] = Field(default_factory=list)
     downloads: list[DownloadRecord] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
-    stats: dict[str, int | bool] = Field(default_factory=dict)
+    # Счётчики прогона; stats.methods — какой способ на каком этапе использовался и с каким итогом.
+    stats: dict[str, Any] = Field(default_factory=dict)

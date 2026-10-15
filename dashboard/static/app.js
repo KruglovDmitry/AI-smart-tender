@@ -7,6 +7,7 @@
     runs: ["Прогоны", "Когда, где и что искал агент"],
     run: ["Поиск на площадке", "Запуск tender-agent: результат сразу попадает в базу"],
     status: ["Статус системы", "Сервисы и база"],
+    methods: ["Эффективность", "Как часто срабатывают эвристики, модель, адреса площадок и зрение"],
   };
   const state = { offset: 0, total: 0 };
   // Поля, которые модель читает с карточки закупки (tenders.details).
@@ -30,6 +31,7 @@
     $("#page-sub").textContent = t[1];
     if (name === "tenders") loadTenders();
     if (name === "runs") loadRuns();
+    if (name === "methods") loadMethods();
   }
 
   document.querySelectorAll(".nav .it").forEach((btn) =>
@@ -136,11 +138,13 @@
   }
 
   function fillPlatformFilter(platforms) {
-    const sel = $("#f-platform");
-    const current = sel.value;
-    sel.innerHTML = '<option value="">все</option>' +
-      platforms.map((p) => `<option value="${esc(p.platform)}">${esc(p.platform)} (${p.tenders})</option>`).join("");
-    sel.value = current;
+    for (const id of ["#f-platform", "#m-platform"]) {
+      const sel = $(id);
+      const current = sel.value;
+      sel.innerHTML = '<option value="">все</option>' +
+        platforms.map((p) => `<option value="${esc(p.platform)}">${esc(p.platform)} (${p.tenders})</option>`).join("");
+      sel.value = current;
+    }
   }
 
   // ---------- закупки ----------
@@ -281,6 +285,61 @@
     }
   }
 
+  // ---------- эффективность ----------
+
+  const STAGES = {
+    search: "Поиск по запросу", sort: "Сортировка по дате", navigate: "Навигация по незнакомой странице",
+    list: "Чтение выдачи", card_fields: "Поля карточки", documents_tab: "Раздел «Документы»",
+    documents_files: "Выбор файлов",
+  };
+  const METHODS = {
+    rule: "эвристика", llm: "модель по DOM", llm_action: "действие модели",
+    known_url: "адрес площадки", vision: "зрение (VL)",
+  };
+  const FIELDS = {
+    title: "Предмет", customer: "Заказчик", published_at: "Дата публикации", deadline: "Срок подачи",
+    price: "Цена", status: "Статус", id: "Номер", procurement_method: "Способ закупки",
+    delivery_place: "Место поставки", bid_security: "Обеспечение заявки", contract_security: "Обеспечение контракта",
+    okpd2: "ОКПД2",
+  };
+
+  async function loadMethods() {
+    const p = new URLSearchParams({ days: $("#m-days").value });
+    if ($("#m-platform").value) p.set("platform", $("#m-platform").value);
+    try {
+      const data = await getJson(`/api/db/methods?${p}`);
+      $("#methods-hint").textContent = `Прогонов за период: ${data.runs}. Успех: поиск — выдача отфильтрована запросом; сортировка — включена; ` +
+        "выдача — найдены записи; поля — заполнено хотя бы одно; «Документы» — после перехода нашлись файлы.";
+      $("#methods-list").innerHTML = data.stages.length
+        ? data.stages.map((st) => {
+            const total = st.methods.reduce((a, m) => a + m.used, 0) || 1;
+            return `<div class="stage"><h4>${esc(STAGES[st.stage] || st.stage)}</h4>` +
+              st.methods.map((m) => {
+                const rate = m.used ? Math.round((100 * m.ok) / m.used) : 0;
+                return `<div class="mrow"><span>${esc(METHODS[m.method] || m.method)}</span>
+                  <div class="bar" title="успешно ${m.ok} из ${m.used}"><span style="width:${rate}%"></span></div>
+                  <span>${m.ok}/${m.used} · ${rate}%<span class="mu"> (${Math.round((100 * m.used) / total)}% попыток)</span></span></div>`;
+              }).join("") + "</div>";
+          }).join("")
+        : '<div class="empty">Нет прогонов со счётчиками за этот период (они пишутся начиная с этой версии агента)</div>';
+      const rows = Object.entries(data.field_sources);
+      $("#sources-list").innerHTML = rows.length
+        ? rows.map(([field, groups]) => {
+            const total = Object.values(groups).reduce((a, b) => a + b, 0) || 1;
+            const llm = groups.llm || 0;
+            return `<div class="mrow"><span>${esc(FIELDS[field] || field)}</span>
+              <div class="bar share" title="модель ${llm} из ${total}"><span style="width:${Math.round((100 * llm) / total)}%"></span></div>
+              <span class="mu">эвристика ${groups.rule || 0} · модель ${llm}${groups.other ? ` · др. ${groups.other}` : ""}</span></div>`;
+          }).join("")
+        : '<div class="empty">Нет закупок за период</div>';
+    } catch (e) {
+      dbBanner(e.message);
+      $("#methods-list").innerHTML = `<div class="empty">Ошибка: ${esc(e.message)}</div>`;
+    }
+  }
+  $("#m-days").addEventListener("change", loadMethods);
+  $("#m-platform").addEventListener("change", loadMethods);
+
   // ---------- запуск поиска ----------
 
   $("#platform_url").addEventListener("change", () => {
@@ -371,6 +430,7 @@
     await Promise.all([loadSummary(), loadStatus()]);
     if ($("#panel-tenders").classList.contains("active")) loadTenders();
     if ($("#panel-runs").classList.contains("active")) loadRuns();
+    if ($("#panel-methods").classList.contains("active")) loadMethods();
   }
 
   refreshAll();

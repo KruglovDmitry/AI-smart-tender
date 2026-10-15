@@ -221,6 +221,11 @@
           <a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.name || d.url)}</a>
           ${d.local_path ? `<div class="mu">скачан: ${esc(d.local_path)}</div>` : ""}
         </div>`).join("") || '<div class="empty">Документов не найдено</div>';
+      const lotList = (t.details || {}).lots || [];
+      const lots = lotList.length ? `<h3>Лоты процедуры (${lotList.length})</h3>` + lotList.map((l) => `<div class="doc">
+          ${l.number ? `<span class="mu">${esc(l.number)}</span> ` : ""}${l.url ? `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.title || l.url)}</a>` : esc(l.title || "—")}
+          ${l.price ? `<div class="mu">${typeof l.price === "number" ? fmtPrice(l.price) : esc(l.price)}</div>` : ""}
+        </div>`).join("") : "";
       const runs = (t.runs || []).map((r) => `<div class="mu">${esc(fmtDateTime(r.created_at))} · «${esc(r.query || "")}» · место ${r.position}${r.is_new ? " · впервые" : ""}</div>`).join("");
       openDrawer(`
         <h2>${esc(t.title || "Без названия")}</h2>
@@ -238,6 +243,7 @@
           ${field("Впервые найдена", esc(fmtDateTime(t.first_seen)))}
           ${field("Последний раз", `${esc(fmtDateTime(t.last_seen))} · встречалась ${t.seen_count} раз`)}
         </div>
+        ${lots}
         <h3>Документы</h3>${docs}
         <h3>Прогоны</h3>${runs || '<div class="empty">—</div>'}
         <h3>Откуда поля</h3><div class="mu">${esc(Object.entries(sources).map(([k, v]) => `${k}: ${v}`).join(", ") || "—")}</div>

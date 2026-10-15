@@ -14,6 +14,7 @@ _SORT_BY_DATE: dict[str, tuple[str, dict[str, str]]] = {
     "zakupki.gov.ru": ("/extendedsearch/results", {"sortBy": "PUBLISH_DATE", "sortDirection": "false"}),
     "zakupki.mos.ru": ("/purchase/list", {"sortField": "PublishDate", "sortDesc": "true"}),
     "tektorg.ru": ("/procedures", {"sort": "datePublished_desc"}),
+    "roseltorg.ru": ("/procedures/search", {"sort": "date_published_down"}),
 }
 
 # host → шаблон выдачи по запросу (подставляется {query}); выручает, когда поле поиска

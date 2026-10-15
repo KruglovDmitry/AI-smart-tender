@@ -126,7 +126,7 @@ class _TabRuntime:
         return self.page
 
 
-CARD_CONCURRENCY = 3
+CARD_CONCURRENCY = 5
 
 
 def _absorb(obs: Observation, task_keyword: str, keyword_applied: bool, sort_required: bool) -> list[TenderResult]:
@@ -208,7 +208,7 @@ async def _try_vision(runtime: BrowserRuntime, settings: Settings, task, progres
     return outcome.ok, outcome.seconds
 
 
-async def _settle(runtime, timeout_ms: int = 5_000) -> None:
+async def _settle(runtime, timeout_ms: int = 2_500) -> None:
     try:
         await runtime.current_page.wait_for_load_state("networkidle", timeout=timeout_ms)
     except Exception:
@@ -276,7 +276,10 @@ async def _read_one_card(
             await _settle(runtime)
             obs = await get_page_state(runtime, progress.search_placeholder or None)
             docs_reading = None
-            if llm is not None and getattr(llm, "read_card", None):
+            if obs.file_refs:
+                # Файлы в разделе уже видны коду (ЕИС: ссылки filestore) — второй вызов модели не нужен.
+                pass
+            elif llm is not None and getattr(llm, "read_card", None):
                 progress.card_reads += 1
                 try:
                     docs_reading = await read_card(llm, task, obs)

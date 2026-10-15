@@ -3,6 +3,10 @@ from __future__ import annotations
 from ..api.schemas import TenderResult
 
 
+def _lot(card: TenderResult) -> dict:
+    return {"title": card.title, "url": card.url, "price": card.price}
+
+
 def rank_tenders(
     cards: list[TenderResult],
     *,
@@ -10,15 +14,22 @@ def rank_tenders(
     limit: int,
 ) -> list[TenderResult]:
     kept: list[TenderResult] = []
-    seen: set[tuple[str, str]] = set()
+    by_key: dict[str, TenderResult] = {}
     for card in cards:
-        if card.verification_status == "incomplete":
+        if card.verification_status == "incomplete" or not (card.url or "").strip():
             continue
-        key = ((card.id or "").strip(), (card.url or "").strip())
-        if not key[1] or key in seen:
+        # Закупка — это процедура: строки выдачи с одним номером (лоты на Росэлторге и т.п.)
+        # склеиваются в одну запись, лоты сохраняются в details.lots.
+        key = (card.id or "").strip() or (card.url or "").strip()
+        first = by_key.get(key)
+        if first is None:
+            by_key[key] = card
+            kept.append(card)
             continue
-        seen.add(key)
-        kept.append(card)
+        if (card.url or "") != (first.url or "") and card.id:
+            lots = first.details.setdefault("lots", [_lot(first)])
+            if all(lot.get("url") != card.url for lot in lots):
+                lots.append(_lot(card))
     if sort_by == "published_at":
         dated = [card for card in kept if card.published_at]
         undated = [card for card in kept if not card.published_at]

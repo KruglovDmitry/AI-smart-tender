@@ -30,10 +30,13 @@ _CARD_SYSTEM = (
     "okpd2 — код ОКПД2 (если их несколько — первый). "
     "document_refs — ref из documents, которые являются файлами документации закупки "
     "(извещение, проект контракта, ТЗ, обоснование цены и т.п.), без инструкций сайта и форм для скачивания ЭП. "
+    "lots — если в процедуре несколько лотов, список [{\"number\":…,\"title\":…,\"price\":…}] дословными цитатами; "
+    "лоты — части этой же закупки, а не отдельные закупки; если лот один — []. "
     "documents_tab_ref — ref из links, ведущей на раздел/вкладку с документами этой закупки, "
     "если файлов на этой странице нет; иначе null. "
     'Верни только JSON: {"title":…,"customer":…,"published_at":…,"deadline":…,"price":…,"status":…,'
     '"procurement_method":…,"delivery_place":…,"bid_security":…,"contract_security":…,"okpd2":…,'
+    '"lots":[{"number":string|null,"title":string,"price":string|null}],'
     '"document_refs":[number],"documents_tab_ref":number|null}. Цитаты копируй дословно, не выдумывай.'
 )
 

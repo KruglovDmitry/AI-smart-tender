@@ -88,3 +88,41 @@ def test_progress_method_counters() -> None:
         "search": {"rule": {"used": 1, "ok": 0}, "known_url": {"used": 1, "ok": 1}},
         "sort": {"vision": {"used": 1, "ok": 1}},
     }
+
+
+def test_negated_download_is_not_a_download() -> None:
+    from tender_agent.agent.planner import parse_task
+    from tender_agent.config import Settings
+
+    base = 'С площадки https://zakupki.gov.ru/ верни последние 5 закупок по ключевому слову "канцтовары".'
+    assert parse_task(base + " Скачай документы.", Settings()).download_documents
+    for tail in (" Ничего не скачивай.", " Документы не скачивай.", " Без скачивания."):
+        assert not parse_task(base + tail, Settings()).download_documents, tail
+
+
+def test_lots_of_one_procedure_are_one_tender() -> None:
+    from tender_agent.api.schemas import TenderResult
+    from tender_agent.tenders.ranking import rank_tenders
+
+    lots = [TenderResult(id="B0510261309243", title=f"Филиал {i}", url=f"https://www.roseltorg.ru/procedure/B0510261309243/{i}",
+                         verification_status="verified") for i in (1, 6, 7)]
+    other = TenderResult(id="0373100110426000032", title="Канцтовары", url="https://www.roseltorg.ru/procedure/0373100110426000032/1",
+                         verification_status="verified")
+    ranked = rank_tenders([*lots, other], sort_by=None, limit=5)
+    assert [t.id for t in ranked] == ["B0510261309243", "0373100110426000032"]
+    assert [lot["url"][-1] for lot in ranked[0].details["lots"]] == ["1", "6", "7"]
+
+
+def test_known_sort_url_for_roseltorg() -> None:
+    url = "https://www.roseltorg.ru/procedures/search?sale=1&query_field=x"
+    assert sorted_by_date_url(url).endswith("sort=date_published_down")
+
+
+def test_two_digit_year_dates() -> None:
+    from tender_agent.heuristics.fields import build_fields, known_values
+    from tender_agent.tenders.extraction import parse_date
+
+    assert parse_date("21.09.26 16:51 (МСК)") == "2026-09-21"
+    assert parse_date("21.09.2026") == "2026-09-21"
+    known = known_values(build_fields([], "Публикация извещения\n21.09.26 16:51 (МСК)\nПрием заявок до\n29.09.26 11:00 (МСК)"))
+    assert known["published"].startswith("21.09.26")

@@ -10,7 +10,8 @@ import re
 from ..tenders.models import PageField, RawCard
 
 _COLON = re.compile(r"^(.{2,90}?):\s*(.{1,400})$")
-_DATE = re.compile(r"\d{2}\.\d{2}\.\d{4}|\d{4}-\d{2}-\d{2}")
+# Даты: 21.09.2026, 21.09.26 (Росэлторг), 2026-09-21.
+_DATE = re.compile(r"\d{2}\.\d{2}\.(?:\d{4}|\d{2})(?!\d)|\d{4}-\d{2}-\d{2}")
 _MONEY_TEXT = re.compile(r"(₽|₸|\$|руб\.?|тенге)", re.I)
 _MONEY_AMOUNT = re.compile(r"\d[\d\s]*(?:[.,]\d+)?")
 _NUMBER = re.compile(r"№\s*(\d{6,})")

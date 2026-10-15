@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from ..api.schemas import TaskSpec
-from ..tenders.discovery import pick_section
+from .discovery import pick_section
 from ..tenders.models import Observation
-from .state import Action, Progress
+from ..agent.state import Action, Progress
 
 
 def decide(obs: Observation, progress: Progress, task: TaskSpec) -> Action:

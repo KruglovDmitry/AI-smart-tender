@@ -54,8 +54,17 @@ def vision_goal(task: TaskSpec, reason: str, keyword_applied: bool) -> str:
     )
 
 
+def documents_goal(tender_title: str | None) -> str:
+    subject = f"«{tender_title[:120]}»" if tender_title else "этой закупки"
+    return (
+        f"Открыта карточка закупки {subject}. Найди и открой раздел или вкладку с документами закупки "
+        "(извещение, документация, проект контракта, ТЗ). Когда на экране список файлов документации — сразу done. "
+        "Файлы не скачивай. Не входи в аккаунт. Если нужен вход или CAPTCHA — ask_user."
+    )
+
+
 async def run_vision_step(runtime: BrowserRuntime, settings: Settings, task: TaskSpec, reason: str,
-                          keyword_applied: bool) -> VisionOutcome:
+                          keyword_applied: bool, goal: str | None = None) -> VisionOutcome:
     try:
         from ai_vision import VisionAgent, load_settings
     except ImportError:
@@ -66,7 +75,7 @@ async def run_vision_step(runtime: BrowserRuntime, settings: Settings, task: Tas
     if trace is not None:
         av_settings.runs_dir = trace.vision_dir()
     agent = VisionAgent(av_settings, mode="planner", extract=False)
-    goal = vision_goal(task, reason, keyword_applied)
+    goal = goal or vision_goal(task, reason, keyword_applied)
     log.info("vision step: %s", reason)
     try:
         result = await agent.run_on_page(runtime.current_page, goal, max_steps=settings.vision_max_steps)

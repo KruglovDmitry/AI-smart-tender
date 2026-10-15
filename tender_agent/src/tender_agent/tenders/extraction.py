@@ -4,8 +4,9 @@ import re
 from datetime import datetime
 
 from ..api.schemas import TenderResult
-from ..sites.generic import FILE_RE
-from .fields import known_values, label_kind
+from ..heuristics.patterns import DOC_HREF_RE, FILE_RE
+from ..heuristics.fields import known_values, label_kind
+from ..heuristics.titles import suspicious_title
 from .models import Element, Observation, PageField, RawCard
 
 _ISO = re.compile(r"(\d{4}-\d{2}-\d{2})")
@@ -157,9 +158,27 @@ def _date_on_page(value: str, blob: str) -> str | None:
 def _is_document(element: Element) -> bool:
     href = element.href or ""
     name = element.name or ""
-    if element.download or FILE_RE.search(href) or FILE_RE.search(name):
+    if element.download or FILE_RE.search(href) or FILE_RE.search(name) or DOC_HREF_RE.search(href):
         return True
     return bool(re.search(r"документ|скачать|файл|вложен", f"{name} {href}", re.I))
+
+
+DETAIL_KEYS = ("procurement_method", "delivery_place", "bid_security", "contract_security", "okpd2")
+
+
+def documents_tab_ref(obs: Observation, data: dict | None) -> int | None:
+    """Ссылка на раздел с документами, которую указала модель: только существующая ссылка, не файл."""
+    raw = (data or {}).get("documents_tab_ref")
+    if isinstance(raw, bool) or raw is None:
+        return None
+    try:
+        ref = int(raw)
+    except (TypeError, ValueError):
+        return None
+    element = _element(obs, ref)
+    if element is None or not element.href or FILE_RE.search(element.href) or DOC_HREF_RE.search(element.href):
+        return None
+    return ref
 
 
 def _element(obs: Observation, ref: int) -> Element | None:
@@ -246,6 +265,15 @@ def apply_page_reading(tender: TenderResult, obs: Observation, data: dict | None
     if status and not updated.status:
         updated.status = status
         updated.sources["status"] = status_source
+    title, title_source = _from_model(obs, payload, blob, "title", "title_quote", "")
+    if title and (not updated.title or suspicious_title(updated.title)) and not suspicious_title(title):
+        updated.title = title[:300]
+        updated.sources["title"] = title_source
+    for key in DETAIL_KEYS:
+        value, source = _from_model(obs, payload, blob, key, f"{key}_quote", "")
+        if value and not updated.details.get(key):
+            updated.details[key] = value[:500]
+            updated.sources[key] = source
     known = {element.ref for element in obs.elements}
     refs: list[int] = []
     for item in payload.get("document_refs") or []:

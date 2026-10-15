@@ -3,9 +3,9 @@ from __future__ import annotations
 import hashlib
 import re
 
-from ..sites.generic import CAPTCHA_RE, EMPTY_RE, ERROR_RE, FILE_RE
-from ..tenders.discovery import bind_controls, fallback_cards, pick_section
-from ..tenders.fields import build_fields, cards_from_blocks
+from ..heuristics.patterns import CAPTCHA_RE, EMPTY_RE, ERROR_RE, FILE_RE
+from ..heuristics.discovery import bind_controls, fallback_cards, pick_section
+from ..heuristics.fields import build_fields, cards_from_blocks
 from ..tenders.models import Element, Observation, RawCard
 from .runtime import BrowserRuntime
 

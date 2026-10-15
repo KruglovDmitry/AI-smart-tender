@@ -2,9 +2,9 @@ from tender_agent.agent.planner import card_for_model
 from tender_agent.api.schemas import TenderResult
 from tender_agent.browser.observations import limit_elements
 from tender_agent.storage.repository import SiteProfile, profile_is_fresh
-from tender_agent.tenders.discovery import fallback_cards, pick_search, pick_submit
+from tender_agent.heuristics.discovery import fallback_cards, pick_search, pick_submit
 from tender_agent.tenders.extraction import apply_labeled_fields, apply_page_reading, card_from_raw, parse_date
-from tender_agent.tenders.fields import build_fields, cards_from_blocks, known_values
+from tender_agent.heuristics.fields import build_fields, cards_from_blocks, known_values
 from tender_agent.tenders.models import Element, Observation, PageField, RawCard
 from tender_agent.tenders.ranking import rank_tenders
 
@@ -214,7 +214,7 @@ def test_quote_is_checked_against_the_whole_content_block() -> None:
     assert updated.published_at == "2026-02-01"
 
 
-def test_card_payload_sends_fields_instead_of_the_page_text() -> None:
+def test_card_payload_sends_fields_and_trimmed_page_text() -> None:
     obs = Observation(
         url="https://example.com/tenders/9",
         content_text="меню " * 500,
@@ -230,7 +230,8 @@ def test_card_payload_sends_fields_instead_of_the_page_text() -> None:
         ),
     )
     payload = card_for_model(obs)
-    assert "content" not in payload
+    # Модель читает каждую карточку: поля + основной текст (не больше 12 000 символов) + ссылки.
+    assert len(payload["content"]) <= 12000 and "links" in payload and "documents" in payload
     labels = [item["label"] for item in payload["fields"]]
     assert "Пункт меню" not in labels
     assert "Начальная цена" in labels

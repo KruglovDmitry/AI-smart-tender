@@ -1,7 +1,7 @@
 import asyncio
 
 from tender_agent.agent.planner import consult
-from tender_agent.agent.policy import decide
+from tender_agent.heuristics.policy import decide
 from tender_agent.agent.recovery import should_stop_repeat
 from tender_agent.agent.state import Action, Progress
 from tender_agent.api.schemas import TaskSpec

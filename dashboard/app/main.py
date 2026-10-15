@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import data_scan
+from . import data_scan, db
 
 DATA_ROOT = Path(os.getenv("DATA_ROOT", "/data")).resolve()
 TOOLS_SERVER_URL = os.getenv("TOOLS_SERVER_URL", "http://tools-server:8000").rstrip("/")
@@ -27,10 +27,20 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 app = FastAPI(title="TENAG Dashboard", version="1.0.0")
 
 
+@app.middleware("http")
+async def no_stale_ui(request, call_next):
+    """Страница и статика всегда перепроверяются: иначе после обновления браузер держит старый app.js."""
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 class PlatformRunBody(BaseModel):
     platform_url: str
     keywords: str
-    max_new_tenders: int = Field(default=2, ge=1, le=50)
+    max_new_tenders: int = Field(default=5, ge=1, le=50)
+    download_documents: bool = False
     download_subdir: str | None = None
     max_steps: int | None = Field(default=None, ge=5, le=200)
     instruction: str | None = None
@@ -94,7 +104,70 @@ async def api_status():
             "health": agent_health,
         },
         "activity": data_scan.recent_agent_logs(DATA_ROOT, limit=20),
+        "database": _database_status(),
     }
+
+
+# ---------- база закупок (Postgres tender-agent) ----------
+
+
+def _db_call(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except db.DatabaseNotReady as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/api/db/summary")
+def api_db_summary():
+    return _db_call(db.summary)
+
+
+@app.get("/api/db/tenders")
+def api_db_tenders(
+    platform: str | None = None,
+    q: str | None = None,
+    new_days: int | None = None,
+    published_from: str | None = None,
+    published_to: str | None = None,
+    min_price: float | None = None,
+    max_price: float | None = None,
+    verified_only: bool = False,
+    sort: str = "published",
+    limit: int = 50,
+    offset: int = 0,
+):
+    return _db_call(
+        db.list_tenders,
+        platform=platform, q=q, new_days=new_days, published_from=published_from, published_to=published_to,
+        min_price=min_price, max_price=max_price, verified_only=verified_only, sort=sort,
+        limit=max(1, min(limit, 500)), offset=max(0, offset),
+    )
+
+
+@app.get("/api/db/tenders/{tender_id}")
+def api_db_tender(tender_id: int):
+    item = _db_call(db.tender_detail, tender_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Закупка не найдена")
+    return item
+
+
+@app.get("/api/db/methods")
+def api_db_methods(days: int = 30, platform: str | None = None):
+    return _db_call(db.methods_summary, days=max(1, min(days, 365)), platform=platform)
+
+
+@app.get("/api/db/runs")
+def api_db_runs(platform: str | None = None, limit: int = 50):
+    return {"runs": _db_call(db.list_runs, platform=platform, limit=max(1, min(limit, 500)))}
+
+
+def _database_status() -> dict:
+    try:
+        return {"ok": True, "tenders_total": db.summary()["tenders_total"]}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:300]}
 
 
 @app.get("/api/tenders")
@@ -108,7 +181,8 @@ async def api_tenders(limit: int = 200):
 async def api_run_platform(body: PlatformRunBody):
     task = (
         f"С площадки {body.platform_url} верни последние {body.max_new_tenders} "
-        f'закупок по ключевому слову "{body.keywords}" и скачай документы.'
+        f'закупок по ключевому слову "{body.keywords}"'
+        + (" и скачай документы." if body.download_documents else ".")
     )
     if body.instruction:
         task = f"{task} {body.instruction}"

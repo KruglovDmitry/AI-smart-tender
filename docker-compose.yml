@@ -126,6 +126,8 @@ services:
       - DATA_ROOT=/data
       - TOOLS_SERVER_URL=http://tools-server:8000
       - TENDER_AGENT_URL=http://tender-agent:8010
+      # База закупок tender-agent (только чтение)
+      - TENDER_DB_URL=postgresql+psycopg://${POSTGRES_USER:-tenders}:${POSTGRES_PASSWORD:-tenders}@postgres:5432/${POSTGRES_DB:-tenders}
       - SEEN_TENDERS_DB=${SEEN_TENDERS_DB:-/data/_state/seen_tenders.sqlite3}
     volumes:
       - ${DATA_HOST_PATH:-./data}:/data
@@ -133,6 +135,7 @@ services:
     depends_on:
       - tools-server
       - tender-agent
+      - postgres
     restart: unless-stopped
 
 volumes:

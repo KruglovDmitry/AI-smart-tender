@@ -54,6 +54,24 @@ class Progress:
     visited: list[str] = field(default_factory=list)
     profile_rejected: bool = False
     search_placeholder: str = ""
+    vision_doc_calls: int = 0
+    # Учёт способов: {этап: {способ: {"used": n, "ok": m}}}.
+    # Этапы: search, sort, navigate, list, card_fields, documents_tab, documents_files.
+    # Способы: rule (эвристика), llm (модель по DOM), known_url (адрес площадки), vision (зрение).
+    methods: dict[str, dict[str, dict[str, int]]] = field(default_factory=dict)
+    # Каким способом сейчас применяется поиск: успех засчитывается, когда выдача отфильтрована.
+    pending_search: str = ""
+
+    def mark(self, stage: str, method: str, ok: bool | None) -> None:
+        """Засчитать попытку; ok=None — итог станет известен позже (mark_ok)."""
+        item = self.methods.setdefault(stage, {}).setdefault(method, {"used": 0, "ok": 0})
+        item["used"] += 1
+        if ok:
+            item["ok"] += 1
+
+    def mark_ok(self, stage: str, method: str) -> None:
+        item = self.methods.setdefault(stage, {}).setdefault(method, {"used": 0, "ok": 0})
+        item["ok"] = min(item["used"], item["ok"] + 1)
 
 
 class RunLimits(BaseModel):

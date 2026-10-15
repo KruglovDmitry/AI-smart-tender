@@ -3,8 +3,9 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-from ..sites.generic import (
+from .patterns import (
     CARD_HREF_RE,
+    DOC_HREF_RE,
     FILE_RE,
     NEXT_RE,
     SEARCH_RE,
@@ -14,7 +15,7 @@ from ..sites.generic import (
     SORT_WRONG_RE,
     SUBMIT_RE,
 )
-from .models import Element, Observation, RawCard
+from ..tenders.models import Element, Observation, RawCard
 
 
 def _blob(el: Element) -> str:
@@ -127,7 +128,7 @@ def file_refs(elements: list[Element]) -> list[int]:
     found: list[int] = []
     for el in elements:
         href = el.href or ""
-        if el.download or FILE_RE.search(href) or FILE_RE.search(el.name or ""):
+        if el.download or FILE_RE.search(href) or FILE_RE.search(el.name or "") or DOC_HREF_RE.search(href):
             found.append(el.ref)
     return found
 

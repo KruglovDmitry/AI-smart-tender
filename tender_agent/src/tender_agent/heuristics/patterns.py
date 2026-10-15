@@ -18,6 +18,8 @@ CAPTCHA_RE = re.compile(r"captcha|капча|я не робот|подтверд
 EMPTY_RE = re.compile(r"ничего не найдено|нет результатов|ничего не нашлось", re.I)
 ERROR_RE = re.compile(r"не найден|страница не существует|\b404\b|\b500\b", re.I)
 FILE_RE = re.compile(r"\.(pdf|docx?|xlsx?|zip|rar|7z)(\?|$)", re.I)
+# Ссылка на файл без расширения в адресе: ЕИС отдаёт документы через /filestore/.../download/...?uid=.
+DOC_HREF_RE = re.compile(r"filestore|/download|file\.html\?uid=|getfile|attachment", re.I)
 CARD_HREF_RE = re.compile(r"tender|purchase|procedure|trade|zakup|notice", re.I)
 
 CARD_SELECTOR = "article.tender-card, tr.tender-row, main[data-tender-id]"

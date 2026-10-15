@@ -23,6 +23,10 @@ _SNAPSHOT_JS = """() => {
   };
   const hrefOf = (el) => {
     if (!el) return null;
+    const dataUrl = el.getAttribute && (el.getAttribute('data-url') || el.getAttribute('data-href'));
+    if (!el.getAttribute('href') && dataUrl) {
+      try { return new URL(dataUrl, location.href).href; } catch (e) { return dataUrl; }
+    }
     const attr = el.getAttribute && el.getAttribute('href');
     if (typeof attr === 'string' && attr) {
       try { return new URL(attr, location.href).href; } catch (e) { return attr; }
@@ -72,11 +76,21 @@ _SNAPSHOT_JS = """() => {
   const nodes = [...document.querySelectorAll('a[href], button, input, textarea, select')].filter(visible);
   const controls = nodes.filter(el => (el.tagName || '').toLowerCase() !== 'a');
   const links = nodes.filter(el => (el.tagName || '').toLowerCase() === 'a');
-  const ordered = [
+  // Файлы в свёрнутых блоках («Приложения к извещению» на Росэлторге): ссылку можно скачать и не раскрывая.
+  const hiddenFiles = [...document.querySelectorAll('a[href]')].filter(el => !visible(el) && isFile(el)).slice(0, 25);
+  // «Кнопки»-файлы: элементы без ссылки, которые скачивают файл по клику (скрипт, data-url).
+  const fileExt = /\\.(pdf|docx?|xlsx?|zip|rar|7z|rtf|odt|ods|txt)\\b/i;
+  const fileButtons = [...document.querySelectorAll('button, [role=button], [onclick], [data-url], [data-href], [data-file], span, div, li')]
+    .filter(el => !el.closest('a[href]') && el.children.length <= 2 && fileExt.test(textOf(el)) && textOf(el).length < 200
+      && (el.matches('button, [role=button], [onclick], [data-url], [data-href], [data-file]') || getComputedStyle(el).cursor === 'pointer'))
+    .slice(0, 15);
+  const ordered = [...new Set([
     ...controls.slice(0, 40),
     ...links.filter(isFile).slice(0, 25),
+    ...hiddenFiles,
+    ...fileButtons,
     ...links.filter(el => !isFile(el)).slice(0, 25)
-  ].slice(0, 80);
+  ])].slice(0, 110);
   const elements = ordered.map((el, index) => describe(el, index + 1));
   const mainRoot = () => {
     const main = document.querySelector('main');
@@ -152,7 +166,17 @@ _SNAPSHOT_JS = """() => {
       || null;
   };
   const root = mainRoot();
-  const content = linesOf(root).slice(0, 12000);
+  let content = linesOf(root).slice(0, 12000);
+  const pageText = (() => {
+    const clone = document.body.cloneNode(true);
+    clone.querySelectorAll('header, nav, footer, aside, script, style, noscript, [role=dialog], [role=navigation], [role=banner], [role=contentinfo]')
+      .forEach(el => el.remove());
+    return String(clone.textContent || '').replace(/[ \\t\\u00a0]+/g, ' ').replace(/\\s*\\n\\s*/g, '\\n').replace(/\\n{2,}/g, '\\n').trim();
+  })();
+  if (content.length < 2500 && pageText.length > content.length * 3) {
+    // Росэлторг: «основным» оказывался служебный блок на 1 тыс. символов, а карточка (9 тыс.) — нет.
+    content = pageText.slice(0, 12000);
+  }
   const pairs = pairsIn(root);
   const blocks = [];
   const seenBlocks = new Set();

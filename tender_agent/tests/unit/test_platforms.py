@@ -116,3 +116,13 @@ def test_lots_of_one_procedure_are_one_tender() -> None:
 def test_known_sort_url_for_roseltorg() -> None:
     url = "https://www.roseltorg.ru/procedures/search?sale=1&query_field=x"
     assert sorted_by_date_url(url).endswith("sort=date_published_down")
+
+
+def test_two_digit_year_dates() -> None:
+    from tender_agent.heuristics.fields import build_fields, known_values
+    from tender_agent.tenders.extraction import parse_date
+
+    assert parse_date("21.09.26 16:51 (МСК)") == "2026-09-21"
+    assert parse_date("21.09.2026") == "2026-09-21"
+    known = known_values(build_fields([], "Публикация извещения\n21.09.26 16:51 (МСК)\nПрием заявок до\n29.09.26 11:00 (МСК)"))
+    assert known["published"].startswith("21.09.26")

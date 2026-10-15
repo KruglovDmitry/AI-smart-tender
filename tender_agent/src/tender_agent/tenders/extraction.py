@@ -10,7 +10,7 @@ from ..heuristics.titles import suspicious_title
 from .models import Element, Observation, PageField, RawCard
 
 _ISO = re.compile(r"(\d{4}-\d{2}-\d{2})")
-_DOT = re.compile(r"(\d{2}\.\d{2}\.\d{4})")
+_DOT = re.compile(r"(\d{2}\.\d{2}\.(?:\d{4}|\d{2}))(?!\d)")
 
 
 def parse_date(value: str | None) -> str | None:
@@ -23,7 +23,8 @@ def parse_date(value: str | None) -> str | None:
     dotted = _DOT.search(text)
     if dotted:
         try:
-            return datetime.strptime(dotted.group(1), "%d.%m.%Y").date().isoformat()
+            fmt = "%d.%m.%Y" if len(dotted.group(1)) == 10 else "%d.%m.%y"
+            return datetime.strptime(dotted.group(1), fmt).date().isoformat()
         except ValueError:
             return None
     return None
@@ -317,9 +318,13 @@ def apply_page_reading(tender: TenderResult, obs: Observation, data: dict | None
     for ref in [*refs, *obs.file_refs]:
         element = _element(obs, ref)
         href = (element.href if element else "") or ""
+        name = ((element.name if element else "") or (element.label if element else "") or "").strip()[:200]
         if href and href not in urls:
             urls.append(href)
-            documents.append({"name": (element.name or element.label or "").strip()[:200], "url": href})
+            documents.append({"name": name, "url": href})
+        elif not href and name and all(doc["name"] != name for doc in documents):
+            # «Кнопка»-файл без адреса: скачивается кликом, в базе — по имени на странице карточки.
+            documents.append({"name": name, "url": f"{obs.url}#file:{name}"})
     updated.document_urls = urls
     updated.documents = documents
     return updated, refs or list(obs.file_refs)

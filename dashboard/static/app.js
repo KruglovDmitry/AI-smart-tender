@@ -9,6 +9,14 @@
     status: ["Статус системы", "Сервисы и база"],
   };
   const state = { offset: 0, total: 0 };
+  // Поля, которые модель читает с карточки закупки (tenders.details).
+  const DETAIL_LABELS = {
+    procurement_method: "Способ закупки",
+    delivery_place: "Место поставки",
+    bid_security: "Обеспечение заявки",
+    contract_security: "Обеспечение контракта",
+    okpd2: "ОКПД2",
+  };
 
   // ---------- навигация ----------
 
@@ -221,6 +229,7 @@
           ${field("Опубликована", esc(fmtDay(t.published_at)))}
           ${field("Подача заявок до", esc(fmtDay(t.deadline)))}
           ${field("Статус", esc(t.status || "—"))}
+          ${Object.entries(DETAIL_LABELS).filter(([k]) => (t.details || {})[k]).map(([k, label]) => field(label, esc(t.details[k]))).join("")}
           ${field("Проверка", t.verification_status === "verified" ? '<span class="pill ok">подтверждена</span>' : '<span class="pill warn">проверить</span>')}
           ${field("Впервые найдена", esc(fmtDateTime(t.first_seen)))}
           ${field("Последний раз", `${esc(fmtDateTime(t.last_seen))} · встречалась ${t.seen_count} раз`)}

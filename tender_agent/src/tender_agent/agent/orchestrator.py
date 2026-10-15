@@ -236,6 +236,7 @@ async def _open_cards(
                     "result": {k: getattr(updated, k) for k in ("customer", "published_at", "deadline", "price", "status")},
                     "sources": updated.sources, "document_refs": refs,
                 })
+            if not refs:
                 tab = pick_documents_tab(obs.elements)
                 if tab is not None and progress.actions < task.max_actions:
                     await _act(
@@ -247,6 +248,9 @@ async def _open_cards(
                     progress.actions += 1
                     obs = await get_page_state(runtime, progress.search_placeholder or None)
                     updated, refs = apply_page_reading(updated, obs, None)
+                    if card_trace is not None:
+                        card_trace.log_step({"phase": "card_documents", "url": obs.url,
+                                             "documents": updated.documents})
             if task.download_documents:
                 for ref in refs:
                     if len(saved) >= settings.max_downloads or progress.actions >= task.max_actions:

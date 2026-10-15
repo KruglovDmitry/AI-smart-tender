@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 from ..sites.generic import (
     CARD_HREF_RE,
+    DOC_HREF_RE,
     FILE_RE,
     NEXT_RE,
     SEARCH_RE,
@@ -127,7 +128,7 @@ def file_refs(elements: list[Element]) -> list[int]:
     found: list[int] = []
     for el in elements:
         href = el.href or ""
-        if el.download or FILE_RE.search(href) or FILE_RE.search(el.name or ""):
+        if el.download or FILE_RE.search(href) or FILE_RE.search(el.name or "") or DOC_HREF_RE.search(href):
             found.append(el.ref)
     return found
 

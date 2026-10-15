@@ -35,6 +35,8 @@ class TenderResult(BaseModel):
     matched_keyword: str | None = None
     verification_status: VerificationStatus = "incomplete"
     document_urls: list[str] = Field(default_factory=list)
+    # Дополнительные поля карточки (способ закупки, место поставки, обеспечения, ОКПД2).
+    details: dict[str, str] = Field(default_factory=dict)
     # Документы с названиями: [{"name": "...", "url": "..."}].
     documents: list[dict[str, str]] = Field(default_factory=list)
     sources: dict[str, str] = Field(default_factory=dict)

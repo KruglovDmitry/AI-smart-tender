@@ -208,6 +208,13 @@ async def _try_vision(runtime: BrowserRuntime, settings: Settings, task, progres
     return outcome.ok, outcome.seconds
 
 
+async def _settle(runtime, timeout_ms: int = 5_000) -> None:
+    try:
+        await runtime.current_page.wait_for_load_state("networkidle", timeout=timeout_ms)
+    except Exception:
+        pass
+
+
 async def _read_one_card(
     runtime,
     settings: Settings,
@@ -222,6 +229,8 @@ async def _read_one_card(
     if runtime.current_page.url != tender.url:
         await _goto(runtime, tender.url, settings, host)
         progress.actions += 1
+    # Карточки часто дорисовывают файлы и поля скриптом после domcontentloaded (223-ФЗ на ЕИС).
+    await _settle(runtime)
     obs = await get_page_state(runtime, progress.search_placeholder or None)
     before = dict(tender.sources)
     tender = apply_labeled_fields(tender, obs.fields)
@@ -261,27 +270,10 @@ async def _read_one_card(
         if ref is None:
             tab = pick_documents_tab(obs.elements)
             ref, source = (tab.ref if tab else None), "rule"
-        opened_by = None
-        if ref is not None:
-            try:
-                await _act(runtime, Action(tool="click", element_ref=ref, expected="changed", note="documents"), settings, host)
-                progress.actions += 1
-                opened_by = source
-            except Exception as exc:
-                errors.append(f"Раздел документов не открылся: {exc}")
-                progress.mark("documents_tab", source, False)
-        if opened_by is None and settings.vision_enabled and progress.vision_doc_calls < settings.vision_max_calls + 1:
-            # Ни модель, ни правило не нашли раздел (или он не открылся): зрение ищет его на экране.
-            progress.vision_doc_calls += 1
-            outcome = await run_vision_step(runtime, settings, task, "раздел документов", True,
-                                            goal=documents_goal(updated.title))
-            progress.mark("documents_tab", "vision", outcome.ok)
-            if outcome.ok:
-                opened_by = "vision"
-            if card_trace is not None:
-                card_trace.log_step({"phase": "card_documents_vision", "ok": outcome.ok, "note": outcome.note[:300],
-                                     "trace": outcome.trace_dir})
-        if opened_by is not None:
+        async def read_documents(opened_by: str) -> list:
+            """Дочитать открытый раздел документов: подождать подгрузку, модель выбирает файлы."""
+            nonlocal obs, updated
+            await _settle(runtime)
             obs = await get_page_state(runtime, progress.search_placeholder or None)
             docs_reading = None
             if llm is not None and getattr(llm, "read_card", None):
@@ -290,9 +282,8 @@ async def _read_one_card(
                     docs_reading = await read_card(llm, task, obs)
                 except Exception as exc:
                     errors.append(f"Модель не прочитала документы: {exc}")
-            updated, refs = apply_page_reading(updated, obs, docs_reading)
-            if opened_by != "vision":
-                progress.mark("documents_tab", opened_by, bool(refs))
+            updated, found = apply_page_reading(updated, obs, docs_reading)
+            progress.mark("documents_tab", opened_by, bool(found))
             if docs_reading is not None:
                 docs_model = [r for r in docs_reading.get("document_refs") or [] if isinstance(r, int)]
                 progress.mark("documents_files", "llm", bool(docs_model))
@@ -301,6 +292,28 @@ async def _read_one_card(
             if card_trace is not None:
                 card_trace.log_step({"phase": "card_documents", "url": obs.url, "tab_found_by": opened_by,
                                      "documents": updated.documents})
+            return found
+
+        if ref is not None:
+            try:
+                await _act(runtime, Action(tool="click", element_ref=ref, expected="changed", note="documents"), settings, host)
+                progress.actions += 1
+                refs = await read_documents(source)
+            except Exception as exc:
+                errors.append(f"Раздел документов не открылся: {exc}")
+                progress.mark("documents_tab", source, False)
+        if not refs and settings.vision_enabled and progress.vision_doc_calls < settings.vision_max_calls + 1:
+            # Раздел не нашли, он не открылся или в нём не видно файлов (вкладка на скрипте): ищем глазами.
+            progress.vision_doc_calls += 1
+            outcome = await run_vision_step(runtime, settings, task, "раздел документов", True,
+                                            goal=documents_goal(updated.title))
+            if card_trace is not None:
+                card_trace.log_step({"phase": "card_documents_vision", "ok": outcome.ok, "note": outcome.note[:300],
+                                     "trace": outcome.trace_dir})
+            if outcome.ok:
+                refs = await read_documents("vision")
+            else:
+                progress.mark("documents_tab", "vision", False)
     if task.download_documents:
         for ref in refs:
             if len(saved) >= settings.max_downloads or progress.actions >= task.max_actions:

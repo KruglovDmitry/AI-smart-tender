@@ -88,3 +88,26 @@ def test_progress_method_counters() -> None:
         "search": {"rule": {"used": 1, "ok": 0}, "known_url": {"used": 1, "ok": 1}},
         "sort": {"vision": {"used": 1, "ok": 1}},
     }
+
+
+def test_negated_download_is_not_a_download() -> None:
+    from tender_agent.agent.planner import parse_task
+    from tender_agent.config import Settings
+
+    base = 'С площадки https://zakupki.gov.ru/ верни последние 5 закупок по ключевому слову "канцтовары".'
+    assert parse_task(base + " Скачай документы.", Settings()).download_documents
+    for tail in (" Ничего не скачивай.", " Документы не скачивай.", " Без скачивания."):
+        assert not parse_task(base + tail, Settings()).download_documents, tail
+
+
+def test_lots_of_one_procedure_are_one_tender() -> None:
+    from tender_agent.api.schemas import TenderResult
+    from tender_agent.tenders.ranking import rank_tenders
+
+    lots = [TenderResult(id="B0510261309243", title=f"Филиал {i}", url=f"https://www.roseltorg.ru/procedure/B0510261309243/{i}",
+                         verification_status="verified") for i in (1, 6, 7)]
+    other = TenderResult(id="0373100110426000032", title="Канцтовары", url="https://www.roseltorg.ru/procedure/0373100110426000032/1",
+                         verification_status="verified")
+    ranked = rank_tenders([*lots, other], sort_by=None, limit=5)
+    assert [t.id for t in ranked] == ["B0510261309243", "0373100110426000032"]
+    assert [lot["url"][-1] for lot in ranked[0].details["lots"]] == ["1", "6", "7"]

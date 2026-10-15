@@ -69,7 +69,8 @@ def parse_task(text: str, settings: Settings) -> TaskSpec:
         limit=_limit_token(raw, settings.default_limit),
         sort_by=sort_by,  # type: ignore[arg-type]
         filters=filters,
-        download_documents=bool(re.search(r"скач", raw, re.I)),
+        download_documents=bool(re.search(r"скач", raw, re.I))
+        and not re.search(r"(?:\bне|\bбез|ничего\s+не)\s+(?:\w+\s+){0,2}скач", raw, re.I),
         max_pages=settings.max_pages,
         max_actions=settings.max_actions,
         timeout_seconds=settings.timeout_seconds,

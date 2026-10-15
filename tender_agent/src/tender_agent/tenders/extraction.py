@@ -163,6 +163,26 @@ def _is_document(element: Element) -> bool:
     return bool(re.search(r"документ|скачать|файл|вложен", f"{name} {href}", re.I))
 
 
+def _lots_from_model(raw: object, blob: str) -> list[dict]:
+    """Лоты, которые модель процитировала со страницы: название должно быть на странице."""
+    if not isinstance(raw, list):
+        return []
+    lots = []
+    for item in raw[:100]:
+        if not isinstance(item, dict):
+            continue
+        title = _text(item.get("title"))
+        if not title or not _on_page(title, blob):
+            continue
+        lot = {"title": title[:300]}
+        for key in ("number", "price"):
+            value = _text(item.get(key))
+            if value and _on_page(value, blob):
+                lot[key] = value[:60]
+        lots.append(lot)
+    return lots if len(lots) > 1 else []
+
+
 DETAIL_KEYS = ("procurement_method", "delivery_place", "bid_security", "contract_security", "okpd2")
 
 
@@ -274,6 +294,14 @@ def apply_page_reading(tender: TenderResult, obs: Observation, data: dict | None
         if value and not updated.details.get(key):
             updated.details[key] = value[:500]
             updated.sources[key] = source
+    lots = _lots_from_model(payload.get("lots"), blob)
+    if lots:
+        # Лоты со страницы процедуры — части этой закупки; адреса строк выдачи, если были, сохраняем.
+        known_urls = {(lot.get("title") or "").casefold(): lot.get("url") for lot in updated.details.get("lots", [])}
+        for lot in lots:
+            lot.setdefault("url", known_urls.get((lot.get("title") or "").casefold()))
+        updated.details["lots"] = lots
+        updated.sources["lots"] = "llm"
     known = {element.ref for element in obs.elements}
     refs: list[int] = []
     for item in payload.get("document_refs") or []:

@@ -16,16 +16,16 @@ from ..observability.logging import get_logger
 from ..observability.trace import current_trace
 from ..sites.profiles import remember_success
 from ..storage.repository import Repository, profile_is_fresh
-from ..tenders.discovery import inspect_element, pick_documents_tab
+from ..heuristics.discovery import inspect_element, pick_documents_tab
 from ..tenders.extraction import apply_labeled_fields, apply_page_reading, card_from_raw, documents_tab_ref
 from ..tenders.models import Observation
 from ..tenders.refine import apply_reading, blocks_for_model
 from ..tenders.ranking import rank_tenders
 from .planner import TaskParseError, consult, parse_task, read_card
-from .policy import decide
+from ..heuristics.policy import decide
 from .recovery import clear_failure, note_failure, should_stop_repeat
 from .vision import run_vision_step
-from ..sites.known import search_url, sorted_by_date_url
+from ..heuristics.known_sites import search_url, sorted_by_date_url
 from .state import Action, Progress
 
 log = get_logger()

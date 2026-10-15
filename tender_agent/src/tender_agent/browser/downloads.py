@@ -9,7 +9,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeout
 
 from ..api.schemas import DownloadRecord
 from ..config import Settings
-from ..sites.generic import FILE_RE
+from ..heuristics.patterns import FILE_RE
 from ..tenders.models import Observation
 from .dom_tools import element_by_ref
 from .navigation import same_site, validate_navigation_url

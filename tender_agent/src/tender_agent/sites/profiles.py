@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .generic import CARD_SELECTOR
+from ..heuristics.patterns import CARD_SELECTOR
 from ..storage.repository import Repository, SiteProfile
 
 

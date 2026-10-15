@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 
-from .models import PageField, RawCard
+from ..tenders.models import PageField, RawCard
 
 _COLON = re.compile(r"^(.{2,90}?):\s*(.{1,400})$")
 _DATE = re.compile(r"\d{2}\.\d{2}\.\d{4}|\d{4}-\d{2}-\d{2}")

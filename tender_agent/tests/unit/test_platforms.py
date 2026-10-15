@@ -1,8 +1,8 @@
 from tender_agent.agent.orchestrator import search_applied
 from tender_agent.browser.navigation import same_site
-from tender_agent.sites.known import search_url, sorted_by_date_url
-from tender_agent.tenders.discovery import pick_sort, pick_submit
-from tender_agent.tenders.fields import junk_title
+from tender_agent.heuristics.known_sites import search_url, sorted_by_date_url
+from tender_agent.heuristics.discovery import pick_sort, pick_submit
+from tender_agent.heuristics.fields import junk_title
 from tender_agent.tenders.models import Element, Observation, RawCard
 
 
@@ -68,7 +68,7 @@ def test_search_applied_uses_block_text() -> None:
 
 
 def test_eis_filestore_links_are_documents() -> None:
-    from tender_agent.tenders.discovery import file_refs
+    from tender_agent.heuristics.discovery import file_refs
 
     doc = Element(ref=1, tag="a", name="Проект контракта",
                   href="https://zakupki.gov.ru/44fz/filestore/public/1.0/download/priz/file.html?uid=ABC")

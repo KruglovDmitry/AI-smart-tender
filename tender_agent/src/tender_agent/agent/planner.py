@@ -5,7 +5,7 @@ import re
 from ..api.schemas import TaskSpec
 from ..config import Settings
 from ..llm.base import LLMClient
-from ..sites.generic import FILE_RE
+from ..heuristics.patterns import FILE_RE
 from ..tenders.models import Observation
 from .state import Action
 

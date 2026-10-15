@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-from ..sites.generic import (
+from .patterns import (
     CARD_HREF_RE,
     DOC_HREF_RE,
     FILE_RE,
@@ -15,7 +15,7 @@ from ..sites.generic import (
     SORT_WRONG_RE,
     SUBMIT_RE,
 )
-from .models import Element, Observation, RawCard
+from ..tenders.models import Element, Observation, RawCard
 
 
 def _blob(el: Element) -> str:

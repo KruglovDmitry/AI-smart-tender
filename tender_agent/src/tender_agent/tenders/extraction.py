@@ -4,9 +4,9 @@ import re
 from datetime import datetime
 
 from ..api.schemas import TenderResult
-from ..sites.generic import DOC_HREF_RE, FILE_RE
-from .fields import known_values, label_kind
-from .refine import suspicious_title
+from ..heuristics.patterns import DOC_HREF_RE, FILE_RE
+from ..heuristics.fields import known_values, label_kind
+from ..heuristics.titles import suspicious_title
 from .models import Element, Observation, PageField, RawCard
 
 _ISO = re.compile(r"(\d{4}-\d{2}-\d{2})")

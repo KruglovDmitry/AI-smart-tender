@@ -2,9 +2,9 @@ from tender_agent.agent.planner import card_for_model
 from tender_agent.api.schemas import TenderResult
 from tender_agent.browser.observations import limit_elements
 from tender_agent.storage.repository import SiteProfile, profile_is_fresh
-from tender_agent.tenders.discovery import fallback_cards, pick_search, pick_submit
+from tender_agent.heuristics.discovery import fallback_cards, pick_search, pick_submit
 from tender_agent.tenders.extraction import apply_labeled_fields, apply_page_reading, card_from_raw, parse_date
-from tender_agent.tenders.fields import build_fields, cards_from_blocks, known_values
+from tender_agent.heuristics.fields import build_fields, cards_from_blocks, known_values
 from tender_agent.tenders.models import Element, Observation, PageField, RawCard
 from tender_agent.tenders.ranking import rank_tenders
 

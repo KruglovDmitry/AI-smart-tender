@@ -111,3 +111,8 @@ def test_lots_of_one_procedure_are_one_tender() -> None:
     ranked = rank_tenders([*lots, other], sort_by=None, limit=5)
     assert [t.id for t in ranked] == ["B0510261309243", "0373100110426000032"]
     assert [lot["url"][-1] for lot in ranked[0].details["lots"]] == ["1", "6", "7"]
+
+
+def test_known_sort_url_for_roseltorg() -> None:
+    url = "https://www.roseltorg.ru/procedures/search?sale=1&query_field=x"
+    assert sorted_by_date_url(url).endswith("sort=date_published_down")

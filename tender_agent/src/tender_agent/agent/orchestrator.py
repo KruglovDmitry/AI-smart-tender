@@ -17,7 +17,7 @@ from ..observability.trace import current_trace
 from ..sites.profiles import remember_success
 from ..storage.repository import Repository, profile_is_fresh
 from ..tenders.discovery import inspect_element, pick_documents_tab
-from ..tenders.extraction import apply_labeled_fields, apply_page_reading, card_from_raw
+from ..tenders.extraction import apply_labeled_fields, apply_page_reading, card_from_raw, documents_tab_ref
 from ..tenders.models import Observation
 from ..tenders.refine import apply_reading, blocks_for_model
 from ..tenders.ranking import rank_tenders
@@ -112,15 +112,21 @@ async def _act(runtime: BrowserRuntime, action: Action, settings: Settings, host
         await scroll_page(runtime)
 
 
-def _card_needs_model(tender: TenderResult, download_documents: bool) -> bool:
-    if download_documents:
-        return True
-    return not (
-        tender.customer
-        and tender.published_at
-        and tender.deadline
-        and tender.price is not None
-    )
+class _TabRuntime:
+    """Отдельная вкладка того же браузера для параллельного чтения карточек."""
+
+    def __init__(self, base: BrowserRuntime, page) -> None:
+        self.settings = base.settings
+        self.downloads_dir = base.downloads_dir
+        self.context = base.context
+        self.page = page
+
+    @property
+    def current_page(self):
+        return self.page
+
+
+CARD_CONCURRENCY = 3
 
 
 def _absorb(obs: Observation, task_keyword: str, keyword_applied: bool, sort_required: bool) -> list[TenderResult]:
@@ -193,6 +199,72 @@ async def _try_vision(runtime: BrowserRuntime, settings: Settings, task, progres
     return outcome.ok, outcome.seconds
 
 
+async def _read_one_card(
+    runtime,
+    settings: Settings,
+    host: str,
+    task,
+    tender: TenderResult,
+    progress: Progress,
+    llm: LLMClient | None,
+    errors: list[str],
+) -> tuple[TenderResult, list]:
+    saved = []
+    if runtime.current_page.url != tender.url:
+        await _goto(runtime, tender.url, settings, host)
+        progress.actions += 1
+    obs = await get_page_state(runtime, progress.search_placeholder or None)
+    tender = apply_labeled_fields(tender, obs.fields)
+    reading = None
+    if llm is not None and getattr(llm, "read_card", None):
+        # Модель читает каждую карточку: подписи дают предзаполнение, модель — остальное и проверку.
+        progress.card_reads += 1
+        try:
+            reading = await read_card(llm, task, obs)
+        except Exception as exc:
+            errors.append(f"Модель не прочитала карточку: {exc}")
+    updated, refs = apply_page_reading(tender, obs, reading)
+    card_trace = current_trace.get()
+    if card_trace is not None:
+        card_trace.log_step({
+            "phase": "card", "url": obs.url, "page_kind": obs.page_kind, "fields": len(obs.fields),
+            "content_chars": len(obs.content_text), "model_used": reading is not None,
+            "result": {k: getattr(updated, k) for k in ("title", "customer", "published_at", "deadline", "price", "status")},
+            "details": updated.details, "sources": updated.sources, "document_refs": refs,
+            "documents_tab_ref": (reading or {}).get("documents_tab_ref"),
+        })
+    if not refs and progress.actions < task.max_actions:
+        # Файлов на карточке нет: раздел «Документы» показывает модель, открывает код.
+        ref = documents_tab_ref(obs, reading)
+        source = "llm"
+        if ref is None:
+            tab = pick_documents_tab(obs.elements)
+            ref, source = (tab.ref if tab else None), "rule"
+        if ref is not None:
+            await _act(runtime, Action(tool="click", element_ref=ref, expected="changed", note="documents"), settings, host)
+            progress.actions += 1
+            obs = await get_page_state(runtime, progress.search_placeholder or None)
+            docs_reading = None
+            if llm is not None and getattr(llm, "read_card", None):
+                progress.card_reads += 1
+                try:
+                    docs_reading = await read_card(llm, task, obs)
+                except Exception as exc:
+                    errors.append(f"Модель не прочитала документы: {exc}")
+            updated, refs = apply_page_reading(updated, obs, docs_reading)
+            if card_trace is not None:
+                card_trace.log_step({"phase": "card_documents", "url": obs.url, "tab_found_by": source,
+                                     "documents": updated.documents})
+    if task.download_documents:
+        for ref in refs:
+            if len(saved) >= settings.max_downloads or progress.actions >= task.max_actions:
+                break
+            saved.append(await download_file(runtime, obs, ref, settings, tender.url))
+            progress.actions += 1
+            obs = await get_page_state(runtime, progress.search_placeholder or None)
+    return updated, saved
+
+
 async def _open_cards(
     runtime: BrowserRuntime,
     settings: Settings,
@@ -204,64 +276,35 @@ async def _open_cards(
     started: float,
     errors: list[str],
 ) -> tuple[list[TenderResult], list]:
-    opened: list[TenderResult] = []
-    saved = []
-    for tender in results:
-        if progress.actions >= task.max_actions or (time.monotonic() - started) >= task.timeout_seconds:
-            opened.append(tender)
-            continue
-        if not tender.url:
-            opened.append(tender)
-            continue
-        try:
-            if runtime.current_page.url != tender.url:
-                await _goto(runtime, tender.url, settings, host)
-                progress.actions += 1
-            obs = await get_page_state(runtime, progress.search_placeholder or None)
-            tender = apply_labeled_fields(tender, obs.fields)
-            reading = None
-            need_model = _card_needs_model(tender, task.download_documents)
-            if need_model and llm is not None and getattr(llm, "read_card", None):
-                progress.card_reads += 1
-                try:
-                    reading = await read_card(llm, task, obs)
-                except Exception as exc:
-                    errors.append(f"Модель не прочитала карточку: {exc}")
-            updated, refs = apply_page_reading(tender, obs, reading)
-            card_trace = current_trace.get()
-            if card_trace is not None:
-                card_trace.log_step({
-                    "phase": "card", "url": obs.url, "page_kind": obs.page_kind, "fields": len(obs.fields),
-                    "content_chars": len(obs.content_text), "model_used": reading is not None,
-                    "result": {k: getattr(updated, k) for k in ("customer", "published_at", "deadline", "price", "status")},
-                    "sources": updated.sources, "document_refs": refs,
-                })
-                tab = pick_documents_tab(obs.elements)
-                if tab is not None and progress.actions < task.max_actions:
-                    await _act(
-                        runtime,
-                        Action(tool="click", element_ref=tab.ref, expected="changed", note="documents"),
-                        settings,
-                        host,
-                    )
-                    progress.actions += 1
-                    obs = await get_page_state(runtime, progress.search_placeholder or None)
-                    updated, refs = apply_page_reading(updated, obs, None)
-            if task.download_documents:
-                for ref in refs:
-                    if len(saved) >= settings.max_downloads or progress.actions >= task.max_actions:
-                        break
-                    saved.append(await download_file(runtime, obs, ref, settings, tender.url))
-                    progress.actions += 1
-                    obs = await get_page_state(runtime, progress.search_placeholder or None)
-            opened.append(updated)
-        except Exception as exc:
-            errors.append(str(exc))
-            opened.append(tender)
-            card_trace = current_trace.get()
-            if card_trace is not None:
-                card_trace.log_step({"phase": "card", "url": tender.url, "error": f"{type(exc).__name__}: {exc}"})
-                await card_trace.snapshot(runtime.current_page, error=True)
+    """Карточки читаются по CARD_CONCURRENCY одновременно, каждая в своей вкладке."""
+    limit = asyncio.Semaphore(CARD_CONCURRENCY)
+
+    async def one(tender: TenderResult) -> tuple[TenderResult, list]:
+        if (
+            not tender.url
+            or progress.actions >= task.max_actions
+            or (time.monotonic() - started) >= task.timeout_seconds
+        ):
+            return tender, []
+        async with limit:
+            page = await runtime.context.new_page()
+            page.set_default_timeout(15_000)
+            page.set_default_navigation_timeout(45_000)
+            try:
+                return await _read_one_card(_TabRuntime(runtime, page), settings, host, task, tender, progress, llm, errors)
+            except Exception as exc:
+                errors.append(str(exc))
+                card_trace = current_trace.get()
+                if card_trace is not None:
+                    card_trace.log_step({"phase": "card", "url": tender.url, "error": f"{type(exc).__name__}: {exc}"})
+                    await card_trace.snapshot(page, error=True)
+                return tender, []
+            finally:
+                await page.close()
+
+    done = await asyncio.gather(*(one(tender) for tender in results))
+    opened = [tender for tender, _ in done]
+    saved = [item for _, files in done for item in files]
     return opened, saved
 
 

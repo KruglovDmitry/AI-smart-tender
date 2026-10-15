@@ -34,6 +34,8 @@ from sqlalchemy import (
     UniqueConstraint,
     and_,
     create_engine,
+    inspect,
+    text,
     func,
     insert,
     or_,
@@ -64,6 +66,8 @@ tenders = Table(
     Column("verification_status", String(32)),
     Column("matched_keyword", String(255)),
     Column("sources", JSON),
+    # Способ закупки, место поставки, обеспечения, ОКПД2 — что модель прочитала на карточке.
+    Column("details", JSON),
     Column("first_seen", DateTime(timezone=True), nullable=False),
     Column("last_seen", DateTime(timezone=True), nullable=False),
     Column("seen_count", Integer, nullable=False, default=1),
@@ -136,8 +140,17 @@ def _engine(url: str) -> Engine:
     if url not in _ENGINES:
         engine = create_engine(url, pool_pre_ping=True, future=True)
         metadata.create_all(engine)
+        _add_missing_columns(engine)
         _ENGINES[url] = engine
     return _ENGINES[url]
+
+
+def _add_missing_columns(engine: Engine) -> None:
+    """Колонки, добавленные после первого запуска (create_all существующие таблицы не меняет)."""
+    existing = {column["name"] for column in inspect(engine).get_columns("tenders")}
+    with engine.begin() as conn:
+        if "details" not in existing:
+            conn.execute(text("ALTER TABLE tenders ADD COLUMN details JSON"))
 
 
 class TenderStore:
@@ -201,11 +214,14 @@ class TenderStore:
         if row is None:
             new_id = conn.execute(
                 insert(tenders).values(platform=platform, tender_key=key, sources=dict(tender.sources),
+                                       details=dict(tender.details) or None,
                                        first_seen=now, last_seen=now, seen_count=1, **values)
             ).inserted_primary_key[0]
             return int(new_id), True
         # Новое значение заменяет старое, пустое — не затирает.
         changes = {field: value for field, value in values.items() if value is not None}
+        if tender.details:
+            changes["details"] = dict(tender.details)
         conn.execute(
             update(tenders).where(tenders.c.id == row.id).values(
                 sources=dict(tender.sources), last_seen=now, seen_count=tenders.c.seen_count + 1, **changes

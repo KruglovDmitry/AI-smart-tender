@@ -65,3 +65,12 @@ def test_search_applied_uses_block_text() -> None:
     cards = [RawCard(title="Электронный открытый аукцион", href=f"https://x.ru/{i}", block_text=f"№ {i}\nПоставка сервера")
              for i in range(4)]
     assert search_applied(Observation(url="https://www.sberbank-ast.ru/UnitedPurchaseList.html", cards=cards), "сервер")
+
+
+def test_eis_filestore_links_are_documents() -> None:
+    from tender_agent.tenders.discovery import file_refs
+
+    doc = Element(ref=1, tag="a", name="Проект контракта",
+                  href="https://zakupki.gov.ru/44fz/filestore/public/1.0/download/priz/file.html?uid=ABC")
+    nav = Element(ref=2, tag="a", name="Журнал событий", href="https://zakupki.gov.ru/epz/order/notice/ea20/view/event-journal.html")
+    assert file_refs([doc, nav]) == [1]

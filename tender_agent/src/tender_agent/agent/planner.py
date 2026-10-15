@@ -93,24 +93,33 @@ def _document_elements(obs: Observation) -> list[dict]:
     return documents
 
 
+def _nav_links(obs: Observation, documents: list[dict]) -> list[dict]:
+    """Короткие ссылки страницы (вкладки, разделы) — среди них модель ищет «Документы»."""
+    taken = {doc["ref"] for doc in documents}
+    links = []
+    for el in obs.elements:
+        name = (el.name or "").strip()
+        if el.ref in taken or not el.href or not name or len(name) > 60:
+            continue
+        links.append({"ref": el.ref, "name": name[:60], "href": el.href[:160]})
+        if len(links) >= 40:
+            break
+    return links
+
+
 def card_for_model(obs: Observation) -> dict:
-    """В карточку уходят пары полей. Полный текст блока — только если пар мало."""
+    """Пары полей, основной текст страницы (без шапки и меню), ссылки на файлы и прочие ссылки."""
     documents = _document_elements(obs)
-    if len(obs.fields) >= 4:
-        return {
-            "url": obs.url,
-            "title": obs.title,
-            "fields": [
-                {"id": field.id, "label": field.label[:90], "value": field.value[:300]}
-                for field in obs.fields[:80]
-            ],
-            "documents": documents,
-        }
     return {
         "url": obs.url,
         "title": obs.title,
+        "fields": [
+            {"id": field.id, "label": field.label[:90], "value": field.value[:300]}
+            for field in obs.fields[:80]
+        ],
         "content": (obs.content_text or obs.text_excerpt)[:12000],
         "documents": documents,
+        "links": _nav_links(obs, documents),
     }
 
 

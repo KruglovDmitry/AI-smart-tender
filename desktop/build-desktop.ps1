@@ -116,9 +116,15 @@ if (-not $SkipElectron) {
   $utf8NoBom = New-Object System.Text.UTF8Encoding $false
   [System.IO.File]::WriteAllText($pkgPath, $pkgText, $utf8NoBom)
 
-  if (-not (Test-Path (Join-Path $Electron "node_modules\electron-builder"))) {
+  $ebCli = Join-Path $Electron "node_modules\electron-builder\cli.js"
+  if (-not (Test-Path $ebCli)) {
+    Write-Host "npm install (electron-builder missing)..."
     npm install
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  }
+  if (-not (Test-Path $ebCli)) {
+    Write-Error "electron-builder not installed: $ebCli"
+    exit 1
   }
 
   npm run dist

@@ -7,7 +7,7 @@
   "author": "AI Smart Tender",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win dir"
+    "dist": "node ./node_modules/electron-builder/cli.js --win dir"
   },
   "build": {
     "appId": "local.aismarttender.desktop",

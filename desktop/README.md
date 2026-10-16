@@ -28,8 +28,10 @@ Windows-дистрибутив: **Electron (`start.exe`) + Open WebUI + tools-se
 
 ### 1. Open WebUI (один раз / при обновлении)
 
-Соберите onedir в соседнем эксперименте `open-webui-freeze` (`build_exe.ps1`)  
-или положите готовую папку в `desktop/vendor/OpenWebUI/` (внутри `OpenWebUI.exe`).
+Положите готовую onedir-папку в `desktop/vendor/OpenWebUI/` (внутри должен быть `OpenWebUI.exe`).
+
+Сборка ищет OWUI в таком порядке: `desktop/vendor/OpenWebUI` → `../open-webui-freeze/dist/OpenWebUI`.  
+После копирования в `vendor` папку `open-webui-freeze` можно не держать.
 
 ### 2. Полный дистрибутив
 

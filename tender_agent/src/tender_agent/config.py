@@ -45,9 +45,8 @@ def _data_dir() -> Path:
 class Settings:
     default_limit: int = 5
     max_actions: int = 40
-    max_llm_calls: int = 12
-    max_retries: int = 2
-    timeout_seconds: int = 120
+    # Модель решает каждый шаг, поэтому бюджет времени больше, чем был у эвристик.
+    timeout_seconds: int = 300
     max_pages: int = 5
     max_downloads: int = 20
     max_download_bytes: int = 20_000_000
@@ -76,9 +75,7 @@ class Settings:
         return cls(
             default_limit=int(os.getenv("TENDER_AGENT_DEFAULT_LIMIT", "5")),
             max_actions=int(os.getenv("TENDER_AGENT_MAX_ACTIONS", "40")),
-            max_llm_calls=int(os.getenv("TENDER_AGENT_MAX_LLM_CALLS", "12")),
-            max_retries=int(os.getenv("TENDER_AGENT_MAX_RETRIES", "2")),
-            timeout_seconds=int(os.getenv("TENDER_AGENT_TIMEOUT_SECONDS", "120")),
+            timeout_seconds=int(os.getenv("TENDER_AGENT_TIMEOUT_SECONDS", "300")),
             max_pages=int(os.getenv("TENDER_AGENT_MAX_PAGES", "5")),
             max_downloads=int(os.getenv("TENDER_AGENT_MAX_DOWNLOADS", "20")),
             max_download_bytes=int(os.getenv("TENDER_AGENT_MAX_DOWNLOAD_BYTES", "20000000")),

@@ -1,4 +1,3 @@
-import asyncio
 import logging
 
 import pytest
@@ -6,7 +5,6 @@ import pytest
 from tender_agent.browser.downloads import safe_destination
 from tender_agent.browser.navigation import validate_navigation_url
 from tender_agent.config import Settings
-from tender_agent.llm.base import visual_hint
 from tender_agent.llm.provider import OpenAICompatibleClient
 from tender_agent.observability.logging import get_logger
 
@@ -49,7 +47,6 @@ def test_logs_redact_secrets(caplog: pytest.LogCaptureFixture) -> None:
     assert "***" in caplog.text
 
 
-def test_vision_and_llm_are_optional() -> None:
-    assert asyncio.run(visual_hint(None, b"png", "что на экране?")) is None
+def test_llm_is_optional() -> None:
     client = OpenAICompatibleClient(Settings())
     assert client.configured is False

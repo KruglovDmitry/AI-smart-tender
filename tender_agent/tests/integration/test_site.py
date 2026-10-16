@@ -1,237 +1,123 @@
+"""Цикл на локальных HTML-фикстурах с моделью-сценарием вместо настоящей LLM.
+
+Проверяется механика цикла: снимок → решение → действие → проверка → история,
+а не качество модели.
+"""
+
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 
 from tender_agent.agent.orchestrator import execute
 from tender_agent.api.schemas import TaskResult
-from tender_agent.browser.observations import take_screenshot
 from tender_agent.browser.runtime import BrowserRuntime
 from tender_agent.config import Settings
-from tender_agent.storage.repository import Repository, SiteProfile
+from tender_agent.storage.repository import Repository
 from tests.integration.fake_site import fulfill
 
 
-class _Continue:
-    async def decide(self, task: dict, observation: dict) -> dict:
-        for element in observation["elements"]:
-            if "Продолжить" in (element.get("name") or ""):
-                return {"tool": "click", "element_ref": element["ref"], "expected": "changed"}
-        return {"tool": "finish", "element_ref": None, "expected": "changed"}
+def _ref(observation: dict, pattern: str) -> int | None:
+    for line in observation["elements"]:
+        if re.search(pattern, line):
+            return int(line[1:line.index("]")])
+    return None
 
 
-def _settings(root: Path, **kwargs: object) -> Settings:
-    data = {
-        "data_dir": root,
-        "headless": True,
-        "timeout_seconds": 45,
-        "max_actions": 25,
-        "max_pages": 4,
-        "max_retries": 2,
-    }
-    data.update(kwargs)
-    return Settings(**data)
+class ScriptedModel:
+    """Ведёт себя как простая модель: ищет, читает выдачу, листает, завершает."""
+
+    def __init__(self) -> None:
+        self.requests: list[dict] = []
+        self.extracted: set[str] = set()
+
+    async def next_action(self, task: dict, observation: dict) -> dict:
+        self.requests.append({"task": task, "observation": observation})
+        history = " ".join(task["history"])
+        text = observation["text"]
+        if "Вход" in observation["title"]:
+            return {"tool": "ask_user", "text": "Площадка просит войти"}
+        if "Ничего не найдено" in text and "fill" in history:
+            return {"tool": "done", "text": "Ничего не найдено", "empty": True}
+        field = _ref(observation, r"placeholder=«Ключевое слово»")
+        if field is not None and "fill" not in history:
+            return {"tool": "fill", "ref": field, "text": "сервер", "submit": True}
+        progress = task["progress"]
+        has_cards = _ref(observation, r"→ /tenders/\d+") is not None
+        page_key = f"{observation['url']}|{len(text)}"
+        if has_cards and page_key not in self.extracted:
+            self.extracted.add(page_key)
+            return {"tool": "extract"}
+        read = int(re.search(r"Прочитано записей: (\d+)", progress).group(1))
+        wanted = int(re.search(r"из (\d+)", progress).group(1))
+        more = _ref(observation, r"«(Следующая|Показать ещё)»")
+        if read < wanted and more is not None and history.count("не изменилась") < 2:
+            return {"tool": "click", "ref": more}
+        section = _ref(observation, r"«(Закупки|Продолжить)»")
+        if section is not None and not has_cards and "click" not in history:
+            return {"tool": "click", "ref": section}
+        return {"tool": "done", "text": "Готово"}
+
+    async def read_results(self, task: dict, observation: dict) -> dict:
+        records = []
+        for link in observation["links"]:
+            if re.search(r"/tenders/\d+$", link["href"]):
+                records.append({"link_ref": link["ref"], "title": link["text"], "number": link["href"].rsplit("/", 1)[-1]})
+        return {"records": records}
 
 
-_case = 0
-
-
-async def _run(
-    runtime: BrowserRuntime,
-    root: Path,
-    text: str,
-    *,
-    llm: object | None = None,
-    prepare=None,
-    **settings_kwargs: object,
-) -> tuple[TaskResult, Repository]:
-    global _case
-    _case += 1
-    folder = root / f"case-{_case}"
-    folder.mkdir(parents=True, exist_ok=True)
-    settings = _settings(folder, **settings_kwargs)
-    repo = Repository(folder / "agent.sqlite3")
-    if prepare:
-        prepare(repo)
-    result = await execute(text, settings=settings, runtime=runtime, repo=repo, llm=llm)
-    return result, repo
-
-
-def _dump(result: TaskResult) -> str:
-    return result.model_dump_json()
+async def _run(runtime: BrowserRuntime, root: Path, text: str, llm: object | None) -> TaskResult:
+    settings = Settings(data_dir=root, headless=True, timeout_seconds=60, max_actions=15, max_pages=4)
+    return await execute(text, settings=settings, runtime=runtime, repo=Repository(root / "agent.sqlite3"), llm=llm)
 
 
 async def _scenarios(tmp_path: Path) -> None:
-    settings = _settings(tmp_path)
+    settings = Settings(data_dir=tmp_path, headless=True)
     async with BrowserRuntime(settings, tmp_path / "downloads") as runtime:
         assert runtime.context is not None
         await runtime.context.route("**/*", fulfill)
-        shot = None
-        await runtime.current_page.goto("https://tenders.example.test/", wait_until="domcontentloaded")
-        shot = await take_screenshot(runtime)
-        assert shot.startswith(b"\x89PNG")
+        task = 'Открой https://tenders.example.test/ и верни 3 закупки по ключевому слову "сервер"'
 
-        latest, _repo = await _run(
-            runtime,
-            tmp_path,
-            'Начни мониторинг площадки https://tenders.example.test/ и верни последние 1 закупок на тему "сервер"',
-        )
-        assert latest.status == "completed", _dump(latest)
-        assert len(latest.results) == 1
-        winner = latest.results[0]
-        assert winner.id == "308"
-        assert winner.published_at == "2026-10-08"
-        assert winner.price == 12_000_000
-        assert winner.currency == "KZT"
-        assert winner.customer == "Заказчик"
-        assert winner.verification_status == "verified"
-        assert latest.stats["site_sort_used"] is True
-        assert "308" in (winner.url or "")
+        model = ScriptedModel()
+        found = await _run(runtime, tmp_path, task, model)
+        # Главная → «Закупки» → поиск → выдача (2 записи) → «Следующая» → ещё 1.
+        assert found.status == "completed", found.model_dump_json()
+        assert {t.url.rsplit("/", 1)[-1] for t in found.results} == {"101", "102", "308"}  # номеров в тексте нет — только ссылки
+        assert found.stats["pages_read"] == 2
+        last_history = model.requests[-1]["task"]["history"]
+        assert any("fill [" in line and "открыта страница" in line for line in last_history)
+        assert any(line.split(". ", 1)[1].startswith("extract → записей на странице 2, принято 2") for line in last_history)
+        first_page = model.requests[0]["observation"]
+        assert first_page["url"] == "https://tenders.example.test/" and "elements" in first_page
 
-        limited, _repo = await _run(
-            runtime,
-            tmp_path,
-            'Открой https://tenders.example.test/tenders?q=сервер и верни последние 1 закупок на тему "сервер"',
-            max_pages=1,
-        )
-        assert limited.status == "partial", _dump(limited)
-        assert limited.results and limited.results[0].id != "308"
-        assert any("лимит страниц" in item for item in limited.errors)
+        spa = await _run(runtime, tmp_path, 'Открой https://tenders.example.test/spa и верни 2 закупки по ключевому слову "сервер"', ScriptedModel())
+        assert {t.url.rsplit("/", 1)[-1] for t in spa.results} == {"201", "308"}, spa.model_dump_json()  # «Показать ещё» дорисовал запись
 
-        downloaded, _repo = await _run(
-            runtime,
-            tmp_path,
-            'Найди закупки по ключевому слову "сервер" на https://tenders.example.test/tenders?q=сервер '
-            "и скачай документы из последних 1 карточек",
-        )
-        assert downloaded.status == "completed", _dump(downloaded)
-        assert downloaded.results[0].id == "308"
-        assert downloaded.downloads and downloaded.downloads[0].status == "saved"
-        saved = Path(downloaded.downloads[0].path)
-        assert saved.is_file() and saved.stat().st_size > 0
-        assert saved.read_bytes().startswith(b"%PDF-")
+        noop_model = ScriptedModel()
+        noop = await _run(runtime, tmp_path, 'Открой https://tenders.example.test/noop и верни 5 закупок по ключевому слову "сервер"', noop_model)
+        assert noop.status == "partial" and [t.url.rsplit("/", 1)[-1] for t in noop.results] == ["101"]
+        assert sum("страница не изменилась" in line for line in noop_model.requests[-1]["task"]["history"]) == 2
 
-        spa, _repo = await _run(
-            runtime,
-            tmp_path,
-            'Открой https://tenders.example.test/spa и верни последние 1 закупок по ключевому слову "сервер"',
-        )
-        assert spa.status == "completed", _dump(spa)
-        assert spa.results[0].id == "308"
-        assert spa.stats["site_sort_used"] is False
-
-        mixed, _repo = await _run(
-            runtime,
-            tmp_path,
-            'Открой https://tenders.example.test/mixed и верни 1 закупку по ключевому слову "сервер"',
-        )
-        assert mixed.status == "completed", _dump(mixed)
-        assert [item.id for item in mixed.results] == ["1"]
-
-        ambiguous, _repo = await _run(
-            runtime,
-            tmp_path,
-            'Открой https://tenders.example.test/ambiguous и верни 2 закупки по ключевому слову "сервер"',
-        )
-        assert ambiguous.status == "completed", _dump(ambiguous)
-        assert len({item.url for item in ambiguous.results}) == 2
-
-        plain, _repo = await _run(
-            runtime,
-            tmp_path,
-            'Открой https://tenders.example.test/plain и верни 1 закупку по ключевому слову "сервер"',
-        )
-        assert plain.status == "completed", _dump(plain)
-        assert plain.results[0].published_at is None
-        assert (plain.results[0].url or "").endswith("/tenders/7")
-
-        empty, _repo = await _run(
-            runtime,
-            tmp_path,
-            'Открой https://tenders.example.test/empty и верни последние 5 закупок по ключевому слову "сервер"',
-        )
-        assert empty.status == "partial", _dump(empty)
-        assert empty.results == []
+        empty = await _run(runtime, tmp_path, 'Открой https://tenders.example.test/empty и верни 5 закупок по ключевому слову "сервер"', ScriptedModel())
+        assert empty.status == "partial" and empty.results == []
         assert any("не вывод" in item for item in empty.errors)
 
-        missing, _repo = await _run(
-            runtime,
-            tmp_path,
-            'Открой https://tenders.example.test/missing и верни последние 5 закупок по ключевому слову "сервер"',
-        )
-        assert missing.status == "failed", _dump(missing)
+        login = await _run(runtime, tmp_path, 'Открой https://tenders.example.test/login и верни 5 закупок по ключевому слову "сервер"', ScriptedModel())
+        assert login.status == "needs_user"
 
-        login, _repo = await _run(
-            runtime,
-            tmp_path,
-            'Открой https://tenders.example.test/login и верни последние 5 закупок по ключевому слову "сервер"',
-        )
-        assert login.status == "needs_user", _dump(login)
-        captcha, _repo = await _run(
-            runtime,
-            tmp_path,
-            'Открой https://tenders.example.test/captcha и верни последние 5 закупок по ключевому слову "сервер"',
-        )
-        assert captcha.status == "needs_user", _dump(captcha)
+        captcha_model = ScriptedModel()
+        captcha = await _run(runtime, tmp_path, 'Открой https://tenders.example.test/captcha и верни 5 закупок по ключевому слову "сервер"', captcha_model)
+        assert captcha.status == "needs_user" and captcha_model.requests == []  # CAPTCHA останавливает до модели
 
-        repeated, _repo = await _run(
-            runtime,
-            tmp_path,
-            'Открой https://tenders.example.test/noop и верни последние 5 закупок по ключевому слову "сервер"',
-        )
-        assert repeated.status == "partial", _dump(repeated)
-        assert repeated.results and repeated.results[0].id == "101"
-        assert any("не изменилась" in item or "повторяется" in item for item in repeated.errors)
+        trap_model = ScriptedModel()
+        trap = await _run(runtime, tmp_path, 'Открой https://tenders.example.test/trap и верни 5 закупок по ключевому слову "сервер"', trap_model)
+        assert trap.status == "failed" and trap.results == []
+        assert "127.0.0.1" not in runtime.current_page.url
 
-        trapped, _repo = await _run(
-            runtime,
-            tmp_path,
-            'Открой https://tenders.example.test/trap и верни последние 5 закупок по ключевому слову "сервер"',
-        )
-        assert trapped.status == "failed", _dump(trapped)
-        assert trapped.results == []
-
-        unknown, _repo = await _run(
-            runtime,
-            tmp_path,
-            'Открой https://tenders.example.test/unknown и верни последние 1 закупок по ключевому слову "сервер"',
-        )
-        assert unknown.status == "failed", _dump(unknown)
-        assert unknown.stats["llm_calls"] == 1, _dump(unknown)
-
-        guided, _repo = await _run(
-            runtime,
-            tmp_path,
-            'Открой https://tenders.example.test/unknown и верни последние 1 закупок по ключевому слову "сервер"',
-            llm=_Continue(),
-        )
-        assert guided.status == "completed", _dump(guided)
-        assert guided.results[0].id == "308"
-        assert guided.stats["llm_calls"] >= 1
-
-        def seed(repo: Repository) -> None:
-            repo.save_profile(
-                SiteProfile(
-                    host="tenders.example.test",
-                    search_placeholder="устаревший плейсхолдер",
-                    card_selector=".does-not-exist",
-                )
-            )
-
-        stale, repo = await _run(
-            runtime,
-            tmp_path,
-            'Открой https://tenders.example.test/tenders?q=сервер и верни последние 1 закупок на тему "сервер"',
-            prepare=seed,
-        )
-        assert stale.status == "completed", _dump(stale)
-        assert stale.stats["profile_rejected"] is True
-        assert stale.results[0].id == "308"
-        saved_profile = repo.load_profile("tenders.example.test")
-        assert saved_profile is not None
-        assert saved_profile.error_count >= 1
-        assert "tender-card" in saved_profile.card_selector
+        no_model = await _run(runtime, tmp_path, task, None)
+        assert no_model.status == "failed" and "Модель не настроена" in no_model.errors[0]
 
 
-def test_local_fixture_site(tmp_path: Path) -> None:
+def test_loop_on_fixture_site(tmp_path: Path) -> None:
     asyncio.run(_scenarios(tmp_path))

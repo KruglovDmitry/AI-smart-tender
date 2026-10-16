@@ -19,7 +19,7 @@ class TaskSpec(BaseModel):
     download_documents: bool = False
     max_pages: int = 5
     max_actions: int = 40
-    timeout_seconds: int = 120
+    timeout_seconds: int = 300
 
 
 class TenderResult(BaseModel):

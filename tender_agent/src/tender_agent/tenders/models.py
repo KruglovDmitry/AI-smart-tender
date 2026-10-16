@@ -23,8 +23,10 @@ class Element(BaseModel):
     input_type: str | None = None
     value: str | None = None
     download: bool = False
+    # Признаки из классов и атрибутов, которых нет в тексте: asc/desc, selected, aria-sort…
+    hint: str = ""
 
-    @field_validator("tag", "role", "name", mode="before")
+    @field_validator("tag", "role", "name", "hint", mode="before")
     @classmethod
     def _required_text(cls, value: object) -> str:
         return _text(value)

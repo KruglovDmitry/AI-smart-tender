@@ -22,6 +22,7 @@ _PAGES = {
     "/trap": "trap.html",
     "/plain": "plain.html",
     "/downloads": "downloads.html",
+    "/custom": "custom_controls.html",
 }
 
 

@@ -163,7 +163,8 @@ class Loop:
 
     async def _vision(self, goal: Goal, need: str, obs: Observation) -> tuple[Observation, str, bool]:
         self.progress.vision_calls += 1
-        outcome = await run_vision_step(self.runtime, self.settings, vision_goal(goal.text, need))
+        context = f"площадка закупок {self.task.url}, запрос «{self.task.keywords[0]}»"
+        outcome = await run_vision_step(self.runtime, self.settings, vision_goal(context, need))
         self.deadline += outcome.seconds  # время зрения не съедает бюджет цикла
         after = await self.observe()
         moved = page_changed(obs, after)
@@ -225,6 +226,8 @@ def element_line(el: Element, page_host: str) -> str:
         line += f" placeholder=«{el.placeholder[:60]}»"
     if el.value:
         line += f" value=«{el.value[:60]}»"
+    if el.hint:
+        line += f" ({el.hint})"
     if el.href:
         line += f" → {_short_href(el.href, page_host)}"
     return line

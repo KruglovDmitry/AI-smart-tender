@@ -10,7 +10,10 @@ import asyncio
 import re
 from pathlib import Path
 
+from tender_agent.agent.loop import page_for_model
 from tender_agent.agent.orchestrator import execute
+from tender_agent.browser.dom_tools import click_element
+from tender_agent.browser.snapshot import get_page_state
 from tender_agent.api.schemas import TaskResult
 from tender_agent.browser.runtime import BrowserRuntime
 from tender_agent.config import Settings
@@ -117,6 +120,18 @@ async def _scenarios(tmp_path: Path) -> None:
 
         no_model = await _run(runtime, tmp_path, task, None)
         assert no_model.status == "failed" and "Модель не настроена" in no_model.errors[0]
+
+        # Самодельный выпадающий список (div с курсором-«рукой») тоже получает номер и кликается.
+        await runtime.current_page.goto("https://tenders.example.test/custom")
+        lines = page_for_model(await get_page_state(runtime))["elements"]
+        assert "clickable «Сортировать по: Дате обновления»" in " ".join(lines)
+        assert not any("Поставка сервера" in line and "clickable" in line for line in lines)  # обёртка над ссылкой
+        sort_ref = _ref({"elements": lines}, r"Сортировать по")
+        await click_element(runtime, sort_ref)
+        lines = page_for_model(await get_page_state(runtime))["elements"]
+        options = [line for line in lines if "clickable «Дата размещения»" in line]
+        assert len(options) == 2 and "item-reverse" in options[1] and "item-reverse" not in options[0]
+        assert not any("«Дата размещения Дата размещения»" in line for line in lines)  # сам список — не пункт
 
 
 def test_loop_on_fixture_site(tmp_path: Path) -> None:

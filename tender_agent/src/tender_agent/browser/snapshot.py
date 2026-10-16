@@ -41,8 +41,37 @@ _SNAPSHOT_JS = """() => {
   const selector = 'a[href], button, input:not([type=hidden]), textarea, select, summary, [onclick], '
     + '[role=button], [role=link], [role=tab], [role=menuitem], [role=option], [role=checkbox], [role=combobox]';
   // Вложенное в ссылку или кнопку — часть того же элемента.
-  const nodes = [...document.querySelectorAll(selector)]
-    .filter(el => visible(el) && !(el.parentElement && el.parentElement.closest('a[href], button')));
+  const insideControl = (el) => !!(el.parentElement && el.parentElement.closest('a[href], button'));
+  const tagged = new Set([...document.querySelectorAll(selector)].filter(el => visible(el) && !insideControl(el)));
+  // Самодельные контролы (выпадающий список «Сортировать по» на ЕИС — div и ul/li со скриптом):
+  // курсор-«рука» без стандартной разметки. Курсор наследуется, поэтому берём верхний такой элемент,
+  // а в списках (ul/ol/listbox/menu) — каждый пункт; обёртки над ссылками и над пунктами не берём.
+  const pointer = (el) => !!el && el.nodeType === 1 && getComputedStyle(el).cursor === 'pointer';
+  const isList = (el) => !!el && (/^(UL|OL)$/.test(el.tagName) || /^(listbox|menu)$/.test(el.getAttribute('role') || ''));
+  const candidates = [];
+  for (const el of document.querySelectorAll('div, span, li, label, i, img, svg, td, p, h1, h2, h3, h4, ul, ol')) {
+    if (tagged.has(el) || !pointer(el) || insideControl(el)) continue;
+    const parent = el.parentElement;
+    if (pointer(parent) && !(el.tagName === 'LI' || isList(parent))) continue;
+    if (el.querySelector(selector) || !visible(el)) continue;
+    const text = clean(el.innerText || el.getAttribute('aria-label') || el.getAttribute('title'));
+    if (!text && !el.querySelector('img, svg') && el.tagName !== 'IMG' && el.tagName.toLowerCase() !== 'svg') continue;
+    candidates.push(el);
+  }
+  const custom = new Set(candidates.filter(el => !candidates.some(other => other !== el && el.contains(other))));
+  custom.forEach(el => tagged.add(el));
+  // Признаки, которых нет в тексте: направление сортировки, выбранный пункт (ЕИС: два пункта
+  // «Дате размещения» отличаются только классом -reverse и иконкой).
+  const hintOf = (el) => {
+    const marks = String(el.getAttribute('class') || '').split(/\\s+/)
+      .filter(token => /asc|desc|revers|up\\b|down\\b|select|active|current|checked|sort/i.test(token));
+    for (const name of ['aria-sort', 'aria-selected', 'aria-checked', 'aria-expanded', 'type', 'data-sort', 'data-direction']) {
+      const value = el.getAttribute(name);
+      if (value && !(name === 'type' && /^(INPUT|BUTTON)$/.test(el.tagName))) marks.push(name + '=' + value);
+    }
+    return marks.join(' ').slice(0, 120);
+  };
+  const nodes = [...tagged].sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1);
   const elements = nodes.slice(0, %(max_elements)d).map((el, index) => {
     const ref = index + 1;
     const tag = (el.tagName || '').toLowerCase();
@@ -50,13 +79,14 @@ _SNAPSHOT_JS = """() => {
     return {
       ref,
       tag,
-      role: el.getAttribute('role') || '',
+      role: el.getAttribute('role') || (custom.has(el) ? 'clickable' : ''),
       name: nameOf(el),
       href: tag === 'a' ? hrefOf(el) : null,
       placeholder: el.getAttribute('placeholder'),
       input_type: tag === 'input' ? (el.getAttribute('type') || 'text') : null,
       value: (tag === 'input' || tag === 'textarea' || tag === 'select') ? String(el.value || '').slice(0, 120) : null,
-      download: el.hasAttribute('download')
+      download: el.hasAttribute('download'),
+      hint: hintOf(el)
     };
   });
   const text = String(document.body.innerText || '')

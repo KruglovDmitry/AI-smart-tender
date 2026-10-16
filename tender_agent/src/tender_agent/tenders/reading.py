@@ -58,7 +58,11 @@ def accept_records(obs: Observation, data: dict, *, keyword: str, sort_required:
             value = str(item.get(key) or "").strip()
             return value if value and _norm(value) in page else None
 
-        raw = RawCard(id=quote("number"), title=title, href=href, customer=quote("customer"),
+        number = quote("number")
+        if number:
+            # «№ 32616477643» → «32616477643»: номер — ключ закупки в базе.
+            number = re.sub(r"^(?:№|N|No\.?)\s*", "", number, flags=re.I).strip() or None
+        raw = RawCard(id=number, title=title, href=href, customer=quote("customer"),
                       published_at=quote("published"), deadline=quote("deadline"), price_text=quote("price"),
                       status=quote("status"), sources={"title": "llm"})
         card = card_from_raw(raw, keyword=keyword, sort_required=sort_required)

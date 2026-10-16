@@ -31,8 +31,14 @@ class VisionOutcome:
     trace_dir: str = ""
 
 
-def vision_goal(goal: str, need: str) -> str:
-    return f"{need}. Когда это сделано — сразу done.\nОбщая цель: {goal}\n{SAFETY}"
+def vision_goal(context: str, need: str) -> str:
+    """Только то, что нужно сделать на экране. Общую цель (сколько записей, extract) не передаём:
+    иначе зрение пытается выполнить её само и тратит все шаги (ЕИС: сортировку включило, но не сказало done)."""
+    return (
+        f"{need.rstrip('. ')}. Как только это видно на экране — сразу done. "
+        "Данные со страницы не собирай и не извлекай: это сделают после тебя.\n"
+        f"Контекст: {context}.\n{SAFETY}"
+    )
 
 
 async def run_vision_step(runtime: BrowserRuntime, settings: Settings, goal: str) -> VisionOutcome:

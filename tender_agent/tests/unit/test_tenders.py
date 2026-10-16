@@ -70,7 +70,7 @@ def test_records_are_checked_against_the_page() -> None:
                   Element(ref=8, tag="a", name="Канцтовары для офиса", href="https://example.com/t/2")],
     )
     reading = accept_records(obs, {"records": [
-        {"link_ref": 7, "title": "Поставка серверного оборудования", "number": "0813500000126018903",
+        {"link_ref": 7, "title": "Поставка серверного оборудования", "number": "№ 0813500000126018903",
          "customer": "ООО Выдуманное", "published": "12.10.2026", "price": "7 980 000,00 ₽"},
         {"link_ref": 8, "title": "Канцтовары для офиса", "published": "11.10.2026"},
         {"link_ref": 99, "title": "Канцтовары для офиса"},

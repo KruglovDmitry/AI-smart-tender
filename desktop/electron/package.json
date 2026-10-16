@@ -1,0 +1,45 @@
+{
+  "name": "ai-smart-tender-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Electron shell: Open WebUI + tools-server",
+  "main": "main.js",
+  "author": "AI Smart Tender",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win dir"
+  },
+  "build": {
+    "appId": "local.aismarttender.desktop",
+    "productName": "start",
+    "copyright": "AI Smart Tender",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../dist/OpenWebUI",
+        "to": "OpenWebUI",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../dist/ToolsServer",
+        "to": "ToolsServer",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": ["dir"],
+      "signAndEditExecutable": false
+    }
+  },
+  "devDependencies": {
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.12"
+  }
+}
+

@@ -29,3 +29,13 @@ Thumbs.db
 # Собранный дистрибутив для заказчика
 dist/
 *.zip
+
+# Desktop build artifacts
+desktop/.venv/
+desktop/build/
+desktop/dist/
+desktop/data-build/
+desktop/vendor/
+desktop/electron/node_modules/
+desktop/electron/release/
+desktop/*.spec

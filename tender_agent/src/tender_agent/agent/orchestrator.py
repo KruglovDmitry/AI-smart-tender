@@ -1,6 +1,7 @@
-"""Задание целиком. Шаг 1: цикл модели на выдаче — найти выдачу по запросу и прочитать записи.
+"""Задание целиком: цикл модели на выдаче, затем тот же цикл на карточке каждой найденной закупки.
 
-Карточки закупок на этом шаге не открываются: их чтение будет тем же циклом с другой целью.
+1. Выдача: найти выдачу по запросу (и отсортировать), прочитать записи, при нехватке — листать.
+2. Карточки (agent/cards.py): поля, лоты и документы; файлы качаются, если скачивание включено.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from ..tenders.models import Observation
 from ..tenders.ranking import rank_tenders
 from ..tenders.reading import read_results
 from . import actions
+from .cards import CardReader
 from .loop import Goal, Loop
 from .planner import TaskParseError, parse_task
 from .state import Progress
@@ -34,7 +36,7 @@ def list_goal_text(task, keyword: str) -> str:
         f"Когда на экране выдача по запросу{' в нужном порядке' if task.sort_by else ''} — вызови extract. "
         f"Нужно {task.limit} записей: если после extract их меньше, перейди на следующую страницу выдачи "
         f"(или нажми «Показать ещё») и снова вызови extract, но не дальше {task.max_pages} страниц. "
-        "Когда записей достаточно — done. Карточки закупок открывать не нужно."
+        "Когда записей достаточно — done. Карточки закупок открывать не нужно: их прочитают отдельно."
     )
 
 
@@ -50,13 +52,19 @@ async def execute(
     runtime: BrowserRuntime,
     repo: Repository,
     llm: LLMClient | None = None,
+    download: bool | None = None,
 ) -> TaskResult:
+    """download — скачивать ли документы; None — как сказано в задании («скачай» / «не скачивай»).
+    Общий выключатель Settings.downloads_enabled сильнее и того, и другого."""
     started = time.monotonic()
     trace = current_trace.get()
     try:
         task = parse_task(text, settings)
     except TaskParseError as exc:
         return TaskResult(status="failed", errors=[str(exc)])
+    if download is not None:
+        task.download_documents = download
+    task.download_documents = task.download_documents and settings.downloads_enabled
     if trace is not None:
         trace.task(task)
     ok, reason = validate_navigation_url(task.url, settings)
@@ -88,8 +96,8 @@ async def execute(
             reading = await read_results(llm, obs, keyword=keyword, sort_required=bool(task.sort_by))
         except Exception as exc:
             progress.mark("list", "llm", False)
-            errors.append(f"Модель не прочитала выдачу: {exc}")
-            return f"extract → ошибка чтения: {str(exc)[:200]}"
+            errors.append(f"Модель не прочитала выдачу: {type(exc).__name__}: {exc}")
+            return f"extract → ошибка чтения: {type(exc).__name__}: {str(exc)[:200]}"
         before = unique()
         collected.extend(reading.accepted)
         if obs.signature not in pages_read:
@@ -105,12 +113,19 @@ async def execute(
         return f"Прочитано записей: {unique()} из {task.limit}; страниц выдачи прочитано: {len(pages_read)}."
 
     loop = Loop(runtime=runtime, settings=settings, task=task, llm=llm, host=host, progress=progress,
-                errors=errors, deadline=started + task.timeout_seconds)
-    outcome = await loop.run(Goal(text=list_goal_text(task, keyword), extract=extract, status=progress_line))
+                errors=errors, deadline=started + task.timeout_seconds, phase="list", max_steps=task.max_actions,
+                vision_limit=settings.vision_max_calls)
+    outcome = await loop.run(Goal(text=list_goal_text(task, keyword), extract=extract, status=progress_line,
+                                  context=f"площадка закупок {task.url}, запрос «{keyword}»"))
     if outcome.outcome in {"timeout", "actions", "model_error"}:
         errors.append(outcome.note)
 
     results = rank_tenders(collected, sort_by=None if site_sorted else task.sort_by, limit=task.limit)
+    cards = CardReader(runtime=runtime, settings=settings, task=task, llm=llm, host=host, progress=progress,
+                       errors=errors, download=task.download_documents)
+    if results and outcome.outcome != "needs_user":
+        results = await cards.read_all(results)
+
     if outcome.outcome == "needs_user":
         status = "needs_user"
         errors.append(f"Нужен человек: {outcome.note}" if outcome.note else "Нужен вход или проверка человека.")
@@ -126,13 +141,16 @@ async def execute(
         errors.append(f"Найдено {len(results)} из {task.limit}.")
     else:
         status = "completed"
-    if task.download_documents:
-        errors.append("Карточки закупок и документы на этом шаге не открываются.")
+    if task.download_documents and status == "completed":
+        if not cards.downloads or any(item.status != "saved" for item in cards.downloads):
+            status = "partial"
+            errors.append("Не все запрошенные файлы скачаны.")
     repo.add_run(task.url, status, progress.actions, progress.llm_calls, len(results))
     return TaskResult(
         status=status,  # type: ignore[arg-type]
         task=task,
         results=results,
+        downloads=cards.downloads,
         errors=list(dict.fromkeys(item for item in errors if item)),
         stats={
             "pages_visited": len(progress.visited),
@@ -142,6 +160,8 @@ async def execute(
             "pages_read": len(pages_read),
             "site_sort_used": site_sorted,
             "loop_outcome": outcome.outcome,
+            "card_outcomes": dict(cards.outcomes),
+            "documents": sum(len(t.documents) for t in results),
             "methods": progress.methods,
         },
     )

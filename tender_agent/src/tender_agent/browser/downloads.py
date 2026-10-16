@@ -44,11 +44,20 @@ def verify_download(path: Path, root: Path, max_bytes: int) -> tuple[bool, str]:
     return True, ""
 
 
+def fix_mojibake(name: str) -> str:
+    """Имя в UTF-8, прочитанное как latin-1 (ЕИС 223-ФЗ: «Ð_Ð¾ÐºÑ…» вместо «Документ…»)."""
+    try:
+        fixed = name.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return name
+    return fixed if fixed != name else name
+
+
 def _filename(disposition: str, url: str) -> str:
     matched = re.search(r"filename\*=UTF-8''([^;]+)|filename=\"?([^\";]+)\"?", disposition, re.I)
     if matched:
-        return unquote((matched.group(1) or matched.group(2) or "").strip())
-    return Path(urlparse(url).path).name or "file"
+        return fix_mojibake(unquote((matched.group(1) or matched.group(2) or "").strip()))
+    return fix_mojibake(Path(urlparse(url).path).name) or "file"
 
 
 def _failed(source: str, tender_url: str | None, detail: str) -> DownloadRecord:
@@ -142,7 +151,7 @@ async def download_file(
         async with runtime.current_page.expect_download(timeout=8_000) as pending:
             await locator.click(timeout=8_000)
         download = await pending.value
-        target = safe_destination(runtime.downloads_dir, download.suggested_filename or "file")
+        target = safe_destination(runtime.downloads_dir, fix_mojibake(download.suggested_filename or "file"))
         await download.save_as(str(target))
     except PlaywrightTimeout as exc:
         return _failed(source, tender_url, f"Браузер не начал загрузку: {exc}")

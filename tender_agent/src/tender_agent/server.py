@@ -30,6 +30,13 @@ class SearchTendersBody(BaseModel):
             "Pass the user message unchanged."
         ),
     )
+    download: bool | None = Field(
+        None,
+        description=(
+            "Download tender documents: true or false. Leave empty to follow the task text "
+            "(«скачай» / «не скачивай»)."
+        ),
+    )
 
 
 def _flag(name: str, default: bool) -> bool:
@@ -54,6 +61,9 @@ def _settings() -> Settings:
         max_actions=int(os.getenv("TENDER_AGENT_MAX_ACTIONS", "40")),
         timeout_seconds=int(os.getenv("TENDER_AGENT_TIMEOUT_SECONDS", "300")),
         max_pages=int(os.getenv("TENDER_AGENT_MAX_PAGES", "5")),
+        card_timeout_seconds=int(os.getenv("TENDER_AGENT_CARD_TIMEOUT_SECONDS", "90")),
+        card_max_steps=int(os.getenv("TENDER_AGENT_CARD_MAX_STEPS", "10")),
+        downloads_enabled=_flag("TENDER_AGENT_DOWNLOADS", True),
         max_downloads=int(os.getenv("TENDER_AGENT_MAX_DOWNLOADS", "20")),
         max_download_bytes=int(os.getenv("TENDER_AGENT_MAX_DOWNLOAD_BYTES", "20000000")),
         vision_enabled=_flag("TENDER_AGENT_VISION_ENABLED", False),
@@ -95,7 +105,7 @@ async def search_tenders(body: SearchTendersBody):
     if not text:
         raise HTTPException(status_code=400, detail="Пустое задание. Нужны URL площадки и ключевое слово.")
     try:
-        result = await run_task(text, settings=_settings())
+        result = await run_task(text, settings=_settings(), download=body.download)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Tender search failed: {exc}") from exc
     return result.model_dump(mode="json")

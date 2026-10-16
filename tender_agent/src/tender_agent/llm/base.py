@@ -9,3 +9,6 @@ class LLMClient(Protocol):
 
     async def read_results(self, task: dict, observation: dict) -> dict:
         """Записи выдачи с текущей страницы: {"records": [...]} дословными цитатами."""
+
+    async def read_card(self, task: dict, observation: dict) -> dict:
+        """Поля, лоты и документы карточки закупки дословными цитатами и номерами элементов."""

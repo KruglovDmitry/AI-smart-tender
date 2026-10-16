@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
@@ -24,7 +25,7 @@ from ..observability.trace import current_trace
 from ..tenders.models import Element, Observation
 from . import actions
 from .state import Progress
-from .vision import run_vision_step, vision_goal
+from .vision import VisionOutcome, run_vision_step, vision_goal
 
 PAGE_TEXT_FOR_MODEL = 6_000
 HISTORY_FOR_MODEL = 12
@@ -36,6 +37,7 @@ class Goal:
     text: str  # что нужно сделать
     extract: Callable[[Observation], Awaitable[str]]  # чтение страницы; возвращает строку для истории
     status: Callable[[], str]  # прогресс для модели: «прочитано записей: 3 из 5»
+    context: str = ""  # одной строкой для зрения: где мы и что ищем (без общей цели — см. vision_goal)
 
 
 @dataclass
@@ -58,7 +60,13 @@ class Loop:
     progress: Progress
     errors: list[str]
     deadline: float
-    phase: str = "list"
+    phase: str = "list"  # list | card — попадает в трейс
+    max_steps: int = 40
+    # Зрение: сколько раз можно позвать в этом цикле; продлевает ли оно бюджет времени.
+    # На выдаче продлевает (не съедает время модели), на карточке — нет: у карточки жёсткий бюджет.
+    vision_limit: int = 2
+    vision_extends_deadline: bool = True
+    vision_used: int = 0
 
     async def observe(self) -> Observation:
         obs = await get_page_state(self.runtime)
@@ -67,14 +75,15 @@ class Loop:
         return obs
 
     def vision_ready(self) -> bool:
-        return self.settings.vision_enabled and self.progress.vision_calls < self.settings.vision_max_calls
+        enough_time = self.vision_extends_deadline or self.deadline - time.monotonic() >= 20
+        return self.settings.vision_enabled and self.vision_used < self.vision_limit and enough_time
 
     async def run(self, goal: Goal) -> LoopResult:
         history: list[str] = []
         unchanged = 0
         model_failures = 0
         obs = await self.observe()
-        for step in range(1, self.task.max_actions + 1):
+        for step in range(1, self.max_steps + 1):
             if time.monotonic() >= self.deadline:
                 return LoopResult("timeout", "Истекло время задания.", last_obs=obs, history=history)
             if obs.page_kind == "captcha":
@@ -90,7 +99,7 @@ class Loop:
                 model_failures = 0
             except Exception as exc:
                 model_failures += 1
-                self.errors.append(f"Модель не выбрала действие: {exc}")
+                self.errors.append(f"Модель не выбрала действие: {type(exc).__name__}: {exc}")
                 record["error"] = f"{type(exc).__name__}: {exc}"
                 await self._log(record, obs, error=True)
                 if model_failures >= 2:
@@ -162,10 +171,17 @@ class Loop:
         return after, f"{label} → {_outcome(obs, after, moved)}", moved
 
     async def _vision(self, goal: Goal, need: str, obs: Observation) -> tuple[Observation, str, bool]:
+        self.vision_used += 1
         self.progress.vision_calls += 1
-        context = f"площадка закупок {self.task.url}, запрос «{self.task.keywords[0]}»"
-        outcome = await run_vision_step(self.runtime, self.settings, vision_goal(context, need))
-        self.deadline += outcome.seconds  # время зрения не съедает бюджет цикла
+        call = run_vision_step(self.runtime, self.settings, vision_goal(goal.context, need))
+        if self.vision_extends_deadline:
+            outcome = await call
+            self.deadline += outcome.seconds  # время зрения не съедает бюджет цикла
+        else:
+            try:
+                outcome = await asyncio.wait_for(call, timeout=max(1.0, self.deadline - time.monotonic()))
+            except asyncio.TimeoutError:
+                outcome = VisionOutcome(False, "зрение не уложилось в бюджет времени")
         after = await self.observe()
         moved = page_changed(obs, after)
         self.progress.mark("navigate", "vision", outcome.ok and moved)

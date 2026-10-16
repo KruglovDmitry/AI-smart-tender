@@ -1,4 +1,5 @@
 from tender_agent.api.schemas import TenderResult
+from tender_agent.tenders.card_reading import accept_card
 from tender_agent.tenders.extraction import card_from_raw, parse_date, parse_price
 from tender_agent.tenders.models import Element, Observation, RawCard
 from tender_agent.tenders.ranking import rank_tenders
@@ -83,6 +84,30 @@ def test_records_are_checked_against_the_page() -> None:
                                                                        "2026-10-12", 7_980_000.0)
     assert first.customer is None  # цитаты нет на странице — не принимаем
     assert first.verification_status == "verified" and second.verification_status == "needs_review"
+
+
+def test_card_keeps_only_quotes_and_elements_from_the_page() -> None:
+    obs = Observation(
+        url="https://example.com/t/1",
+        text=("Поставка бумаги\nЗаказчик ГБУ «Поликлиника»\nРазмещено 15.10.2026\nНачальная цена 340 158,80 ₽\n"
+              "Способ определения поставщика Запрос котировок\nЛот 1 Бумага А4\nЛот 2 Скрепки\nДокументы\nИзвещение.pdf"),
+        elements=[Element(ref=3, tag="a", name="Извещение.pdf", href="https://example.com/f/1.pdf"),
+                  Element(ref=4, tag="span", role="clickable", name="Проект контракта.docx")],
+    )
+    tender = _card(title="Поставка бумаги", url=obs.url, customer=None, price=None)
+    reading = accept_card(tender, obs, {
+        "customer": "ГБУ «Поликлиника»", "published": "15.10.2026", "deadline": "22.10.2026",
+        "price": "340 158,80 ₽", "procurement_method": "Запрос котировок", "okpd2": "17.12.14",
+        "lots": [{"number": "Лот 1", "title": "Бумага А4"}, {"number": "Лот 2", "title": "Скрепки"}],
+        "documents": [{"ref": 3, "name": "Извещение.pdf"}, {"ref": 4}, {"ref": 99, "name": "чужой"}],
+    })
+    card = reading.tender
+    assert (card.customer, card.published_at, card.deadline, card.price) == ("ГБУ «Поликлиника»", "2026-10-15", None, 340_158.8)
+    assert card.details["procurement_method"] == "Запрос котировок" and "okpd2" not in card.details
+    assert [lot["title"] for lot in card.details["lots"]] == ["Бумага А4", "Скрепки"]
+    assert card.documents == [{"name": "Извещение.pdf", "url": "https://example.com/f/1.pdf"},
+                              {"name": "Проект контракта.docx", "url": "https://example.com/t/1#file:Проект контракта.docx"}]
+    assert reading.refs == [3, 4] and reading.rejected == 3  # срок, ОКПД2 и чужой файл
 
 
 def test_element_href_object_does_not_fail_validation() -> None:

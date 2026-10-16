@@ -33,6 +33,15 @@ def test_public_and_allowlist() -> None:
     assert validate_navigation_url("https://tenders.example.test/tenders", Settings())[0] is True
 
 
+def test_mojibake_file_names_are_repaired() -> None:
+    from tender_agent.browser.downloads import fix_mojibake
+
+    broken = "Документация канцтовары.docx".encode("utf-8").decode("latin-1")
+    assert fix_mojibake(broken) == "Документация канцтовары.docx"
+    assert fix_mojibake("Проект контракта.docx") == "Проект контракта.docx"
+    assert fix_mojibake("spec.pdf") == "spec.pdf"
+
+
 def test_download_path_stays_in_workdir(tmp_path) -> None:
     saved = safe_destination(tmp_path, "../secret.pdf")
     assert saved.is_relative_to(tmp_path.resolve())

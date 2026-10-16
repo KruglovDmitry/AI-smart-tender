@@ -35,9 +35,14 @@ class ScriptedModel:
         self.requests: list[dict] = []
         self.extracted: set[str] = set()
 
+    def list_requests(self) -> list[dict]:
+        return [r for r in self.requests if not r["task"]["goal"].startswith("Открыта карточка")]
+
     async def next_action(self, task: dict, observation: dict) -> dict:
         self.requests.append({"task": task, "observation": observation})
         history = " ".join(task["history"])
+        if task["goal"].startswith("Открыта карточка"):
+            return {"tool": "done", "text": "Прочитано"} if "extract" in history else {"tool": "extract"}
         text = observation["text"]
         if "Вход" in observation["title"]:
             return {"tool": "ask_user", "text": "Площадка просит войти"}
@@ -69,10 +74,18 @@ class ScriptedModel:
                 records.append({"link_ref": link["ref"], "title": link["text"], "number": link["href"].rsplit("/", 1)[-1]})
         return {"records": records}
 
+    async def read_card(self, task: dict, observation: dict) -> dict:
+        pdf = _ref(observation, r"spec\.pdf")
+        return {"customer": "Заказчик", "published": "2026-10-08", "price": "12 000 000 ₸",
+                "okpd2": "26.20.14.000", "documents": [{"ref": pdf, "name": "spec.pdf"}] if pdf else []}
 
-async def _run(runtime: BrowserRuntime, root: Path, text: str, llm: object | None) -> TaskResult:
-    settings = Settings(data_dir=root, headless=True, timeout_seconds=60, max_actions=15, max_pages=4)
-    return await execute(text, settings=settings, runtime=runtime, repo=Repository(root / "agent.sqlite3"), llm=llm)
+
+async def _run(runtime: BrowserRuntime, root: Path, text: str, llm: object | None,
+               download: bool | None = None, **settings_kwargs: object) -> TaskResult:
+    settings = Settings(data_dir=root, headless=True, timeout_seconds=60, max_actions=15, max_pages=4,
+                        **settings_kwargs)
+    return await execute(text, settings=settings, runtime=runtime, repo=Repository(root / "agent.sqlite3"), llm=llm,
+                         download=download)
 
 
 async def _scenarios(tmp_path: Path) -> None:
@@ -88,7 +101,14 @@ async def _scenarios(tmp_path: Path) -> None:
         assert found.status == "completed", found.model_dump_json()
         assert {t.url.rsplit("/", 1)[-1] for t in found.results} == {"101", "102", "308"}  # номеров в тексте нет — только ссылки
         assert found.stats["pages_read"] == 2
-        last_history = model.requests[-1]["task"]["history"]
+        # Карточки: тот же цикл, поля и документы цитатами со страницы; без «скачай» файлы не качаются.
+        assert found.stats["card_outcomes"] == {"done": 3}
+        assert all(t.published_at == "2026-10-08" and t.price == 12_000_000 for t in found.results)
+        assert all(t.documents == [{"name": "spec.pdf", "url": "https://tenders.example.test/files/spec.pdf"}]
+                   for t in found.results)
+        assert "okpd2" not in found.results[0].details  # такой цитаты на странице нет
+        assert found.downloads == []
+        last_history = model.list_requests()[-1]["task"]["history"]
         assert any("fill [" in line and "открыта страница" in line for line in last_history)
         assert any(line.split(". ", 1)[1].startswith("extract → записей на странице 2, принято 2") for line in last_history)
         first_page = model.requests[0]["observation"]
@@ -100,7 +120,17 @@ async def _scenarios(tmp_path: Path) -> None:
         noop_model = ScriptedModel()
         noop = await _run(runtime, tmp_path, 'Открой https://tenders.example.test/noop и верни 5 закупок по ключевому слову "сервер"', noop_model)
         assert noop.status == "partial" and [t.url.rsplit("/", 1)[-1] for t in noop.results] == ["101"]
-        assert sum("страница не изменилась" in line for line in noop_model.requests[-1]["task"]["history"]) == 2
+        assert sum("страница не изменилась" in line for line in noop_model.list_requests()[-1]["task"]["history"]) == 2
+
+        # Скачивание: «скачай» в задании; флаг запроса и общий выключатель сильнее текста.
+        fetch = 'Открой https://tenders.example.test/tenders?q=сервер и скачай документы 1 закупки по ключевому слову "сервер"'
+        saved = await _run(runtime, tmp_path, fetch, ScriptedModel())
+        assert [d.status for d in saved.downloads] == ["saved"], saved.model_dump_json()
+        assert Path(saved.downloads[0].path).read_bytes().startswith(b"%PDF-")
+        assert (await _run(runtime, tmp_path, fetch, ScriptedModel(), download=False)).downloads == []
+        assert (await _run(runtime, tmp_path, fetch, ScriptedModel(), downloads_enabled=False)).downloads == []
+        plain_task = 'Открой https://tenders.example.test/tenders?q=сервер и верни 1 закупку по ключевому слову "сервер"'
+        assert len((await _run(runtime, tmp_path, plain_task, ScriptedModel(), download=True)).downloads) == 1
 
         empty = await _run(runtime, tmp_path, 'Открой https://tenders.example.test/empty и верни 5 закупок по ключевому слову "сервер"', ScriptedModel())
         assert empty.status == "partial" and empty.results == []

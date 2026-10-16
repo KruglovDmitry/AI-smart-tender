@@ -44,9 +44,10 @@ class _TabRuntime:
 def card_goal_text(tender: TenderResult) -> str:
     return (
         f"Открыта карточка закупки «{(tender.title or '')[:150]}» ({tender.url}). "
-        "Вызови extract, чтобы прочитать поля карточки и документы. Если после extract документов нет, "
-        "найди на этой карточке вкладку или раздел с документами (документация, файлы, извещение, вложения), "
-        "открой его и снова вызови extract. Не переходи к другим закупкам и не возвращайся к выдаче. "
+        "Эта страница уже прочитана (extract в истории, шаг 0). Если документов пока нет, найди на этой "
+        "карточке вкладку или раздел с документами (документация, файлы, извещение, вложения), открой его и "
+        "вызови extract. Если важных полей нет на этой странице, а есть вкладка со сведениями — открой её и "
+        "вызови extract. Не переходи к другим закупкам и не возвращайся к выдаче. "
         "Когда поля прочитаны и документы найдены (или на карточке их точно нет) — done."
     )
 
@@ -131,7 +132,7 @@ class CardReader:
                     max_steps=self.settings.card_max_steps, vision_limit=1, vision_extends_deadline=False)
         outcome = await loop.run(Goal(
             text=card_goal_text(tender), extract=extract, status=status,
-            context=f"карточка закупки «{(tender.title or '')[:120]}» на {self.host}",
+            context=f"карточка закупки «{(tender.title or '')[:120]}» на {self.host}", extract_first=True,
         ))
         self.outcomes[outcome.outcome] += 1
         return state["tender"]

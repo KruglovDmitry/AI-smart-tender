@@ -38,6 +38,9 @@ class Goal:
     extract: Callable[[Observation], Awaitable[str]]  # чтение страницы; возвращает строку для истории
     status: Callable[[], str]  # прогресс для модели: «прочитано записей: 3 из 5»
     context: str = ""  # одной строкой для зрения: где мы и что ищем (без общей цели — см. vision_goal)
+    # Прочитать открытую страницу до первого решения модели (карточка: иначе модель сразу уходит
+    # во вкладку «Документы», и поля основной страницы остаются непрочитанными).
+    extract_first: bool = False
 
 
 @dataclass
@@ -83,6 +86,12 @@ class Loop:
         unchanged = 0
         model_failures = 0
         obs = await self.observe()
+        if goal.extract_first and obs.page_kind != "captcha":
+            note = await goal.extract(obs)
+            history.append(f"0. {note}")
+            await self._log({"phase": self.phase, "step": 0, "url": obs.url, "title": obs.title[:120],
+                             "decision": {"tool": "extract", "thought": "первое чтение страницы — без решения модели"},
+                             "note": note, "changed": True}, obs)
         for step in range(1, self.max_steps + 1):
             if time.monotonic() >= self.deadline:
                 return LoopResult("timeout", "Истекло время задания.", last_obs=obs, history=history)

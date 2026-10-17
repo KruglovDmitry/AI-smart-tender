@@ -1,9 +1,8 @@
-from tender_agent.agent.orchestrator import search_applied
+from tender_agent.agent.loop import page_for_model
+from tender_agent.agent.planner import parse_task
 from tender_agent.browser.navigation import same_site
-from tender_agent.heuristics.known_sites import search_url, sorted_by_date_url
-from tender_agent.heuristics.discovery import pick_sort, pick_submit
-from tender_agent.heuristics.fields import junk_title
-from tender_agent.tenders.models import Element, Observation, RawCard
+from tender_agent.config import Settings
+from tender_agent.tenders.models import Element, Observation
 
 
 def test_same_site_allows_bare_domain_and_subdomains() -> None:
@@ -12,117 +11,78 @@ def test_same_site_allows_bare_domain_and_subdomains() -> None:
     assert not same_site("https://zakupki.gov.ru/epz/order/notice", "www.fabrikant.ru")
 
 
-def test_sort_option_ignores_update_date() -> None:
-    update = Element(ref=1, tag="a", name="Дате обновления")
-    publish = Element(ref=2, tag="a", name="Дате размещения")
-    assert pick_sort([update]) is None
-    assert pick_sort([update, publish]).ref == 2
-
-
-def test_known_sort_url_for_eis() -> None:
-    url = "https://zakupki.gov.ru/epz/order/extendedsearch/results.html?searchString=сервер"
-    sorted_url = sorted_by_date_url(url)
-    assert sorted_url and "sortBy=PUBLISH_DATE" in sorted_url and "sortDirection=false" in sorted_url
-    assert sorted_by_date_url(sorted_url) is None
-    assert sorted_by_date_url("https://www.tektorg.ru/procedures?name=x").endswith("sort=datePublished_desc")
-    assert sorted_by_date_url("https://www.b2b-center.ru/market/") is None
-
-
-def test_search_applied_checks_results_not_just_url() -> None:
-    cards = [RawCard(title=t, href=f"https://x.ru/{i}") for i, t in enumerate(["Линейная арматура", "Электроды", "Провода"])]
-    assert not search_applied(Observation(url="https://www.tektorg.ru/procedures", cards=cards), "сервер")
-    served = cards + [RawCard(title="Поставка серверного оборудования", href="https://x.ru/9"),
-              RawCard(title="Сервер хранения", href="https://x.ru/10")]
-    assert search_applied(Observation(url="https://www.tektorg.ru/procedures", cards=served), "сервер")
-    assert search_applied(Observation(url="https://x.ru/search?q=%D1%81%D0%B5%D1%80%D0%B2%D0%B5%D1%80", cards=cards), "сервер")
-
-
-def test_junk_titles() -> None:
-    for text in ["Просмотр", "Избранное", "№ SBR028-2610130003.1", "ATOM13072600026 (Лот 1)", "№ 32616441786",
-                 "Закупки Росатом", "Закупки по 44-ФЗ", "Госзакупки по 44-ФЗ", "ПРИЕМ ПРЕДЛОЖЕНИЙ",
-                 "Коммерческие закупки и закупки по 223-ФЗ", "№ в ЕИС 32616461240",
-                 "223-ФЗ и Коммерческие закупки", "Государственные закупки (44-ФЗ)", "86. Ханты-Мансийский АО (Югра)"]:
-        assert junk_title(text), text
-    assert not junk_title("Поставка серверного оборудования")
-    assert not junk_title("Сервер")
-    assert not junk_title("Закупка серверного оборудования для нужд ЦОД")
-
-
-def test_submit_prefers_exact_find_over_advanced_search() -> None:
-    search = Element(ref=1, tag="input", input_type="text", placeholder="Введите ключевое слово")
-    advanced = Element(ref=2, tag="button", name="Расширенный поиск")
-    find = Element(ref=3, tag="button", name="Найти")
-    assert pick_submit([search, advanced, find], search).ref == 3
-    assert pick_submit([search, advanced], search) is None
-
-
-def test_known_search_url() -> None:
-    assert search_url("https://www.tektorg.ru/procedures", "сервер") == "https://www.tektorg.ru/procedures?name=%D1%81%D0%B5%D1%80%D0%B2%D0%B5%D1%80"
-    assert search_url("https://example.com/", "сервер") is None
-
-
-def test_search_applied_uses_block_text() -> None:
-    cards = [RawCard(title="Электронный открытый аукцион", href=f"https://x.ru/{i}", block_text=f"№ {i}\nПоставка сервера")
-             for i in range(4)]
-    assert search_applied(Observation(url="https://www.sberbank-ast.ru/UnitedPurchaseList.html", cards=cards), "сервер")
-
-
-def test_eis_filestore_links_are_documents() -> None:
-    from tender_agent.heuristics.discovery import file_refs
-
-    doc = Element(ref=1, tag="a", name="Проект контракта",
-                  href="https://zakupki.gov.ru/44fz/filestore/public/1.0/download/priz/file.html?uid=ABC")
-    nav = Element(ref=2, tag="a", name="Журнал событий", href="https://zakupki.gov.ru/epz/order/notice/ea20/view/event-journal.html")
-    assert file_refs([doc, nav]) == [1]
-
-
-def test_progress_method_counters() -> None:
-    from tender_agent.agent.state import Progress
-
-    progress = Progress()
-    progress.mark("search", "rule", False)
-    progress.mark("search", "known_url", None)
-    progress.mark_ok("search", "known_url")
-    progress.mark("sort", "vision", True)
-    assert progress.methods == {
-        "search": {"rule": {"used": 1, "ok": 0}, "known_url": {"used": 1, "ok": 1}},
-        "sort": {"vision": {"used": 1, "ok": 1}},
-    }
-
-
 def test_negated_download_is_not_a_download() -> None:
-    from tender_agent.agent.planner import parse_task
-    from tender_agent.config import Settings
-
     base = 'С площадки https://zakupki.gov.ru/ верни последние 5 закупок по ключевому слову "канцтовары".'
     assert parse_task(base + " Скачай документы.", Settings()).download_documents
     for tail in (" Ничего не скачивай.", " Документы не скачивай.", " Без скачивания."):
         assert not parse_task(base + tail, Settings()).download_documents, tail
 
 
-def test_lots_of_one_procedure_are_one_tender() -> None:
+def test_cards_reread_only_after_a_successful_probe() -> None:
+    import asyncio
+    from collections import Counter
+
+    from tender_agent.agent.cards import CardReader
     from tender_agent.api.schemas import TenderResult
-    from tender_agent.tenders.ranking import rank_tenders
 
-    lots = [TenderResult(id="B0510261309243", title=f"Филиал {i}", url=f"https://www.roseltorg.ru/procedure/B0510261309243/{i}",
-                         verification_status="verified") for i in (1, 6, 7)]
-    other = TenderResult(id="0373100110426000032", title="Канцтовары", url="https://www.roseltorg.ru/procedure/0373100110426000032/1",
-                         verification_status="verified")
-    ranked = rank_tenders([*lots, other], sort_by=None, limit=5)
-    assert [t.id for t in ranked] == ["B0510261309243", "0373100110426000032"]
-    assert [lot["url"][-1] for lot in ranked[0].details["lots"]] == ["1", "6", "7"]
+    def reader(main_tab_works: bool):
+        cards = CardReader.__new__(CardReader)
+        cards.outcomes = Counter()
+        calls: list[tuple[str, bool]] = []
+
+        async def fake(tender, reuse_main=False):
+            calls.append((tender.id, reuse_main))
+            outcome = "done" if reuse_main and main_tab_works else "needs_user"
+            cards.outcomes[outcome] += 1
+            return tender, outcome
+
+        cards._read_in_tab = fake
+        return cards, calls
+
+    tenders = [TenderResult(id=str(i), url=f"https://x.ru/{i}") for i in range(3)]
+    # Лимит вкладок (Росатом): в основной вкладке читается — перечитываем все.
+    limited, calls = reader(main_tab_works=True)
+    asyncio.run(limited.read_all(tenders))
+    assert [c for c in calls if c[1]] == [("0", True), ("1", True), ("2", True)]
+    assert limited.outcomes["done"] == 3 and limited.outcomes["needs_user"] == 0
+    # Документы за регистрацией (РосТендер): проба тоже упала — дальше не тратим время.
+    locked, calls = reader(main_tab_works=False)
+    asyncio.run(locked.read_all(tenders))
+    assert [c for c in calls if c[1]] == [("0", True)]
+    assert locked.outcomes["needs_user"] == 3
 
 
-def test_known_sort_url_for_roseltorg() -> None:
-    url = "https://www.roseltorg.ru/procedures/search?sale=1&query_field=x"
-    assert sorted_by_date_url(url).endswith("sort=date_published_down")
+def test_action_error_names_the_blocking_element() -> None:
+    from tender_agent.agent.loop import action_error
+
+    timeout = TimeoutError(
+        "Locator.click: Timeout 8000ms exceeded.\nCall log:\n  - waiting for locator\n"
+        '    - <div class="onboarding-modal">…</div> intercepts pointer events\n  - retrying click action'
+    )
+    assert action_error(timeout).startswith('элемент перекрыт другим элементом <div class="onboarding-modal">')
+    assert action_error(RuntimeError("Элемент 5 нет на текущей странице.")) == "Элемент 5 нет на текущей странице."
 
 
-def test_two_digit_year_dates() -> None:
-    from tender_agent.heuristics.fields import build_fields, known_values
-    from tender_agent.tenders.extraction import parse_date
-
-    assert parse_date("21.09.26 16:51 (МСК)") == "2026-09-21"
-    assert parse_date("21.09.2026") == "2026-09-21"
-    known = known_values(build_fields([], "Публикация извещения\n21.09.26 16:51 (МСК)\nПрием заявок до\n29.09.26 11:00 (МСК)"))
-    assert known["published"].startswith("21.09.26")
+def test_page_for_model_lists_elements_without_conclusions() -> None:
+    obs = Observation(
+        url="https://www.rts-tender.ru/poisk",
+        title="Поиск",
+        text="Поиск закупок\n" + "x" * 10_000,
+        elements=[
+            Element(ref=1, tag="input", input_type="text", placeholder="Введите запрос", value="канц"),
+            Element(ref=2, tag="button", name="Найти"),
+            Element(ref=3, tag="a", name="Следующая", href="https://www.rts-tender.ru/poisk?page=2"),
+            Element(ref=4, tag="a", name="Telegram", href="https://t.me/rts"),
+        ],
+        scroll={"y": 0, "height": 5000, "viewport": 900},
+    )
+    page = page_for_model(obs)
+    assert page["elements"] == [
+        "[1] input[text] placeholder=«Введите запрос» value=«канц»",
+        "[2] button «Найти»",
+        "[3] a «Следующая» → /poisk?page=2",
+        "[4] a «Telegram» → https://t.me/rts",
+    ]
+    assert len(page["text"]) == 6000 and page["text_truncated"]
+    assert page["scroll"].startswith("прокручено 0 из 5000")
+    assert not {"search_ref", "sort_ref", "next_ref", "page_kind"} & set(page)

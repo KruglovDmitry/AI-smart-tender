@@ -45,11 +45,16 @@ def _data_dir() -> Path:
 class Settings:
     default_limit: int = 5
     max_actions: int = 40
-    max_llm_calls: int = 12
-    max_retries: int = 2
-    timeout_seconds: int = 120
+    # Модель решает каждый шаг, поэтому бюджет времени больше, чем был у эвристик.
+    timeout_seconds: int = 300
     max_pages: int = 5
-    max_downloads: int = 20
+    # Карточка закупки: свой бюджет времени (включая зрение) и шагов цикла.
+    card_timeout_seconds: int = 90
+    card_max_steps: int = 10
+    # Общий выключатель скачивания: false — файлы не качаются, даже если задание просит.
+    downloads_enabled: bool = True
+    # Файлов на одну закупку.
+    max_downloads: int = 30
     max_download_bytes: int = 20_000_000
     headless: bool = True
     allowed_hosts: tuple[str, ...] = ()
@@ -76,11 +81,12 @@ class Settings:
         return cls(
             default_limit=int(os.getenv("TENDER_AGENT_DEFAULT_LIMIT", "5")),
             max_actions=int(os.getenv("TENDER_AGENT_MAX_ACTIONS", "40")),
-            max_llm_calls=int(os.getenv("TENDER_AGENT_MAX_LLM_CALLS", "12")),
-            max_retries=int(os.getenv("TENDER_AGENT_MAX_RETRIES", "2")),
-            timeout_seconds=int(os.getenv("TENDER_AGENT_TIMEOUT_SECONDS", "120")),
+            timeout_seconds=int(os.getenv("TENDER_AGENT_TIMEOUT_SECONDS", "300")),
             max_pages=int(os.getenv("TENDER_AGENT_MAX_PAGES", "5")),
-            max_downloads=int(os.getenv("TENDER_AGENT_MAX_DOWNLOADS", "20")),
+            card_timeout_seconds=int(os.getenv("TENDER_AGENT_CARD_TIMEOUT_SECONDS", "90")),
+            card_max_steps=int(os.getenv("TENDER_AGENT_CARD_MAX_STEPS", "10")),
+            downloads_enabled=_flag("TENDER_AGENT_DOWNLOADS", True),
+            max_downloads=int(os.getenv("TENDER_AGENT_MAX_DOWNLOADS", "30")),
             max_download_bytes=int(os.getenv("TENDER_AGENT_MAX_DOWNLOAD_BYTES", "20000000")),
             headless=_flag("TENDER_AGENT_HEADLESS", True),
             allowed_hosts=_hosts(os.getenv("TENDER_AGENT_ALLOWED_HOSTS", "")),

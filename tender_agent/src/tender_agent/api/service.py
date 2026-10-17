@@ -36,6 +36,7 @@ async def run_task(
     llm: LLMClient | None = None,
     runtime: BrowserRuntime | None = None,
     repo: Repository | None = None,
+    download: bool | None = None,
 ) -> TaskResult:
     settings = settings or Settings.from_env()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
@@ -52,10 +53,10 @@ async def run_task(
     result: TaskResult | None = None
     try:
         if runtime is not None:
-            result = await execute(text, settings=settings, runtime=runtime, repo=repo, llm=llm)
+            result = await execute(text, settings=settings, runtime=runtime, repo=repo, llm=llm, download=download)
         else:
             async with BrowserRuntime(settings, settings.data_dir / "_browser") as owned:
-                result = await execute(text, settings=settings, runtime=owned, repo=repo, llm=llm)
+                result = await execute(text, settings=settings, runtime=owned, repo=repo, llm=llm, download=download)
         _store(settings, text, result, trace)
         return result
     except Exception as exc:

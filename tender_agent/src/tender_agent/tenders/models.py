@@ -12,41 +12,34 @@ def _optional_text(value: object) -> str | None:
 
 
 class Element(BaseModel):
+    """Интерактивный элемент страницы; ref — номер в атрибуте data-ta-ref текущего снимка."""
+
     ref: int
     tag: str = ""
     role: str = ""
     name: str = ""
     href: str | None = None
     placeholder: str | None = None
-    label: str = ""
     input_type: str | None = None
     value: str | None = None
-    rel: str | None = None
     download: bool = False
+    # Признаки из классов и атрибутов, которых нет в тексте: asc/desc, selected, aria-sort…
+    hint: str = ""
 
-    @field_validator("tag", "role", "name", "label", mode="before")
+    @field_validator("tag", "role", "name", "hint", mode="before")
     @classmethod
     def _required_text(cls, value: object) -> str:
         return _text(value)
 
-    @field_validator("href", "placeholder", "input_type", "value", "rel", mode="before")
+    @field_validator("href", "placeholder", "input_type", "value", mode="before")
     @classmethod
     def _optional(cls, value: object) -> str | None:
         return _optional_text(value)
 
 
-class PageField(BaseModel):
-    id: int
-    label: str = ""
-    value: str = ""
-
-    @field_validator("label", "value", mode="before")
-    @classmethod
-    def _required_text(cls, value: object) -> str:
-        return _text(value)
-
-
 class RawCard(BaseModel):
+    """Запись выдачи в виде цитат со страницы, до разбора дат и цены."""
+
     id: str | None = None
     title: str | None = None
     href: str | None = None
@@ -58,25 +51,16 @@ class RawCard(BaseModel):
     currency: str | None = None
     status: str | None = None
     sources: dict[str, str] = Field(default_factory=dict)
-    # Текст блока карточки в выдаче: по нему модель дочитывает поля (tenders/refine.py).
-    block_text: str | None = None
 
 
 class Observation(BaseModel):
+    """Снимок страницы: только факты, без выводов о том, где поиск, сортировка и т. п."""
+
     url: str
     title: str = ""
-    page_kind: str = "unknown"
-    headings: list[str] = Field(default_factory=list)
-    text_excerpt: str = ""
-    content_text: str = ""
-    fields: list[PageField] = Field(default_factory=list)
+    # page — обычная страница; login / captcha / error — стоп-сигналы безопасности.
+    page_kind: str = "page"
+    text: str = ""
     elements: list[Element] = Field(default_factory=list)
-    cards: list[RawCard] = Field(default_factory=list)
-    search_ref: int | None = None
-    search_value: str = ""
-    submit_ref: int | None = None
-    sort_ref: int | None = None
-    sort_menu_ref: int | None = None
-    next_ref: int | None = None
-    file_refs: list[int] = Field(default_factory=list)
+    scroll: dict[str, int] = Field(default_factory=dict)  # y, height, viewport
     signature: str = ""

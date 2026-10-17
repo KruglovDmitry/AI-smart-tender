@@ -163,3 +163,11 @@ a:hover { text-decoration:underline; }
   .sidebar { display:none; }
   .main { padding:16px; }
 }
+
+/* Действия внизу карточки закупки: корзина — мягкое удаление. */
+.drawer-actions { display:flex; justify-content:flex-end; margin-top:24px; padding-top:16px; border-top:1px solid #24304f; }
+.icon-btn { display:inline-flex; align-items:center; justify-content:center; width:42px; height:42px; border-radius:11px;
+  cursor:pointer; background:transparent; border:1px solid #24304f; }
+.icon-btn.danger { color:#ef4444; border-color:rgba(239,68,68,.45); }
+.icon-btn.danger:hover { background:rgba(239,68,68,.12); }
+.icon-btn:disabled { opacity:.55; cursor:wait; }

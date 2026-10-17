@@ -19,7 +19,7 @@ class TaskSpec(BaseModel):
     download_documents: bool = False
     max_pages: int = 5
     max_actions: int = 40
-    timeout_seconds: int = 120
+    timeout_seconds: int = 300
 
 
 class TenderResult(BaseModel):
@@ -46,7 +46,10 @@ class TenderResult(BaseModel):
 
 
 class DownloadRecord(BaseModel):
+    # Ссылка на документ со страницы карточки — по ней файл привязывается к документу в базе.
     source_url: str
+    # Конечный адрес после перенаправлений (ТЭК-Торг 44.tektorg.ru/file/get → хранилище ЕИС).
+    final_url: str | None = None
     path: str
     name: str
     size: int

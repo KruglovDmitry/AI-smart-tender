@@ -4,13 +4,14 @@ import re
 from datetime import datetime
 
 from ..api.schemas import TenderResult
-from ..heuristics.patterns import DOC_HREF_RE, FILE_RE
-from ..heuristics.fields import known_values, label_kind
-from ..heuristics.titles import suspicious_title
-from .models import Element, Observation, PageField, RawCard
+from .models import RawCard
 
 _ISO = re.compile(r"(\d{4}-\d{2}-\d{2})")
 _DOT = re.compile(r"(\d{2}\.\d{2}\.(?:\d{4}|\d{2}))(?!\d)")
+# «16 окт. 2026», «3 октября 2026» (РТС-тендер и др.).
+_WORDS = re.compile(r"(\d{1,2})\s+(янв|фев|мар|апр|ма[йя]|июн|июл|авг|сен|окт|ноя|дек)[а-я]*\.?\s+(\d{4})", re.I)
+_MONTHS = {"янв": 1, "фев": 2, "мар": 3, "апр": 4, "май": 5, "мая": 5, "июн": 6, "июл": 7, "авг": 8,
+           "сен": 9, "окт": 10, "ноя": 11, "дек": 12}
 
 
 def parse_date(value: str | None) -> str | None:
@@ -26,6 +27,13 @@ def parse_date(value: str | None) -> str | None:
             fmt = "%d.%m.%Y" if len(dotted.group(1)) == 10 else "%d.%m.%y"
             return datetime.strptime(dotted.group(1), fmt).date().isoformat()
         except ValueError:
+            return None
+    worded = _WORDS.search(text)
+    if worded:
+        try:
+            month = _MONTHS[worded.group(2).casefold()]
+            return datetime(int(worded.group(3)), month, int(worded.group(1))).date().isoformat()
+        except (KeyError, ValueError):
             return None
     return None
 
@@ -47,16 +55,13 @@ def parse_price(amount: str | None, text: str | None, currency: str | None) -> t
     if not raw:
         return None, cur
     try:
-        return float(raw.replace(" ", "").replace(",", ".")), cur
+        return float(re.sub(r"\s", "", raw).replace(",", ".")), cur
     except ValueError:
         return None, cur
 
 
-def _matched(title: str | None, keyword: str) -> bool:
-    return bool(keyword) and keyword.casefold() in (title or "").casefold()
-
-
-def card_from_raw(raw: RawCard, *, keyword: str, keyword_applied: bool, sort_required: bool) -> TenderResult | None:
+def card_from_raw(raw: RawCard, *, keyword: str, sort_required: bool) -> TenderResult | None:
+    """Запись выдачи → результат. Слово запроса в названии — verified, иначе needs_review."""
     title = (raw.title or "").strip() or None
     url = (raw.href or "").strip() or None
     if not title or not url:
@@ -64,20 +69,10 @@ def card_from_raw(raw: RawCard, *, keyword: str, keyword_applied: bool, sort_req
     published = parse_date(raw.published_at)
     deadline = parse_date(raw.deadline)
     price, currency = parse_price(raw.amount, raw.price_text, raw.currency)
-    matched = _matched(title, keyword)
-    if matched:
-        status = "verified"
-    elif keyword_applied:
+    matched = bool(keyword) and keyword.casefold() in title.casefold()
+    status = "verified" if matched else "needs_review"
+    if sort_required and published is None:
         status = "needs_review"
-    else:
-        return None
-    if sort_required and published is None and status == "verified":
-        status = "needs_review"
-    sources = dict(raw.sources)
-    if published:
-        sources.setdefault("published_at", "page")
-    if raw.deadline and not raw.published_at:
-        sources["deadline_not_used_as_published"] = "true"
     return TenderResult(
         id=(raw.id or "").strip() or None,
         title=title,
@@ -90,241 +85,5 @@ def card_from_raw(raw: RawCard, *, keyword: str, keyword_applied: bool, sort_req
         status=(raw.status or "").strip() or None,
         matched_keyword=keyword if matched else None,
         verification_status=status,  # type: ignore[arg-type]
-        sources=sources,
+        sources=dict(raw.sources),
     )
-
-
-def _page_blob(obs: Observation) -> str:
-    parts = [obs.title, obs.content_text, obs.text_excerpt, *obs.headings]
-    for field in obs.fields:
-        parts.append(f"{field.label} {field.value}")
-    for element in obs.elements:
-        parts.extend([element.name, element.label, element.href or ""])
-    return " ".join(part for part in parts if part)
-
-
-def apply_labeled_fields(tender: TenderResult, fields: list[PageField]) -> TenderResult:
-    """Заполняет пустые поля однозначными подписями, без модели."""
-    updated = tender.model_copy(deep=True)
-    known = known_values(fields)
-    customer = (known.get("customer") or "").strip()
-    if customer and not updated.customer:
-        updated.customer = customer
-        updated.sources["customer"] = "label"
-    published = parse_date(known.get("published"))
-    deadline = parse_date(known.get("deadline"))
-    if deadline and not updated.deadline:
-        updated.deadline = deadline
-        updated.sources["deadline"] = "label"
-    if published and not updated.published_at:
-        updated.published_at = published
-        updated.sources["published_at"] = "label"
-        if updated.matched_keyword and updated.verification_status == "needs_review":
-            updated.verification_status = "verified"
-    price, currency = parse_price(None, known.get("price"), None)
-    if price is not None and updated.price is None:
-        updated.price = price
-        updated.currency = updated.currency or currency
-        updated.sources["price"] = "label"
-    status = (known.get("status") or "").strip()
-    if status and not updated.status:
-        updated.status = status
-        updated.sources["status"] = "label"
-    titled = (known.get("title") or "").strip()
-    if titled and (not updated.title or updated.title.startswith("№")):
-        updated.title = titled[:300]
-        updated.sources["title"] = "label"
-    return updated
-
-
-def _text(value: object) -> str:
-    return str(value or "").strip()
-
-
-def _on_page(value: str, blob: str) -> bool:
-    return bool(value) and value.casefold() in blob.casefold()
-
-
-def _date_on_page(value: str, blob: str) -> str | None:
-    parsed = parse_date(value)
-    if parsed is None:
-        return None
-    year, month, day = parsed.split("-")
-    dotted = f"{day}.{month}.{year}"
-    if _on_page(value, blob) or parsed in blob or dotted in blob:
-        return parsed
-    return None
-
-
-def _is_document(element: Element) -> bool:
-    href = element.href or ""
-    name = element.name or ""
-    if element.download or FILE_RE.search(href) or FILE_RE.search(name) or DOC_HREF_RE.search(href):
-        return True
-    return bool(re.search(r"документ|скачать|файл|вложен", f"{name} {href}", re.I))
-
-
-def _lots_from_model(raw: object, blob: str) -> list[dict]:
-    """Лоты, которые модель процитировала со страницы: название должно быть на странице."""
-    if not isinstance(raw, list):
-        return []
-    lots = []
-    for item in raw[:100]:
-        if not isinstance(item, dict):
-            continue
-        title = _text(item.get("title"))
-        if not title or not _on_page(title, blob):
-            continue
-        lot = {"title": title[:300]}
-        for key in ("number", "price"):
-            value = _text(item.get(key))
-            if value and _on_page(value, blob):
-                lot[key] = value[:60]
-        lots.append(lot)
-    return lots if len(lots) > 1 else []
-
-
-DETAIL_KEYS = ("procurement_method", "delivery_place", "bid_security", "contract_security", "okpd2")
-
-
-def documents_tab_ref(obs: Observation, data: dict | None) -> int | None:
-    """Ссылка на раздел с документами, которую указала модель: только существующая ссылка, не файл."""
-    raw = (data or {}).get("documents_tab_ref")
-    if isinstance(raw, bool) or raw is None:
-        return None
-    try:
-        ref = int(raw)
-    except (TypeError, ValueError):
-        return None
-    element = _element(obs, ref)
-    if element is None or not element.href or FILE_RE.search(element.href) or DOC_HREF_RE.search(element.href):
-        return None
-    return ref
-
-
-def _element(obs: Observation, ref: int) -> Element | None:
-    for element in obs.elements:
-        if element.ref == ref:
-            return element
-    return None
-
-
-def _field(obs: Observation, raw: object) -> PageField | None:
-    if isinstance(raw, bool):
-        return None
-    if isinstance(raw, int) or (isinstance(raw, str) and raw.isdigit()):
-        wanted = int(raw)
-        for field in obs.fields:
-            if field.id == wanted:
-                return field
-    return None
-
-
-def _accepted_value(field: PageField, expected: str) -> str | None:
-    kind = label_kind(field.label)
-    if expected == "published" and re.search(r"обнов", field.label, re.I):
-        return None
-    if expected == "published" and kind in {"deadline", "price", "customer", "title", "status"}:
-        return None
-    if expected == "deadline" and kind in {"published", "price", "customer", "title"}:
-        return None
-    if expected == "price" and kind in {"published", "deadline", "customer", "title"}:
-        return None
-    if expected == "customer" and kind in {"published", "deadline", "price"}:
-        return None
-    return field.value.strip() or None
-
-
-def _from_model(obs: Observation, payload: dict, blob: str, key: str, quote_key: str, expected: str) -> tuple[str, str]:
-    field = _field(obs, payload.get(key))
-    if field is not None:
-        value = _accepted_value(field, expected)
-        return (value or ""), "field"
-    quote = _text(payload.get(quote_key))
-    if not quote and isinstance(payload.get(key), str) and not str(payload.get(key)).isdigit():
-        quote = _text(payload.get(key))
-    if quote and _on_page(quote, blob):
-        return quote, "llm"
-    return "", ""
-
-
-def apply_page_reading(tender: TenderResult, obs: Observation, data: dict | None) -> tuple[TenderResult, list[int]]:
-    """Дополняет карточку номером поля или цитатой из полного текста блока."""
-    updated = tender.model_copy(deep=True)
-    blob = _page_blob(obs)
-    payload = data or {}
-    customer, customer_source = _from_model(obs, payload, blob, "customer", "customer_quote", "customer")
-    if customer and not updated.customer:
-        updated.customer = customer
-        updated.sources["customer"] = customer_source
-    deadline_text, deadline_source = _from_model(obs, payload, blob, "deadline", "deadline_quote", "deadline")
-    published_text, published_source = _from_model(obs, payload, blob, "published_at", "published_quote", "published")
-    deadline = parse_date(deadline_text) if deadline_text else None
-    published = parse_date(published_text) if published_text else None
-    if published_source == "llm":
-        low = blob.casefold()
-        if published and published == deadline and "публикац" not in low and "размещен" not in low:
-            published = None
-    if deadline and not updated.deadline:
-        updated.deadline = deadline
-        updated.sources["deadline"] = deadline_source
-    if published and not updated.published_at:
-        updated.published_at = published
-        updated.sources["published_at"] = published_source
-        if updated.matched_keyword and updated.verification_status == "needs_review":
-            updated.verification_status = "verified"
-    price_text, price_source = _from_model(obs, payload, blob, "price", "price_quote", "price")
-    if not price_text:
-        price_text, price_source = _from_model(obs, payload, blob, "price_text", "price_quote", "price")
-    if price_text and updated.price is None:
-        price, currency = parse_price(None, price_text, None)
-        if price is not None:
-            updated.price = price
-            updated.currency = updated.currency or currency
-            updated.sources["price"] = price_source
-    status, status_source = _from_model(obs, payload, blob, "status", "status_quote", "status")
-    if status and not updated.status:
-        updated.status = status
-        updated.sources["status"] = status_source
-    title, title_source = _from_model(obs, payload, blob, "title", "title_quote", "")
-    if title and (not updated.title or suspicious_title(updated.title)) and not suspicious_title(title):
-        updated.title = title[:300]
-        updated.sources["title"] = title_source
-    for key in DETAIL_KEYS:
-        value, source = _from_model(obs, payload, blob, key, f"{key}_quote", "")
-        if value and not updated.details.get(key):
-            updated.details[key] = value[:500]
-            updated.sources[key] = source
-    lots = _lots_from_model(payload.get("lots"), blob)
-    if lots:
-        # Лоты со страницы процедуры — части этой закупки; адреса строк выдачи, если были, сохраняем.
-        known_urls = {(lot.get("title") or "").casefold(): lot.get("url") for lot in updated.details.get("lots", [])}
-        for lot in lots:
-            lot.setdefault("url", known_urls.get((lot.get("title") or "").casefold()))
-        updated.details["lots"] = lots
-        updated.sources["lots"] = "llm"
-    known = {element.ref for element in obs.elements}
-    refs: list[int] = []
-    for item in payload.get("document_refs") or []:
-        try:
-            ref = int(item)
-        except (TypeError, ValueError):
-            continue
-        element = _element(obs, ref) if ref in known else None
-        if element and element.ref not in refs and _is_document(element):
-            refs.append(element.ref)
-    urls: list[str] = []
-    documents: list[dict[str, str]] = []
-    for ref in [*refs, *obs.file_refs]:
-        element = _element(obs, ref)
-        href = (element.href if element else "") or ""
-        name = ((element.name if element else "") or (element.label if element else "") or "").strip()[:200]
-        if href and href not in urls:
-            urls.append(href)
-            documents.append({"name": name, "url": href})
-        elif not href and name and all(doc["name"] != name for doc in documents):
-            # «Кнопка»-файл без адреса: скачивается кликом, в базе — по имени на странице карточки.
-            documents.append({"name": name, "url": f"{obs.url}#file:{name}"})
-    updated.document_urls = urls
-    updated.documents = documents
-    return updated, refs or list(obs.file_refs)

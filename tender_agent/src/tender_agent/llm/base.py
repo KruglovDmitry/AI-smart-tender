@@ -4,16 +4,11 @@ from typing import Protocol
 
 
 class LLMClient(Protocol):
-    async def decide(self, task: dict, observation: dict) -> dict:
-        """Один следующий шаг: tool, element_ref, value, expected."""
+    async def next_action(self, task: dict, observation: dict) -> dict:
+        """Одно следующее действие в браузере: tool, ref, text, submit, direction, url, empty, thought."""
 
+    async def read_results(self, task: dict, observation: dict) -> dict:
+        """Записи выдачи с текущей страницы: {"records": [...]} дословными цитатами."""
 
-class VisionProvider(Protocol):
-    async def analyze(self, image: bytes, question: str) -> str:
-        """Разбор скриншота. В текущей версии агент этот вызов не делает."""
-
-
-async def visual_hint(provider: VisionProvider | None, image: bytes, question: str) -> str | None:
-    if provider is None:
-        return None
-    return await provider.analyze(image, question)
+    async def read_card(self, task: dict, observation: dict) -> dict:
+        """Поля, лоты и документы карточки закупки дословными цитатами и номерами элементов."""

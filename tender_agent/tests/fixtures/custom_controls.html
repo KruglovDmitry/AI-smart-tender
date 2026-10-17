@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="utf-8"><title>Самодельные контролы</title>
+<style>.select, .options, .card { cursor: pointer; }</style></head>
+<body>
+  <!-- Как «Сортировать по» на ЕИС: div и ul/li со скриптом, направление — только в классе. -->
+  <div class="select" id="sort"><span>Сортировать по: Дате обновления</span></div>
+  <ul id="options" class="options" style="display:none">
+    <li class="item item-normal">Дата размещения</li>
+    <li class="item item-reverse">Дата размещения</li>
+  </ul>
+  <div class="card"><a href="/tenders/1">Поставка сервера</a></div>
+  <!-- Как «Приложения к извещению» на Росэлторге: файлы в свёрнутом блоке. -->
+  <div style="display:none"><a href="/api/v1/documents/abc">Извещение.pdf</a><a href="/about">О компании</a></div>
+  <script>
+    document.getElementById("sort").addEventListener("click", function () {
+      document.getElementById("options").style.display = "block";
+    });
+  </script>
+</body>
+</html>

@@ -232,11 +232,6 @@
         <h2>${esc(t.title || "Без названия")}</h2>
         <p class="hint"><a href="${esc(t.url)}" target="_blank" rel="noopener">Открыть на площадке ↗</a></p>
         ${t.deleted_at ? `<p class="hint">Удалена ${esc(fmtDateTime(t.deleted_at))}</p>` : ""}
-        <div class="form-actions">
-          ${t.deleted_at
-            ? `<button type="button" class="btn secondary" data-restore="${t.id}">Восстановить</button>`
-            : `<button type="button" class="btn secondary" data-delete="${t.id}">Удалить</button>`}
-        </div>
         <div class="status-list">
           ${field("Площадка", esc(t.platform))}
           ${field("Номер", esc(t.external_id || "—"))}
@@ -254,11 +249,20 @@
         <h3>Документы</h3>${docs}
         <h3>Прогоны</h3>${runs || '<div class="empty">—</div>'}
         <h3>Откуда поля</h3><div class="mu">${esc(Object.entries(sources).map(([k, v]) => `${k}: ${v}`).join(", ") || "—")}</div>
+        <div class="drawer-actions">
+          ${t.deleted_at
+            ? `<button type="button" class="btn secondary" data-restore="${t.id}">Восстановить</button>`
+            : `<button type="button" class="icon-btn danger" data-delete="${t.id}" title="Удалить закупку" aria-label="Удалить закупку">${TRASH_ICON}</button>`}
+        </div>
       `);
     } catch (e) {
       openDrawer(`<div class="empty">Ошибка: ${esc(e.message)}</div>`);
     }
   });
+
+  const TRASH_ICON = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/>
+    <path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>`;
 
   // Мягкое удаление: закупка скрывается из списков, в базе остаётся (флажок «удалённые» — вернуть).
   document.addEventListener("click", async (ev) => {

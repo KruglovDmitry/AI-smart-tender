@@ -13,6 +13,7 @@ from pathlib import Path
 from tender_agent.agent.loop import page_for_model
 from tender_agent.agent.orchestrator import execute
 from tender_agent.browser.dom_tools import click_element
+from tender_agent.browser.downloads import download_file
 from tender_agent.browser.snapshot import get_page_state
 from tender_agent.api.schemas import TaskResult
 from tender_agent.browser.runtime import BrowserRuntime
@@ -159,6 +160,17 @@ async def _scenarios(tmp_path: Path) -> None:
         assert any("«Извещение.pdf»" in line and "(скрыт)" in line for line in lines)  # файл в свёрнутом блоке
         assert not any("О компании" in line for line in lines)  # прочие скрытые ссылки не нужны
         sort_ref = _ref({"elements": lines}, r"Сортировать по")
+        await click_element(runtime, sort_ref)
+        lines = page_for_model(await get_page_state(runtime))["elements"]
+        # Файл, который скачивается через окно с кнопкой «Скачать».
+        await runtime.current_page.goto("https://tenders.example.test/dialog")
+        dialog_obs = await get_page_state(runtime)
+        file_ref = _ref({"elements": page_for_model(dialog_obs)["elements"]}, r"Извещение\.pdf")
+        record = await download_file(runtime, dialog_obs, file_ref, settings, None)
+        assert record.status == "saved" and Path(record.path).read_bytes().startswith(b"%PDF-"), record
+
+        await runtime.current_page.goto("https://tenders.example.test/custom")
+        await get_page_state(runtime)
         await click_element(runtime, sort_ref)
         lines = page_for_model(await get_page_state(runtime))["elements"]
         options = [line for line in lines if "clickable «Дата размещения»" in line]

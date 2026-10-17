@@ -16,6 +16,7 @@ from collections import Counter
 
 from ..api.schemas import DownloadRecord, TaskSpec, TenderResult
 from ..browser.downloads import download_file
+from ..browser.navigation import same_site, task_host
 from ..browser.runtime import BrowserRuntime
 from ..config import Settings
 from ..llm.base import LLMClient
@@ -52,6 +53,8 @@ def card_goal_text(tender: TenderResult) -> str:
         "карточке вкладку или раздел с документами (документация, файлы, извещение, вложения), открой его и "
         "вызови extract. Если важных полей нет на этой странице, а есть вкладка со сведениями — открой её и "
         "вызови extract. Не переходи к другим закупкам и не возвращайся к выдаче. "
+        "Если документы (или вся карточка) доступны только после входа в личный кабинет — сразу ask_user "
+        "с пояснением: входить не нужно, искать обходные пути тоже. "
         "Когда поля прочитаны и документы найдены (или на карточке их точно нет) — done."
     )
 
@@ -100,10 +103,16 @@ class CardReader:
             await page.close()
 
     async def _read(self, tab: _TabRuntime, tender: TenderResult) -> TenderResult:
-        await actions.goto(tab, tender.url or "", self.settings, self.host)
+        # Карточка открывается там, куда ведёт ссылка из выдачи, даже если это другой сайт (ЕИС):
+        # выдача площадки ссылается на закупки, опубликованные в другом месте. Переходы внутри
+        # карточки — в пределах её сайта.
+        card_host = task_host(tender.url or "")
+        await actions.goto(tab, tender.url or "", self.settings, card_host)
         await actions.settle(tab)
         self.progress.actions += 1
         state = {"tender": tender}
+        if not same_site(tender.url or "", self.host):
+            tender.details["source"] = card_host.removeprefix("www.")
 
         async def extract(obs: Observation) -> str:
             self.progress.llm_calls += 1
@@ -130,18 +139,21 @@ class CardReader:
             filled = [name for name in ("customer", "published_at", "deadline", "price", "status") if getattr(current, name)]
             return f"Поля карточки: {', '.join(filled) or 'пока нет'}; документов найдено: {len(current.documents)}."
 
-        loop = Loop(runtime=tab, settings=self.settings, task=self.task, llm=self.llm, host=self.host,
+        loop = Loop(runtime=tab, settings=self.settings, task=self.task, llm=self.llm, host=card_host,
                     progress=self.progress, errors=self.errors,
                     deadline=time.monotonic() + self.settings.card_timeout_seconds, phase="card",
                     max_steps=self.settings.card_max_steps, vision_limit=1, vision_extends_deadline=False)
         outcome = await loop.run(Goal(
             text=card_goal_text(tender), extract=extract, status=status,
-            context=f"карточка закупки «{(tender.title or '')[:120]}» на {self.host}", extract_first=True,
+            context=f"карточка закупки «{(tender.title or '')[:120]}» на {card_host}", extract_first=True,
             unmet=lambda: None if state["tender"].documents else (
                 "Найди на этой карточке документы закупки (файлы документации, извещение, проект контракта) "
                 "и сделай их видимыми: открой вкладку или раскрой блок с документами"),
         ))
         self.outcomes[outcome.outcome] += 1
+        if outcome.outcome == "needs_user":
+            # Документы за входом в личный кабинет: закупка остаётся в ответе, в карточке — пометка.
+            state["tender"].details["documents_access"] = (outcome.note or "только после входа в личный кабинет")[:300]
         return state["tender"]
 
     async def _download(self, tab: _TabRuntime, obs: Observation, refs: list[int], tender_url: str | None) -> str:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import re
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 from playwright.async_api import TimeoutError as PlaywrightTimeout
 
@@ -145,6 +145,21 @@ async def _save_from_url(
     )
 
 
+# Без \b: регулярка уходит в браузер, а там \b не понимает кириллицу.
+_DOWNLOAD_BUTTON = re.compile(r"^\s*(скачать|загрузить|download)(?![а-яёa-z])", re.I)
+
+
+async def _dialog_button(page):
+    """Видимая кнопка «Скачать», появившаяся после клика по файлу; None — такой нет."""
+    buttons = page.locator("a, button, [role=button], input[type=button], input[type=submit]").filter(
+        has_text=_DOWNLOAD_BUTTON)
+    for index in reversed(range(await buttons.count())):  # окно обычно в конце документа
+        button = buttons.nth(index)
+        if await button.is_visible():
+            return button
+    return None
+
+
 async def download_file(
     runtime: BrowserRuntime,
     obs: Observation,
@@ -163,18 +178,66 @@ async def download_file(
     ok, reason = validate_navigation_url(source, settings)
     if not ok:
         return _failed(source, tender_url, reason)
-    locator = runtime.current_page.locator(f'[data-ta-ref="{int(ref)}"]')
+    page = runtime.current_page
+    locator = page.locator(f'[data-ta-ref="{int(ref)}"]')
     target: Path | None = None
+    # Загрузка может начаться в этой вкладке или во всплывающей (РТС-тендер открывает documentLink
+    # в новой вкладке, а там окно с кнопкой «Скачать») — слушаем обе. Чужие вкладки (другие карточки
+    # читаются параллельно) не трогаем: только всплывающие окна этой страницы.
+    downloads: list = []
+    popups: list = []
+
+    def on_download(download) -> None:
+        downloads.append(download)
+
+    def on_popup(new_page) -> None:
+        popups.append(new_page)
+        new_page.on("download", on_download)
+
+    page.on("download", on_download)
+    page.on("popup", on_popup)
+
+    async def wait_download(where, seconds: float) -> bool:
+        for _ in range(int(seconds * 4)):
+            if downloads:
+                return True
+            await where.wait_for_timeout(250)
+        return bool(downloads)
+
     try:
-        async with runtime.current_page.expect_download(timeout=8_000) as pending:
-            await locator.click(timeout=8_000)
-        download = await pending.value
+        await locator.click(timeout=8_000)
+        if not await wait_download(page, 6):
+            dialog_page = popups[-1] if popups else page
+            button = None
+            for _ in range(40):  # до 10 с: новая вкладка может сначала пройти Anti-DDoS
+                button = await _dialog_button(dialog_page)
+                if button is not None or downloads:
+                    break
+                await dialog_page.wait_for_timeout(250)
+            if not downloads:
+                if button is None:
+                    return _failed(source, tender_url, "Браузер не начал загрузку, кнопки «Скачать» после клика нет.")
+                href = await button.get_attribute("href")
+                if href and not href.lower().startswith("javascript:"):
+                    return await _save_from_url(runtime, urljoin(dialog_page.url, href), settings, tender_url)
+                await button.click(timeout=8_000)
+                if not await wait_download(dialog_page, 15):
+                    return _failed(source, tender_url, "После «Скачать» загрузка не началась.")
+        download = downloads[0]
         target = safe_destination(runtime.downloads_dir, fix_mojibake(download.suggested_filename or "file"))
         await download.save_as(str(target))
     except PlaywrightTimeout as exc:
-        return _failed(source, tender_url, f"Браузер не начал загрузку: {exc}")
+        return _failed(source, tender_url, f"Браузер не начал загрузку: {str(exc).splitlines()[0][:200]}")
     except Exception as exc:
         return _failed(source, tender_url, str(exc).splitlines()[0][:300])
+    finally:
+        page.remove_listener("download", on_download)
+        page.remove_listener("popup", on_popup)
+        for popup in popups:
+            if not popup.is_closed():
+                await popup.close()
+        if not popups and not page.is_closed():
+            await page.keyboard.press("Escape")  # закрыть окно «Скачать», если оно было в этой вкладке
     passed, detail = verify_download(target, runtime.downloads_dir, settings.max_download_bytes)
     if not passed and target.is_file():
         target.unlink(missing_ok=True)

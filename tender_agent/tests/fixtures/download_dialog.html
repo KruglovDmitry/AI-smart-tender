@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="utf-8"><title>Файл через окно</title>
+<style>.file { cursor: pointer; } #dialog { display: none; }</style></head>
+<body>
+  <!-- Как на РТС-тендере: клик по файлу открывает окно с кнопкой «Скачать», а не загрузку. -->
+  <span class="file" id="file">43. Извещение.pdf</span>
+  <div id="dialog"><a href="/files/spec.pdf" download>Скачать</a> <span>Нажмите, чтобы закрыть это окно</span></div>
+  <script>
+    document.getElementById("file").addEventListener("click", function () {
+      document.getElementById("dialog").style.display = "block";
+    });
+  </script>
+</body>
+</html>

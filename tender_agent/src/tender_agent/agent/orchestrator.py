@@ -125,6 +125,9 @@ async def execute(
                        errors=errors, download=task.download_documents)
     if results and outcome.outcome != "needs_user":
         results = await cards.read_all(results)
+        locked = sum(1 for t in results if t.details.get("documents_access"))
+        if locked:
+            errors.append(f"Документы доступны только в личном кабинете площадки: {locked} из {len(results)} закупок.")
 
     if outcome.outcome == "needs_user":
         status = "needs_user"

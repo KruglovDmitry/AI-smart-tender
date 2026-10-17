@@ -23,6 +23,7 @@ _PAGES = {
     "/plain": "plain.html",
     "/downloads": "downloads.html",
     "/custom": "custom_controls.html",
+    "/dialog": "download_dialog.html",
 }
 
 

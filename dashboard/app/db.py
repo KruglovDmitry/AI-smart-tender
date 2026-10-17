@@ -1,8 +1,8 @@
 """Чтение базы закупок tender-agent (Postgres, сервис `postgres`).
 
 Схему создаёт и ведёт tender-agent (`tender_agent/storage/tenders.py`); дашборд её
-только читает. Таблицы отражаются из базы (reflection), чтобы не держать вторую
-копию описания схемы.
+читает и меняет только одно — пометку мягкого удаления `tenders.deleted_at`.
+Таблицы отражаются из базы (reflection), чтобы не держать вторую копию описания схемы.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
-from sqlalchemy import MetaData, Table, and_, create_engine, desc, func, or_, select
+from sqlalchemy import MetaData, Table, and_, create_engine, desc, func, or_, select, text, true, update
 from sqlalchemy.engine import Engine
 
 DATABASE_URL = os.getenv("TENDER_DB_URL", "")
@@ -38,6 +38,22 @@ def _tables() -> dict[str, Table]:
     return {name: meta.tables[name] for name in TABLES}
 
 
+def _alive(tenders: Table):
+    """Не удалённые закупки. Колонки может ещё не быть, если агент не перезапускался после обновления."""
+    return tenders.c.deleted_at.is_(None) if "deleted_at" in tenders.c else true()
+
+
+def set_deleted(tender_id: int, deleted: bool) -> bool:
+    """Мягкое удаление закупки (или возврат). False — такой закупки нет."""
+    with engine().begin() as conn:
+        conn.execute(text("ALTER TABLE tenders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE"))
+    tenders = _tables()["tenders"]
+    with engine().begin() as conn:
+        done = conn.execute(update(tenders).where(tenders.c.id == tender_id)
+                            .values(deleted_at=datetime.now(timezone.utc) if deleted else None))
+    return done.rowcount > 0
+
+
 def _iso(value):
     return value.isoformat() if isinstance(value, datetime) else value
 
@@ -61,10 +77,13 @@ _SORTS = {
 def list_tenders(*, platform: str | None = None, q: str | None = None, new_days: int | None = None,
                  published_from: str | None = None, published_to: str | None = None,
                  min_price: float | None = None, max_price: float | None = None,
-                 verified_only: bool = False, sort: str = "published", limit: int = 50, offset: int = 0) -> dict:
+                 verified_only: bool = False, deleted: bool = False, sort: str = "published", limit: int = 50,
+                 offset: int = 0) -> dict:
     tables = _tables()
     tenders, docs = tables["tenders"], tables["tender_documents"]
-    where = []
+    if deleted and "deleted_at" not in tenders.c:
+        return {"total": 0, "tenders": []}
+    where = [tenders.c.deleted_at.is_not(None) if deleted else _alive(tenders)]
     if platform:
         where.append(tenders.c.platform == platform.lower().removeprefix("www."))
     if q:
@@ -134,10 +153,13 @@ def summary() -> dict:
     tables = _tables()
     tenders, runs = tables["tenders"], tables["search_runs"]
     today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    alive = _alive(tenders)
     with engine().connect() as conn:
-        total = conn.execute(select(func.count(tenders.c.id))).scalar_one()
-        new_today = conn.execute(select(func.count(tenders.c.id)).where(tenders.c.first_seen >= today)).scalar_one()
-        new_week = conn.execute(select(func.count(tenders.c.id)).where(tenders.c.first_seen >= _since(7))).scalar_one()
+        total = conn.execute(select(func.count(tenders.c.id)).where(alive)).scalar_one()
+        new_today = conn.execute(
+            select(func.count(tenders.c.id)).where(and_(alive, tenders.c.first_seen >= today))).scalar_one()
+        new_week = conn.execute(
+            select(func.count(tenders.c.id)).where(and_(alive, tenders.c.first_seen >= _since(7)))).scalar_one()
         per_platform = {
             row.platform: {"tenders": row.n, "new_week": row.new_week}
             for row in conn.execute(
@@ -145,7 +167,7 @@ def summary() -> dict:
                     tenders.c.platform,
                     func.count(tenders.c.id).label("n"),
                     func.count(tenders.c.id).filter(tenders.c.first_seen >= _since(7)).label("new_week"),
-                ).group_by(tenders.c.platform)
+                ).where(alive).group_by(tenders.c.platform)
             )
         }
         last_runs = conn.execute(

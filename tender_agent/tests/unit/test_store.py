@@ -29,3 +29,10 @@ def test_store_upserts_keeps_known_values_and_marks_new(tmp_path: Path) -> None:
     assert row["platform"] == "sberbank-ast.ru"  # поддомен карточки сведён к площадке запуска
     assert row["price"] == 2151000.0 and row["deadline"] == "2026-10-22" and row["seen_count"] == 2
     assert row["documents"] == [{"name": "Извещение.pdf", "url": "https://44.sberbank-ast.ru/doc/1.pdf", "local_path": "/data/x/1.pdf"}]
+
+    # Мягкое удаление: не видна в поиске; найденная снова — обновляется, но остаётся удалённой.
+    assert store.set_deleted(row["id"]) and store.search(platform="sberbank-ast.ru") == []
+    saved = store.save_run("задание", _result(again))
+    assert saved["new"] == 0 and store.search(platform="sberbank-ast.ru") == []
+    assert store.set_deleted(row["id"], False) and store.search(platform="sberbank-ast.ru")[0]["seen_count"] == 3
+    assert not store.set_deleted(10_000)

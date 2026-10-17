@@ -71,6 +71,9 @@ tenders = Table(
     Column("first_seen", DateTime(timezone=True), nullable=False),
     Column("last_seen", DateTime(timezone=True), nullable=False),
     Column("seen_count", Integer, nullable=False, default=1),
+    # Мягкое удаление из дашборда: запись остаётся (с документами и историей прогонов), но не
+    # показывается. Если агент найдёт закупку снова, она обновится, но останется удалённой.
+    Column("deleted_at", DateTime(timezone=True)),
     UniqueConstraint("platform", "tender_key", name="uq_tenders_platform_key"),
 )
 Index("ix_tenders_platform_published", tenders.c.platform, tenders.c.published_at)
@@ -151,6 +154,9 @@ def _add_missing_columns(engine: Engine) -> None:
     with engine.begin() as conn:
         if "details" not in existing:
             conn.execute(text("ALTER TABLE tenders ADD COLUMN details JSON"))
+        if "deleted_at" not in existing:
+            kind = "TIMESTAMP WITH TIME ZONE" if engine.dialect.name == "postgresql" else "DATETIME"
+            conn.execute(text(f"ALTER TABLE tenders ADD COLUMN deleted_at {kind}"))
 
 
 class TenderStore:
@@ -245,6 +251,13 @@ class TenderStore:
         if values:
             conn.execute(update(tender_documents).where(tender_documents.c.id == row.id).values(**values))
 
+    def set_deleted(self, tender_id: int, deleted: bool = True) -> bool:
+        """Мягко удалить (или вернуть) закупку. False — такой закупки нет."""
+        with self.engine.begin() as conn:
+            done = conn.execute(update(tenders).where(tenders.c.id == tender_id)
+                                .values(deleted_at=datetime.now(timezone.utc) if deleted else None))
+        return done.rowcount > 0
+
     # ---------- чтение ----------
 
     def keys_new_in_run(self, run_id: int) -> list[str]:
@@ -258,7 +271,7 @@ class TenderStore:
 
     def search(self, *, platform: str | None = None, text: str | None = None, since: str | None = None,
                limit: int = 50) -> list[dict]:
-        query = select(tenders)
+        query = select(tenders).where(tenders.c.deleted_at.is_(None))
         if platform:
             query = query.where(tenders.c.platform.like(f"%{platform.lower().removeprefix('www.')}%"))
         if text:
@@ -279,7 +292,7 @@ class TenderStore:
                     )
         for row in rows:
             row["documents"] = docs.get(row["id"], [])
-            for key in ("first_seen", "last_seen"):
+            for key in ("first_seen", "last_seen", "deleted_at"):
                 if isinstance(row[key], datetime):
                     row[key] = row[key].isoformat()
         return rows

@@ -133,6 +133,7 @@ def api_db_tenders(
     min_price: float | None = None,
     max_price: float | None = None,
     verified_only: bool = False,
+    deleted: bool = False,
     sort: str = "published",
     limit: int = 50,
     offset: int = 0,
@@ -140,9 +141,24 @@ def api_db_tenders(
     return _db_call(
         db.list_tenders,
         platform=platform, q=q, new_days=new_days, published_from=published_from, published_to=published_to,
-        min_price=min_price, max_price=max_price, verified_only=verified_only, sort=sort,
+        min_price=min_price, max_price=max_price, verified_only=verified_only, deleted=deleted, sort=sort,
         limit=max(1, min(limit, 500)), offset=max(0, offset),
     )
+
+
+@app.delete("/api/db/tenders/{tender_id}")
+def api_db_tender_delete(tender_id: int):
+    """Мягкое удаление: закупка скрывается из списков, документы и история прогонов остаются."""
+    if not _db_call(db.set_deleted, tender_id, True):
+        raise HTTPException(status_code=404, detail="Закупка не найдена")
+    return {"id": tender_id, "deleted": True}
+
+
+@app.post("/api/db/tenders/{tender_id}/restore")
+def api_db_tender_restore(tender_id: int):
+    if not _db_call(db.set_deleted, tender_id, False):
+        raise HTTPException(status_code=404, detail="Закупка не найдена")
+    return {"id": tender_id, "deleted": False}
 
 
 @app.get("/api/db/tenders/{tender_id}")

@@ -160,6 +160,7 @@
     add("min_price", $("#f-min").value);
     add("max_price", $("#f-max").value);
     if ($("#f-verified").checked) p.set("verified_only", "true");
+    if ($("#f-deleted").checked) p.set("deleted", "true");
     p.set("sort", $("#f-sort").value);
     p.set("limit", PAGE);
     p.set("offset", state.offset);
@@ -230,6 +231,12 @@
       openDrawer(`
         <h2>${esc(t.title || "Без названия")}</h2>
         <p class="hint"><a href="${esc(t.url)}" target="_blank" rel="noopener">Открыть на площадке ↗</a></p>
+        ${t.deleted_at ? `<p class="hint">Удалена ${esc(fmtDateTime(t.deleted_at))}</p>` : ""}
+        <div class="form-actions">
+          ${t.deleted_at
+            ? `<button type="button" class="btn secondary" data-restore="${t.id}">Восстановить</button>`
+            : `<button type="button" class="btn secondary" data-delete="${t.id}">Удалить</button>`}
+        </div>
         <div class="status-list">
           ${field("Площадка", esc(t.platform))}
           ${field("Номер", esc(t.external_id || "—"))}
@@ -250,6 +257,26 @@
       `);
     } catch (e) {
       openDrawer(`<div class="empty">Ошибка: ${esc(e.message)}</div>`);
+    }
+  });
+
+  // Мягкое удаление: закупка скрывается из списков, в базе остаётся (флажок «удалённые» — вернуть).
+  document.addEventListener("click", async (ev) => {
+    const button = ev.target.closest("[data-delete], [data-restore]");
+    if (!button) return;
+    const id = button.dataset.delete || button.dataset.restore;
+    const removing = Boolean(button.dataset.delete);
+    if (removing && !confirm("Удалить закупку из списка? Её можно будет вернуть через фильтр «удалённые».")) return;
+    button.disabled = true;
+    try {
+      const r = await fetch(removing ? `/api/db/tenders/${id}` : `/api/db/tenders/${id}/restore`,
+                            { method: removing ? "DELETE" : "POST" });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
+      $("#drawer").hidden = true;
+      loadTenders();
+    } catch (e) {
+      button.disabled = false;
+      alert(`Не получилось: ${e.message}`);
     }
   });
 

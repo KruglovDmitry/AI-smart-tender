@@ -42,6 +42,15 @@ def test_mojibake_file_names_are_repaired() -> None:
     assert fix_mojibake("spec.pdf") == "spec.pdf"
 
 
+def test_encoded_file_name_wins_over_placeholder() -> None:
+    from tender_agent.browser.downloads import _filename
+
+    header = ("attachment; filename=\"____________ __________.docx\"; "
+              "filename*=utf-8''%D0%94%D0%BE%D0%BA%D1%83%D0%BC%D0%B5%D0%BD%D1%82%D0%B0%D1%86%D0%B8%D1%8F.docx")
+    assert _filename(header, "https://corp.roseltorg.ru/api/v1/documents/x") == "Документация.docx"
+    assert _filename('attachment; filename="spec.pdf"', "https://x/y") == "spec.pdf"
+
+
 def test_download_path_stays_in_workdir(tmp_path) -> None:
     saved = safe_destination(tmp_path, "../secret.pdf")
     assert saved.is_relative_to(tmp_path.resolve())

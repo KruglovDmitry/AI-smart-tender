@@ -110,6 +110,27 @@ def test_card_keeps_only_quotes_and_elements_from_the_page() -> None:
     assert reading.refs == [3, 4] and reading.rejected == 3  # срок, ОКПД2 и чужой файл
 
 
+def test_lot_rows_become_one_procedure() -> None:
+    from tender_agent.tenders.reading import split_lot
+
+    assert split_lot("№ B0510261309243 (Лот 6)") == ("B0510261309243", "6")
+    assert split_lot("32616477643 Лот № 1") == ("32616477643", "1")
+    assert split_lot("0315100002526000030") == ("0315100002526000030", "")
+    text = "\n".join(f"№{n} Филиал\nB0510261309243 (Лот {n})" for n in (6, 7, 8))
+    obs = Observation(url="https://www.roseltorg.ru/procedures/search", text=text,
+                      elements=[Element(ref=n, tag="a", name=f"№{n} Филиал", href=f"https://www.roseltorg.ru/procedure/B0510261309243/{n}")
+                                for n in (6, 7, 8)])
+    reading = accept_records(obs, {"records": [{"link_ref": n, "title": f"№{n} Филиал", "number": f"B0510261309243 (Лот {n})"}
+                                               for n in (6, 7, 8)]}, keyword="канц", sort_required=False)
+    ranked = rank_tenders(reading.accepted, sort_by=None, limit=5)
+    assert len(ranked) == 1 and ranked[0].id == "B0510261309243"
+    assert [lot["number"] for lot in ranked[0].details["lots"]] == ["6", "7", "8"]
+    assert ranked[0].sources["title"] == "lot"  # название процедуры возьмём с карточки
+    card = accept_card(ranked[0], Observation(url=ranked[0].url, text="Открытый запрос предложений на поставку бумаги"),
+                       {"title": "Открытый запрос предложений на поставку бумаги"}).tender
+    assert card.title == "Открытый запрос предложений на поставку бумаги"
+
+
 def test_element_href_object_does_not_fail_validation() -> None:
     element = Element.model_validate({"ref": 1, "href": {}, "name": {}})
     assert element.href is None

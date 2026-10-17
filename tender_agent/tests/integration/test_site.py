@@ -156,6 +156,8 @@ async def _scenarios(tmp_path: Path) -> None:
         lines = page_for_model(await get_page_state(runtime))["elements"]
         assert "clickable «Сортировать по: Дате обновления»" in " ".join(lines)
         assert not any("Поставка сервера" in line and "clickable" in line for line in lines)  # обёртка над ссылкой
+        assert any("«Извещение.pdf»" in line and "(скрыт)" in line for line in lines)  # файл в свёрнутом блоке
+        assert not any("О компании" in line for line in lines)  # прочие скрытые ссылки не нужны
         sort_ref = _ref({"elements": lines}, r"Сортировать по")
         await click_element(runtime, sort_ref)
         lines = page_for_model(await get_page_state(runtime))["elements"]

@@ -69,9 +69,13 @@ def fix_mojibake(name: str) -> str:
 
 
 def _filename(disposition: str, url: str) -> str:
-    matched = re.search(r"filename\*=UTF-8''([^;]+)|filename=\"?([^\";]+)\"?", disposition, re.I)
+    # filename* (RFC 5987) точнее: Росэлторг кладёт в filename «____ ____.docx», а настоящее имя — в filename*.
+    encoded = re.search(r"filename\*\s*=\s*UTF-8''([^;]+)", disposition, re.I)
+    if encoded:
+        return unquote(encoded.group(1).strip().strip('"'))
+    matched = re.search(r"filename\s*=\s*\"?([^\";]+)\"?", disposition, re.I)
     if matched:
-        return fix_mojibake(unquote((matched.group(1) or matched.group(2) or "").strip()))
+        return fix_mojibake(unquote(matched.group(1).strip()))
     return fix_mojibake(Path(urlparse(url).path).name) or "file"
 
 

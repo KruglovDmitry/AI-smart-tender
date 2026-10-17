@@ -137,6 +137,9 @@ class CardReader:
         outcome = await loop.run(Goal(
             text=card_goal_text(tender), extract=extract, status=status,
             context=f"карточка закупки «{(tender.title or '')[:120]}» на {self.host}", extract_first=True,
+            unmet=lambda: None if state["tender"].documents else (
+                "Найди на этой карточке документы закупки (файлы документации, извещение, проект контракта) "
+                "и сделай их видимыми: открой вкладку или раскрой блок с документами"),
         ))
         self.outcomes[outcome.outcome] += 1
         return state["tender"]

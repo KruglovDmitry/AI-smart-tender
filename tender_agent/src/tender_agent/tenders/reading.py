@@ -58,17 +58,33 @@ def accept_records(obs: Observation, data: dict, *, keyword: str, sort_required:
             value = str(item.get(key) or "").strip()
             return value if value and _norm(value) in page else None
 
-        number = quote("number")
-        if number:
-            # «№ 32616477643» → «32616477643»: номер — ключ закупки в базе.
-            number = re.sub(r"^(?:№|N|No\.?)\s*", "", number, flags=re.I).strip() or None
+        number, lot = split_lot(quote("number"))
+        lot = str(item.get("lot") or "").strip() or lot
         raw = RawCard(id=number, title=title, href=href, customer=quote("customer"),
                       published_at=quote("published"), deadline=quote("deadline"), price_text=quote("price"),
-                      status=quote("status"), sources={"title": "llm"})
+                      status=quote("status"), sources={"title": "lot" if lot else "llm"})
         card = card_from_raw(raw, keyword=keyword, sort_required=sort_required)
         if card is not None:
+            if lot:
+                # Строка выдачи — лот процедуры: склеится с другими лотами по номеру процедуры (ranking),
+                # а название процедуры возьмём с её карточки.
+                card.details["lot"] = lot[:40]
             reading.accepted.append(card)
     return reading
+
+
+_LOT = re.compile(r"[\s,;]*\(?\s*лот\s*№?\s*(\d+)\s*\)?\s*$", re.I)
+
+
+def split_lot(number: str | None) -> tuple[str | None, str]:
+    """«№ B0510261309243 (Лот 6)» → («B0510261309243», «6»). Номер процедуры — ключ закупки в базе."""
+    if not number:
+        return None, ""
+    number = re.sub(r"^(?:№|N|No\.?)\s*", "", number.strip(), flags=re.I)
+    lot = _LOT.search(number)
+    if lot:
+        number = number[: lot.start()]
+    return number.strip() or None, lot.group(1) if lot else ""
 
 
 async def read_results(llm: LLMClient, obs: Observation, *, keyword: str, sort_required: bool) -> ResultsReading:

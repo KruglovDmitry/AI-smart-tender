@@ -4,7 +4,10 @@ from ..api.schemas import TenderResult
 
 
 def _lot(card: TenderResult) -> dict:
-    return {"title": card.title, "url": card.url, "price": card.price}
+    lot = {"title": card.title, "url": card.url, "price": card.price}
+    if card.details.get("lot"):
+        lot["number"] = card.details["lot"]
+    return lot
 
 
 def rank_tenders(

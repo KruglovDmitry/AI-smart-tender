@@ -28,6 +28,8 @@ def _element_line(el: Element) -> str:
         line += f" → {el.href[:200]}"
     if el.download:
         line += " (download)"
+    if el.hint:
+        line += f" ({el.hint})"
     return line
 
 
@@ -68,7 +70,11 @@ def accept_card(tender: TenderResult, obs: Observation, data: dict) -> CardReadi
             updated.sources[name] = "card"
             reading.filled.append(name)
 
-    fill("title", quote("title"))
+    title = quote("title")
+    if title and updated.sources.get("title") == "lot":
+        # В выдаче было название лота («№10 Филиал…»), на карточке — предмет всей процедуры.
+        updated.title = None
+    fill("title", title)
     fill("customer", quote("customer"))
     fill("published_at", parse_date(quote("published")))
     fill("deadline", parse_date(quote("deadline")))

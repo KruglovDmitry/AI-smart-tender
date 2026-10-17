@@ -42,6 +42,9 @@ class Goal:
     # Прочитать открытую страницу до первого решения модели (карточка: иначе модель сразу уходит
     # во вкладку «Документы», и поля основной страницы остаются непрочитанными).
     extract_first: bool = False
+    # Модель сказала done, а цель не достигнута (карточка без документов): что поручить зрению
+    # для проверки. None — подтверждать нечего.
+    unmet: Callable[[], str | None] | None = None
 
 
 @dataclass
@@ -119,6 +122,17 @@ class Loop:
             tool = str(decision.get("tool") or "")
             if tool == "done":
                 await self._log(record, obs)
+                need = goal.unmet() if goal.unmet else None
+                if need and self.vision_ready():
+                    # Модель уверена, что всё сделано, но цель не достигнута — проверяем глазами, один раз.
+                    obs, note, _moved = await self._vision(goal, need, obs)
+                    history.append(f"{step}. {note}")
+                    note = await goal.extract(obs)
+                    history.append(f"{step}. {note}")
+                    await self._log({"phase": self.phase, "step": step, "url": obs.url, "confirm_vision": True,
+                                     "note": note}, obs)
+                    self.vision_limit = self.vision_used  # второй раз не подтверждаем
+                    continue
                 return LoopResult("done", str(decision.get("text") or ""), bool(decision.get("empty")), obs, history)
             if tool == "ask_user":
                 await self._log(record, obs)

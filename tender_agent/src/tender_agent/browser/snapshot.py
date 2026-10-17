@@ -60,6 +60,13 @@ _SNAPSHOT_JS = """() => {
   }
   const custom = new Set(candidates.filter(el => !candidates.some(other => other !== el && el.contains(other))));
   custom.forEach(el => tagged.add(el));
+  // Ссылки на файлы в свёрнутых блоках («Приложения к извещению» на Росэлторге): их не видно,
+  // но скачать по адресу можно и не раскрывая блок. Модель видит их с пометкой «скрыт».
+  const fileHref = /\\.(pdf|docx?|xlsx?|zip|rar|7z|rtf|odt|ods)(\\?|$)|filestore|\\/download|\\/documents?\\/|attachment|getfile|file\\.html\\?uid=/i;
+  const hidden = new Set([...document.querySelectorAll('a[href]')]
+    .filter(el => !tagged.has(el) && !visible(el) && (el.hasAttribute('download') || fileHref.test(hrefOf(el) || '')))
+    .slice(0, 40));
+  hidden.forEach(el => tagged.add(el));
   // Признаки, которых нет в тексте: направление сортировки, выбранный пункт (ЕИС: два пункта
   // «Дате размещения» отличаются только классом -reverse и иконкой).
   const hintOf = (el) => {
@@ -69,6 +76,7 @@ _SNAPSHOT_JS = """() => {
       const value = el.getAttribute(name);
       if (value && !(name === 'type' && /^(INPUT|BUTTON)$/.test(el.tagName))) marks.push(name + '=' + value);
     }
+    if (hidden.has(el)) marks.unshift('скрыт');
     return marks.join(' ').slice(0, 120);
   };
   const nodes = [...tagged].sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1);

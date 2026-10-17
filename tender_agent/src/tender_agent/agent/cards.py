@@ -9,6 +9,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import re
 import time
 from collections import Counter
 
@@ -30,9 +32,11 @@ CARD_CONCURRENCY = 5
 class _TabRuntime:
     """Отдельная вкладка того же браузера: у каждой карточки свой цикл."""
 
-    def __init__(self, base: BrowserRuntime, page) -> None:
+    def __init__(self, base: BrowserRuntime, page, tender: TenderResult) -> None:
         self.settings = base.settings
-        self.downloads_dir = base.downloads_dir
+        # Своя папка на закупку: у разных закупок одинаковые имена файлов («Проект контракта.docx»).
+        key = tender.id or hashlib.sha1((tender.url or "").encode("utf-8")).hexdigest()[:12]
+        self.downloads_dir = base.downloads_dir / re.sub(r"[^\w.\-]+", "_", key)[:80]
         self.context = base.context
         self.page = page
 
@@ -81,7 +85,7 @@ class CardReader:
         page = await self.runtime.context.new_page()
         page.set_default_timeout(15_000)
         page.set_default_navigation_timeout(45_000)
-        tab = _TabRuntime(self.runtime, page)
+        tab = _TabRuntime(self.runtime, page, tender)
         try:
             return await self._read(tab, tender)
         except Exception as exc:

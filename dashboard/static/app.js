@@ -219,7 +219,7 @@
       const sources = t.sources || {};
       const docs = (t.documents || []).map((d) => `<div class="doc">
           <a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.name || d.url)}</a>
-          ${d.local_path ? `<div class="mu">скачан: ${esc(d.local_path)}</div>` : ""}
+          <div class="mu">${d.local_path ? `скачан: ${esc(d.local_path)}` : "не скачан — только ссылка на источник"}</div>
         </div>`).join("") || '<div class="empty">Документов не найдено</div>';
       const lotList = (t.details || {}).lots || [];
       const lots = lotList.length ? `<h3>Лоты процедуры (${lotList.length})</h3>` + lotList.map((l) => `<div class="doc">

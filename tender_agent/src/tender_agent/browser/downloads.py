@@ -14,7 +14,22 @@ from .dom_tools import element_by_ref
 from .navigation import same_site, validate_navigation_url
 from .runtime import BrowserRuntime
 
-FILE_RE = re.compile(r"\.(pdf|docx?|xlsx?|zip|rar|7z)(\?|$)", re.I)
+_FETCH_JS = """async (url) => {
+  const response = await fetch(url);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  let binary = '';
+  const step = 0x8000;
+  for (let i = 0; i < bytes.length; i += step) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + step));
+  }
+  return {
+    status: response.status,
+    url: response.url,
+    header: response.headers.get('content-disposition') || '',
+    type: response.headers.get('content-type') || '',
+    b64: btoa(binary)
+  };
+}"""
 
 
 def safe_destination(root: Path, name: str) -> Path:
@@ -78,43 +93,36 @@ async def _save_from_url(
     settings: Settings,
     tender_url: str | None,
 ) -> DownloadRecord:
-    host = urlparse(runtime.current_page.url).hostname or ""
+    # Файл качаем оттуда, куда ведёт ссылка, даже с другого сайта: площадки держат документы
+    # в хранилище ЕИС (Сбер-АСТ → zakupki.gov.ru/.../filestore). Запрос идёт через контекст браузера
+    # (те же cookie, без ограничений CORS). Внутренние и локальные адреса по-прежнему запрещены.
     ok, reason = validate_navigation_url(source, settings)
-    if not ok or not same_site(source, host):
-        return _failed(source, tender_url, reason or "Файл ведёт на другой сайт.")
+    if not ok:
+        return _failed(source, tender_url, reason)
     try:
-        loaded = await runtime.current_page.evaluate(
-            """async (url) => {
-              const response = await fetch(url);
-              const bytes = new Uint8Array(await response.arrayBuffer());
-              let binary = '';
-              const step = 0x8000;
-              for (let i = 0; i < bytes.length; i += step) {
-                binary += String.fromCharCode.apply(null, bytes.subarray(i, i + step));
-              }
-              return {
-                ok: response.ok,
-                status: response.status,
-                url: response.url,
-                header: response.headers.get('content-disposition') || '',
-                b64: btoa(binary)
-              };
-            }""",
-            source,
-        )
+        if same_site(source, urlparse(runtime.current_page.url).hostname or ""):
+            # Свой сайт — из страницы (как пользователь, с её сессией и перехватом запросов).
+            loaded = await runtime.current_page.evaluate(_FETCH_JS, source)
+            status, final = int(loaded.get("status") or 0), str(loaded.get("url") or source)
+            headers = {"content-disposition": str(loaded.get("header") or ""), "content-type": str(loaded.get("type") or "")}
+            body = base64.b64decode(str(loaded.get("b64") or ""))
+        else:
+            # ЕИС подписана сертификатом российского УЦ, которого нет в хранилище Node — браузер его
+            # принимает, запрос Playwright нет. Для скачивания документа проверку цепочки не требуем.
+            response = await runtime.context.request.get(source, timeout=60_000, max_redirects=5,
+                                                         ignore_https_errors=True)
+            status, final, headers, body = response.status, response.url or source, response.headers, await response.body()
     except Exception as exc:
-        return _failed(source, tender_url, str(exc))
-    final = str(loaded.get("url") or source)
+        return _failed(source, tender_url, str(exc).splitlines()[0][:300])
     ok, reason = validate_navigation_url(final, settings)
-    if not loaded.get("ok") or not ok or not same_site(final, host):
-        return _failed(source, tender_url, reason or f"Загрузка отклонена, код {loaded.get('status')}.")
-    try:
-        body = base64.b64decode(str(loaded.get("b64") or ""))
-    except Exception as exc:
-        return _failed(source, tender_url, f"Ответ файла не прочитан: {exc}")
+    if not 200 <= status < 300 or not ok:
+        return _failed(source, tender_url, reason or f"Загрузка отклонена, код {status}.")
+    header = headers.get("content-disposition", "")
+    if "text/html" in headers.get("content-type", "") and "attachment" not in header.lower():
+        return _failed(source, tender_url, "По ссылке страница, а не файл.")
     if len(body) > settings.max_download_bytes:
         return _failed(source, tender_url, "Файл больше разрешённого размера.")
-    target = safe_destination(runtime.downloads_dir, _filename(str(loaded.get("header") or ""), final))
+    target = safe_destination(runtime.downloads_dir, _filename(header, final))
     target.write_bytes(body)
     passed, detail = verify_download(target, runtime.downloads_dir, settings.max_download_bytes)
     if not passed:
@@ -139,12 +147,15 @@ async def download_file(
 ) -> DownloadRecord:
     element = element_by_ref(obs, ref)
     source = (element.href if element else "") or runtime.current_page.url
-    if element and element.href and (element.download or FILE_RE.search(element.href) or FILE_RE.search(element.name or "")):
-        return await _save_from_url(runtime, element.href, settings, tender_url)
+    if element and element.href:
+        # Ссылка — качаем по адресу (filestore ЕИС без расширения тоже); если там страница, а не файл, —
+        # пробуем кликом, как пользователь.
+        saved = await _save_from_url(runtime, element.href, settings, tender_url)
+        if saved.status == "saved" or saved.detail != "По ссылке страница, а не файл.":
+            return saved
     ok, reason = validate_navigation_url(source, settings)
-    task_host = urlparse(runtime.current_page.url).hostname or ""
-    if not ok or not same_site(source, task_host):
-        return _failed(source, tender_url, reason or "Файл ведёт на другой сайт.")
+    if not ok:
+        return _failed(source, tender_url, reason)
     locator = runtime.current_page.locator(f'[data-ta-ref="{int(ref)}"]')
     target: Path | None = None
     try:
@@ -156,9 +167,7 @@ async def download_file(
     except PlaywrightTimeout as exc:
         return _failed(source, tender_url, f"Браузер не начал загрузку: {exc}")
     except Exception as exc:
-        if element and element.href:
-            return await _save_from_url(runtime, element.href, settings, tender_url)
-        return _failed(source, tender_url, str(exc))
+        return _failed(source, tender_url, str(exc).splitlines()[0][:300])
     passed, detail = verify_download(target, runtime.downloads_dir, settings.max_download_bytes)
     if not passed and target.is_file():
         target.unlink(missing_ok=True)

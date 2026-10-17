@@ -74,20 +74,39 @@ class CardReader:
         self.outcomes: Counter[str] = Counter()
 
     async def read_all(self, tenders: list[TenderResult]) -> list[TenderResult]:
-        limit = asyncio.Semaphore(CARD_CONCURRENCY)
+        done = await self._read_many(tenders, CARD_CONCURRENCY)
+        failed = {"error", "needs_user"}
+        if len(done) >= 2 and all(outcome in failed for _, outcome in done):
+            # Все карточки разом упали — похоже на лимит площадки на число вкладок одной сессии
+            # (Росатом: «Превышено максимальное количество одновременно открытых вкладок»).
+            # Перечитываем по одной; первая попытка в учёт не идёт.
+            for _, outcome in done:
+                self.outcomes[outcome] -= 1
+            self.outcomes["sequential_retry"] += 1
+            # По одной и в той же вкладке, где была выдача: портал считает вкладки сессии, и даже
+            # последовательно открытые новые вкладки упираются в лимит (проверено на Росатоме).
+            done = [await self._read_in_tab(tender.model_copy(deep=True), reuse_main=True) for tender in tenders]
+        return [tender for tender, _ in done]
 
-        async def one(tender: TenderResult) -> TenderResult:
+    async def _read_many(self, tenders: list[TenderResult], concurrency: int) -> list[tuple[TenderResult, str]]:
+        limit = asyncio.Semaphore(concurrency)
+
+        async def one(tender: TenderResult) -> tuple[TenderResult, str]:
             async with limit:
-                return await self._read_in_tab(tender)
+                # Копия: повторная попытка начинается с записи из выдачи, без следов первой.
+                return await self._read_in_tab(tender.model_copy(deep=True))
 
         return list(await asyncio.gather(*(one(tender) for tender in tenders)))
 
-    async def _read_in_tab(self, tender: TenderResult) -> TenderResult:
+    async def _read_in_tab(self, tender: TenderResult, reuse_main: bool = False) -> tuple[TenderResult, str]:
         if not tender.url:
-            return tender
-        page = await self.runtime.context.new_page()
-        page.set_default_timeout(15_000)
-        page.set_default_navigation_timeout(45_000)
+            return tender, "skipped"
+        if reuse_main:
+            page = self.runtime.current_page
+        else:
+            page = await self.runtime.context.new_page()
+            page.set_default_timeout(15_000)
+            page.set_default_navigation_timeout(45_000)
         tab = _TabRuntime(self.runtime, page, tender)
         try:
             return await self._read(tab, tender)
@@ -98,11 +117,12 @@ class CardReader:
             if trace is not None:
                 trace.log_step({"phase": "card", "url": tender.url, "error": f"{type(exc).__name__}: {exc}"})
                 await trace.snapshot(page, error=True)
-            return tender
+            return tender, "error"
         finally:
-            await page.close()
+            if not reuse_main:
+                await page.close()
 
-    async def _read(self, tab: _TabRuntime, tender: TenderResult) -> TenderResult:
+    async def _read(self, tab: _TabRuntime, tender: TenderResult) -> tuple[TenderResult, str]:
         # Карточка открывается там, куда ведёт ссылка из выдачи, даже если это другой сайт (ЕИС):
         # выдача площадки ссылается на закупки, опубликованные в другом месте. Переходы внутри
         # карточки — в пределах её сайта.
@@ -154,7 +174,7 @@ class CardReader:
         if outcome.outcome == "needs_user":
             # Документы за входом в личный кабинет: закупка остаётся в ответе, в карточке — пометка.
             state["tender"].details["documents_access"] = (outcome.note or "только после входа в личный кабинет")[:300]
-        return state["tender"]
+        return state["tender"], outcome.outcome
 
     async def _download(self, tab: _TabRuntime, obs: Observation, refs: list[int], tender_url: str | None) -> str:
         saved = 0

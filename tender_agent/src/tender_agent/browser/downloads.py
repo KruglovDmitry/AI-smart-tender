@@ -212,7 +212,12 @@ async def download_file(
         return bool(downloads)
 
     try:
-        await locator.click(timeout=8_000)
+        try:
+            await locator.click(timeout=8_000)
+        except PlaywrightTimeout:
+            # Кнопка-иконка перекрыта всплывающим уведомлением о прошлой загрузке или вне экрана
+            # (Росатом: из 15 файлов 6 так не кликались) — шлём событие клика напрямую.
+            await locator.dispatch_event("click")
         if not await wait_download(page, 6):
             dialog_page = popups[-1] if popups else page
             button = None

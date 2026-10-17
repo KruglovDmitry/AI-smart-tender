@@ -22,6 +22,7 @@ from ..tenders.ranking import rank_tenders
 from ..tenders.reading import read_results
 from . import actions
 from .cards import CardReader
+from .resolve import resolve_links
 from .loop import Goal, Loop
 from .planner import TaskParseError, parse_task
 from .state import Progress
@@ -106,6 +107,14 @@ async def execute(
             errors.append(f"Модель не прочитала выдачу: {type(exc).__name__}: {exc}")
             return f"extract → ошибка чтения: {type(exc).__name__}: {str(exc)[:200]}"
         before = unique()
+        resolve_note = ""
+        need = task.limit - len(rank_tenders(collected + reading.accepted, sort_by=None, limit=10_000))
+        if reading.pending and need > 0:
+            # Строки без ссылок (Росатом): адрес карточки узнаём кликом, только для нужного числа записей.
+            resolved, resolve_note = await resolve_links(runtime, obs, reading.pending, need, host,
+                                                         restore=loop.restore_search)
+            progress.actions += 2 * len(resolved)
+            reading.accepted.extend(resolved)
         collected.extend(reading.accepted)
         if obs.signature not in pages_read:
             pages_read.append(obs.signature)
@@ -114,7 +123,8 @@ async def execute(
         progress.mark("list", "llm", bool(reading.accepted))
         rejected = ", ".join(f"{reason}: {count}" for reason, count in reading.rejected.items())
         return (f"extract → записей на странице {reading.found}, принято {len(reading.accepted)}"
-                f"{f' (отклонено — {rejected})' if rejected else ''}, новых {unique() - before}, всего {unique()}")
+                f"{f' (отклонено — {rejected})' if rejected else ''}, новых {unique() - before}, всего {unique()}"
+                f"{f'; {resolve_note}' if resolve_note else ''}")
 
     def progress_line() -> str:
         return f"Прочитано записей: {unique()} из {task.limit}; страниц выдачи прочитано: {len(pages_read)}."

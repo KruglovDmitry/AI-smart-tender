@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from ..api.schemas import TenderResult
 from ..llm.base import LLMClient
 from .extraction import card_from_raw
-from .models import Observation, RawCard
+from .models import Element, Observation, RawCard
 
 RESULTS_TEXT_FOR_MODEL = 20_000
 MAX_LINKS = 300
@@ -22,6 +22,9 @@ def _norm(text: str) -> str:
 class ResultsReading:
     found: int = 0  # сколько записей назвала модель
     accepted: list[TenderResult] = field(default_factory=list)
+    # Записи, у которых вместо ссылки кликабельный элемент (строка таблицы со скриптом, Росатом):
+    # (запись без адреса, элемент). Адрес карточки узнаётся кликом — agent/resolve.py.
+    pending: list[tuple[TenderResult, Element]] = field(default_factory=list)
     rejected: dict[str, int] = field(default_factory=dict)  # причина → сколько
 
     def reject(self, reason: str) -> None:
@@ -29,14 +32,15 @@ class ResultsReading:
 
 
 def links_for_model(obs: Observation) -> list[dict]:
+    """Ссылки страницы и кликабельные элементы без адреса (строки таблиц, открывающие карточку скриптом)."""
     return [{"ref": el.ref, "text": el.name[:120], "href": (el.href or "")[:200]}
-            for el in obs.elements if el.href][:MAX_LINKS]
+            for el in obs.elements if el.href or el.role == "clickable"][:MAX_LINKS]
 
 
 def accept_records(obs: Observation, data: dict, *, keyword: str, sort_required: bool) -> ResultsReading:
     """Цитаты сверяются с текстом страницы, ссылка — со ссылками страницы."""
     page = _norm(obs.text)
-    hrefs = {el.ref: el.href for el in obs.elements if el.href}
+    by_ref = {el.ref: el for el in obs.elements}
     reading = ResultsReading()
     for item in data.get("records") or []:
         if not isinstance(item, dict):
@@ -47,10 +51,10 @@ def accept_records(obs: Observation, data: dict, *, keyword: str, sort_required:
             reading.reject("название не найдено на странице")
             continue
         try:
-            href = hrefs.get(int(item.get("link_ref")))
+            element = by_ref.get(int(item.get("link_ref")))
         except (TypeError, ValueError):
-            href = None
-        if not href:
+            element = None
+        if element is None or not (element.href or element.role == "clickable"):
             reading.reject("нет ссылки на карточку")
             continue
 
@@ -60,16 +64,21 @@ def accept_records(obs: Observation, data: dict, *, keyword: str, sort_required:
 
         number, lot = split_lot(quote("number"))
         lot = str(item.get("lot") or "").strip() or lot
-        raw = RawCard(id=number, title=title, href=href, customer=quote("customer"),
+        # Без адреса временно ставим адрес выдачи: настоящий узнаем кликом по элементу.
+        raw = RawCard(id=number, title=title, href=element.href or obs.url, customer=quote("customer"),
                       published_at=quote("published"), deadline=quote("deadline"), price_text=quote("price"),
                       status=quote("status"), sources={"title": "lot" if lot else "llm"})
         card = card_from_raw(raw, keyword=keyword, sort_required=sort_required)
-        if card is not None:
-            if lot:
-                # Строка выдачи — лот процедуры: склеится с другими лотами по номеру процедуры (ranking),
-                # а название процедуры возьмём с её карточки.
-                card.details["lot"] = lot[:40]
+        if card is None:
+            continue
+        if lot:
+            # Строка выдачи — лот процедуры: склеится с другими лотами по номеру процедуры (ranking),
+            # а название процедуры возьмём с её карточки.
+            card.details["lot"] = lot[:40]
+        if element.href:
             reading.accepted.append(card)
+        else:
+            reading.pending.append((card, element))
     return reading
 
 

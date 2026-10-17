@@ -24,6 +24,7 @@ _PAGES = {
     "/downloads": "downloads.html",
     "/custom": "custom_controls.html",
     "/dialog": "download_dialog.html",
+    "/rows": "rows_table.html",
 }
 
 

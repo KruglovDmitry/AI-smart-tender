@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="utf-8"><title>Выдача таблицей</title>
+<style>tr.row { cursor: pointer; }</style></head>
+<body>
+  <!-- Как у Росатома: строки таблицы без ссылок, карточку открывает скрипт. -->
+  <table>
+    <tr class="row" data-id="501"><td>501</td><td>Поставка сервера для архива</td><td>10.09.2026</td></tr>
+    <tr class="row" data-id="502"><td>502</td><td>Сервер хранения данных</td><td>04.09.2026</td></tr>
+  </table>
+  <script>
+    document.querySelectorAll("tr.row").forEach(function (row) {
+      row.addEventListener("click", function () { location.href = "/tenders/" + row.dataset.id; });
+    });
+  </script>
+</body>
+</html>

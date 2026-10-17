@@ -74,10 +74,35 @@ class Loop:
     vision_limit: int = 2
     vision_extends_deadline: bool = True
     vision_used: int = 0
+    # Последний отправленный поиск: (поле, текст, адрес после отправки). По нему выдачу можно вернуть,
+    # если сайт сбросил её после перехода в карточку и назад (Росатом) — см. restore_search.
+    last_search: tuple[Element, str, str] | None = None
+
+    async def restore_search(self) -> bool:
+        """Повторить последний поиск: поле ищется по подсказке или имени — номера после перерисовки другие."""
+        if self.last_search is None:
+            return False
+        field_was, text, _url = self.last_search
+        obs = await self.observe()
+        field = next((el for el in obs.elements if el.tag in {"input", "textarea"}
+                      and ((field_was.placeholder and el.placeholder == field_was.placeholder)
+                           or (field_was.name and el.name == field_was.name))), None)
+        field = field or next((el for el in obs.elements if el.input_type in {"text", "search"}), None)
+        if field is None:
+            return False
+        await actions.fill(self.runtime, field.ref, text, True, self.host)
+        return True
 
     async def observe(self) -> Observation:
         # page.evaluate сам по себе не ограничен по времени: зависшая страница не должна держать задание.
         obs = await asyncio.wait_for(get_page_state(self.runtime), timeout=45)
+        for _ in range(6):
+            # Страница ещё не нарисована скриптом (Росатом: первые секунды ни текста, ни элементов) —
+            # подождать, а не отдавать модели пустой экран (она зовёт зрение, это минута).
+            if obs.text.strip() or obs.elements:
+                break
+            await self.runtime.current_page.wait_for_timeout(2_000)
+            obs = await asyncio.wait_for(get_page_state(self.runtime), timeout=45)
         if obs.url not in self.progress.visited:
             self.progress.visited.append(obs.url)
         return obs
@@ -160,7 +185,9 @@ class Loop:
             return obs, f"{tool or '—'}: такого инструмента нет", False
         if tool == "extract":
             note = await goal.extract(obs)
-            return obs, note, True
+            # extract мог ходить по странице (адреса карточек кликом, скачивание): снимок заново,
+            # иначе номера элементов у модели устареют.
+            return await self.observe(), note, True
         if tool == "vision":
             if not self.vision_ready():
                 return obs, "vision: зрение недоступно или исчерпано, действуй по элементам страницы", False
@@ -175,6 +202,8 @@ class Loop:
             elif tool == "fill":
                 await actions.fill(self.runtime, element.ref, str(decision.get("text") or ""),
                                    bool(decision.get("submit")), self.host)
+                if decision.get("submit"):
+                    self.last_search = (element, str(decision.get("text") or ""), self.runtime.current_page.url)
             elif tool == "scroll":
                 await actions.scroll(self.runtime, str(decision.get("direction") or "down"))
             elif tool == "go_back":

@@ -12,6 +12,8 @@ from pathlib import Path
 
 from tender_agent.agent.loop import page_for_model
 from tender_agent.agent.orchestrator import execute
+from tender_agent.agent.resolve import resolve_links
+from tender_agent.tenders.reading import accept_records
 from tender_agent.browser.dom_tools import click_element
 from tender_agent.browser.downloads import download_file
 from tender_agent.browser.snapshot import get_page_state
@@ -162,6 +164,21 @@ async def _scenarios(tmp_path: Path) -> None:
         sort_ref = _ref({"elements": lines}, r"Сортировать по")
         await click_element(runtime, sort_ref)
         lines = page_for_model(await get_page_state(runtime))["elements"]
+        # Выдача таблицей без ссылок: адрес карточки узнаётся кликом по строке, выдача после возврата на месте.
+        await runtime.current_page.goto("https://tenders.example.test/rows")
+        rows_obs = await get_page_state(runtime)
+        rows = [line for line in page_for_model(rows_obs)["elements"] if line.split("] ")[1].startswith("clickable «50")]
+        assert len(rows) == 2, page_for_model(rows_obs)["elements"]
+        reading = accept_records(rows_obs, {"records": [
+            {"link_ref": int(line[1:line.index("]")]), "title": title}
+            for line, title in zip(rows, ["Поставка сервера для архива", "Сервер хранения данных"])]},
+            keyword="сервер", sort_required=False)
+        assert not reading.accepted and len(reading.pending) == 2
+        resolved, note = await resolve_links(runtime, rows_obs, reading.pending, 5, "tenders.example.test")
+        assert [t.url for t in resolved] == ["https://tenders.example.test/tenders/501",
+                                             "https://tenders.example.test/tenders/502"], note
+        assert runtime.current_page.url == "https://tenders.example.test/rows"
+
         # Файл, который скачивается через окно с кнопкой «Скачать».
         await runtime.current_page.goto("https://tenders.example.test/dialog")
         dialog_obs = await get_page_state(runtime)

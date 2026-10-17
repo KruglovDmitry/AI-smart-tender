@@ -18,6 +18,40 @@ def test_negated_download_is_not_a_download() -> None:
         assert not parse_task(base + tail, Settings()).download_documents, tail
 
 
+def test_cards_reread_only_after_a_successful_probe() -> None:
+    import asyncio
+    from collections import Counter
+
+    from tender_agent.agent.cards import CardReader
+    from tender_agent.api.schemas import TenderResult
+
+    def reader(main_tab_works: bool):
+        cards = CardReader.__new__(CardReader)
+        cards.outcomes = Counter()
+        calls: list[tuple[str, bool]] = []
+
+        async def fake(tender, reuse_main=False):
+            calls.append((tender.id, reuse_main))
+            outcome = "done" if reuse_main and main_tab_works else "needs_user"
+            cards.outcomes[outcome] += 1
+            return tender, outcome
+
+        cards._read_in_tab = fake
+        return cards, calls
+
+    tenders = [TenderResult(id=str(i), url=f"https://x.ru/{i}") for i in range(3)]
+    # Лимит вкладок (Росатом): в основной вкладке читается — перечитываем все.
+    limited, calls = reader(main_tab_works=True)
+    asyncio.run(limited.read_all(tenders))
+    assert [c for c in calls if c[1]] == [("0", True), ("1", True), ("2", True)]
+    assert limited.outcomes["done"] == 3 and limited.outcomes["needs_user"] == 0
+    # Документы за регистрацией (РосТендер): проба тоже упала — дальше не тратим время.
+    locked, calls = reader(main_tab_works=False)
+    asyncio.run(locked.read_all(tenders))
+    assert [c for c in calls if c[1]] == [("0", True)]
+    assert locked.outcomes["needs_user"] == 3
+
+
 def test_action_error_names_the_blocking_element() -> None:
     from tender_agent.agent.loop import action_error
 

@@ -80,12 +80,19 @@ class CardReader:
             # Все карточки разом упали — похоже на лимит площадки на число вкладок одной сессии
             # (Росатом: «Превышено максимальное количество одновременно открытых вкладок»).
             # Перечитываем по одной; первая попытка в учёт не идёт.
-            for _, outcome in done:
-                self.outcomes[outcome] -= 1
-            self.outcomes["sequential_retry"] += 1
             # По одной и в той же вкладке, где была выдача: портал считает вкладки сессии, и даже
             # последовательно открытые новые вкладки упираются в лимит (проверено на Росатоме).
-            done = [await self._read_in_tab(tender.model_copy(deep=True), reuse_main=True) for tender in tenders]
+            # Сначала одна карточка на пробу: если и она упала, ограничение настоящее (документы за
+            # регистрацией, РосТендер) — остальные не перечитываем, лишних затрат не больше одной карточки.
+            probe = await self._read_in_tab(tenders[0].model_copy(deep=True), reuse_main=True)
+            self.outcomes["sequential_probe"] += 1
+            self.outcomes[probe[1]] -= 1  # учёт пробы — внутри _read; ниже итог считаем по выбранному варианту
+            if probe[1] not in failed:
+                for _, outcome in done:
+                    self.outcomes[outcome] -= 1
+                rest = [await self._read_in_tab(tender.model_copy(deep=True), reuse_main=True) for tender in tenders[1:]]
+                self.outcomes[probe[1]] += 1
+                done = [probe, *rest]
         return [tender for tender, _ in done]
 
     async def _read_many(self, tenders: list[TenderResult], concurrency: int) -> list[tuple[TenderResult, str]]:

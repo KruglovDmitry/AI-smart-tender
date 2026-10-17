@@ -147,8 +147,10 @@ class CardReader:
     async def _download(self, tab: _TabRuntime, obs: Observation, refs: list[int], tender_url: str | None) -> str:
         saved = 0
         tried = 0
+        # Лимит — на закупку, а не на задание: закупка с десятками файлов не отнимает место у остальных.
+        done_here = sum(1 for item in self.downloads if item.tender_url == tender_url)
         for ref in refs:
-            if len(self.downloads) >= self.settings.max_downloads:
+            if done_here + tried >= self.settings.max_downloads:
                 break
             record = await download_file(tab, obs, ref, self.settings, tender_url)
             self.downloads.append(record)
@@ -156,4 +158,5 @@ class CardReader:
             tried += 1
             saved += record.status == "saved"
         self.progress.mark("download", "rule", saved > 0)
-        return f"; скачано {saved} из {tried}"
+        skipped = len(refs) - tried
+        return f"; скачано {saved} из {tried}" + (f"; пропущено по лимиту файлов на закупку: {skipped}" if skipped else "")

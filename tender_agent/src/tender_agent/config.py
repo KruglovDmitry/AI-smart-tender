@@ -53,7 +53,8 @@ class Settings:
     card_max_steps: int = 10
     # Общий выключатель скачивания: false — файлы не качаются, даже если задание просит.
     downloads_enabled: bool = True
-    max_downloads: int = 20
+    # Файлов на одну закупку.
+    max_downloads: int = 30
     max_download_bytes: int = 20_000_000
     headless: bool = True
     allowed_hosts: tuple[str, ...] = ()
@@ -85,7 +86,7 @@ class Settings:
             card_timeout_seconds=int(os.getenv("TENDER_AGENT_CARD_TIMEOUT_SECONDS", "90")),
             card_max_steps=int(os.getenv("TENDER_AGENT_CARD_MAX_STEPS", "10")),
             downloads_enabled=_flag("TENDER_AGENT_DOWNLOADS", True),
-            max_downloads=int(os.getenv("TENDER_AGENT_MAX_DOWNLOADS", "20")),
+            max_downloads=int(os.getenv("TENDER_AGENT_MAX_DOWNLOADS", "30")),
             max_download_bytes=int(os.getenv("TENDER_AGENT_MAX_DOWNLOAD_BYTES", "20000000")),
             headless=_flag("TENDER_AGENT_HEADLESS", True),
             allowed_hosts=_hosts(os.getenv("TENDER_AGENT_ALLOWED_HOSTS", "")),

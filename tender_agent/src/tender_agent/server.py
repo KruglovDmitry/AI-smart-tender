@@ -64,7 +64,7 @@ def _settings() -> Settings:
         card_timeout_seconds=int(os.getenv("TENDER_AGENT_CARD_TIMEOUT_SECONDS", "90")),
         card_max_steps=int(os.getenv("TENDER_AGENT_CARD_MAX_STEPS", "10")),
         downloads_enabled=_flag("TENDER_AGENT_DOWNLOADS", True),
-        max_downloads=int(os.getenv("TENDER_AGENT_MAX_DOWNLOADS", "20")),
+        max_downloads=int(os.getenv("TENDER_AGENT_MAX_DOWNLOADS", "30")),
         max_download_bytes=int(os.getenv("TENDER_AGENT_MAX_DOWNLOAD_BYTES", "20000000")),
         vision_enabled=_flag("TENDER_AGENT_VISION_ENABLED", False),
         vision_max_calls=int(os.getenv("TENDER_AGENT_VISION_MAX_CALLS", "2")),

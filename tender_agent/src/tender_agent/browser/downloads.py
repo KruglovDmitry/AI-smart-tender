@@ -135,7 +135,8 @@ async def _save_from_url(
         target.unlink(missing_ok=True)
         return _failed(source, tender_url, detail)
     return DownloadRecord(
-        source_url=final,
+        source_url=source,
+        final_url=final if final != source else None,
         path=str(target),
         name=target.name,
         size=target.stat().st_size,

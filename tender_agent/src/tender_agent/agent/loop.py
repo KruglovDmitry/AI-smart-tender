@@ -76,7 +76,8 @@ class Loop:
     vision_used: int = 0
 
     async def observe(self) -> Observation:
-        obs = await get_page_state(self.runtime)
+        # page.evaluate сам по себе не ограничен по времени: зависшая страница не должна держать задание.
+        obs = await asyncio.wait_for(get_page_state(self.runtime), timeout=45)
         if obs.url not in self.progress.visited:
             self.progress.visited.append(obs.url)
         return obs

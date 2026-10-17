@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 
@@ -7,6 +8,8 @@ import httpx
 
 from ..config import Settings
 from ..observability.trace import current_trace
+
+LLM_CALL_TIMEOUT = 120  # секунд на один вызов модели целиком
 
 _ACTION_SYSTEM = (
     "Ты управляешь браузером, чтобы выполнить цель на площадке закупок. На каждом шаге тебе дают цель, "
@@ -27,6 +30,9 @@ _ACTION_SYSTEM = (
     "опиши, что нужно сделать на экране, это выполнит зрение.\n"
     "Правила: не входи в аккаунт, не регистрируйся, не подавай заявки, не вводи персональные данные. "
     "Не повторяй действие, которое по истории не изменило страницу или дало ошибку, — выбери другое. "
+    "Если площадка прямо пишет, что по запросу ничего не найдено («Найдено 0», «ничего не найдено»), это ответ: "
+    "done с empty=true. Не пытайся «исправить» адрес выдачи вручную (кодировку, параметры) — пользуйся формой "
+    "поиска и фильтрами сайта. "
     "ref бери только из списка элементов текущей страницы.\n"
     'Верни только JSON: {"thought":"кратко: что на экране и зачем этот шаг","tool":"…","ref":number|null,'
     '"text":string|null,"submit":bool,"direction":string|null,"url":string|null,"empty":bool}'
@@ -120,18 +126,22 @@ class OpenAICompatibleClient:
         }
         # Чтение длинной выдачи у DeepSeek занимает до минуты. Обрыв соединения (ReadError) повторяем один раз:
         # карточки читаются параллельно, и такой обрыв не должен стоить карточке поля.
+        # Таймаут httpx — на каждую операцию чтения: сервер, который шлёт ответ по капле, держит запрос
+        # сколько угодно (lot-online: задание висело 7+ минут). Поэтому ещё и общий предел на весь вызов.
         async with httpx.AsyncClient(timeout=90) as client:
             for attempt in range(2):
                 try:
-                    response = await client.post(
+                    response = await asyncio.wait_for(client.post(
                         f"{self.settings.llm_base_url}/chat/completions",
                         headers={"Authorization": f"Bearer {self.settings.llm_api_key}"},
                         json=payload,
-                    )
+                    ), timeout=LLM_CALL_TIMEOUT)
                     break
                 except (httpx.ReadError, httpx.RemoteProtocolError, httpx.ConnectError):
                     if attempt:
                         raise
+                except asyncio.TimeoutError:
+                    raise RuntimeError(f"Модель не ответила за {LLM_CALL_TIMEOUT} с.") from None
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]
             self._last_raw = content

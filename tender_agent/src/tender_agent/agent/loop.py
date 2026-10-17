@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
@@ -170,7 +171,7 @@ class Loop:
             self.progress.actions += 1
             self.progress.mark("navigate", "llm", False)
             after = await self.observe()
-            return after, f"{label} → ошибка: {str(exc).splitlines()[0][:200]}", page_changed(obs, after)
+            return after, f"{label} → ошибка: {action_error(exc)}", page_changed(obs, after)
         self.progress.actions += 1
         after = await self.observe()
         moved = page_changed(obs, after) or (tool == "scroll" and after.scroll.get("y") != obs.scroll.get("y"))
@@ -202,6 +203,18 @@ class Loop:
             return
         trace.log_step(record)
         await trace.snapshot(self.runtime.current_page, error=error, text=obs.text)
+
+
+def action_error(exc: Exception) -> str:
+    """Причина неудачи для истории модели. Из таймаута Playwright достаём, что мешало клику:
+    «Timeout 8000ms» модели ничего не говорит, а «перекрыт окном …» — подсказывает закрыть окно и повторить."""
+    text = str(exc)
+    blocker = re.search(r"(<[^\n]{0,160}?>)[^\n]*? intercepts pointer events", text)
+    if blocker:
+        return f"элемент перекрыт другим элементом {blocker.group(1)[:160]} — закрой его (окно, баннер) и повтори"
+    if "not visible" in text or "element is outside of the viewport" in text:
+        return "элемент не виден на экране — прокрути к нему или раскрой блок, где он лежит"
+    return text.splitlines()[0][:200]
 
 
 def _element(obs: Observation, ref: object) -> Element | None:

@@ -11,7 +11,7 @@ from ..api.schemas import DownloadRecord
 from ..config import Settings
 from ..tenders.models import Observation
 from .dom_tools import element_by_ref
-from .navigation import same_site, validate_navigation_url
+from .navigation import validate_navigation_url
 from .runtime import BrowserRuntime
 
 _FETCH_JS = """async (url) => {
@@ -100,8 +100,10 @@ async def _save_from_url(
     if not ok:
         return _failed(source, tender_url, reason)
     try:
-        if same_site(source, urlparse(runtime.current_page.url).hostname or ""):
-            # Свой сайт — из страницы (как пользователь, с её сессией и перехватом запросов).
+        if urlparse(source).netloc == urlparse(runtime.current_page.url).netloc:
+            # Тот же адрес (хост и порт) — из страницы, с её сессией. Любой другой адрес, даже поддомен
+            # (business.roseltorg.ru со страницы www.roseltorg.ru), — запросом браузера: запрос из страницы
+            # браузер блокирует по CORS.
             loaded = await runtime.current_page.evaluate(_FETCH_JS, source)
             status, final = int(loaded.get("status") or 0), str(loaded.get("url") or source)
             headers = {"content-disposition": str(loaded.get("header") or ""), "content-type": str(loaded.get("type") or "")}

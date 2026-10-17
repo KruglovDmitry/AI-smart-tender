@@ -18,6 +18,17 @@ def test_negated_download_is_not_a_download() -> None:
         assert not parse_task(base + tail, Settings()).download_documents, tail
 
 
+def test_action_error_names_the_blocking_element() -> None:
+    from tender_agent.agent.loop import action_error
+
+    timeout = TimeoutError(
+        "Locator.click: Timeout 8000ms exceeded.\nCall log:\n  - waiting for locator\n"
+        '    - <div class="onboarding-modal">…</div> intercepts pointer events\n  - retrying click action'
+    )
+    assert action_error(timeout).startswith('элемент перекрыт другим элементом <div class="onboarding-modal">')
+    assert action_error(RuntimeError("Элемент 5 нет на текущей странице.")) == "Элемент 5 нет на текущей странице."
+
+
 def test_page_for_model_lists_elements_without_conclusions() -> None:
     obs = Observation(
         url="https://www.rts-tender.ru/poisk",

@@ -40,6 +40,7 @@ def test_mojibake_file_names_are_repaired() -> None:
     assert fix_mojibake(broken) == "Документация канцтовары.docx"
     assert fix_mojibake("Проект контракта.docx") == "Проект контракта.docx"
     assert fix_mojibake("spec.pdf") == "spec.pdf"
+    assert fix_mojibake("=?UTF-8?B?0JfQmtGB0LzQvyDQutCw0L3RhtGC0L7QstCw0YDRiy5kb2N4?=") == "ЗКсмп канцтовары.docx"
 
 
 def test_encoded_file_name_wins_over_placeholder() -> None:

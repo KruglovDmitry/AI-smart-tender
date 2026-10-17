@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import re
+from email.header import decode_header, make_header
 from pathlib import Path
 from urllib.parse import unquote, urljoin, urlparse
 
@@ -60,7 +61,13 @@ def verify_download(path: Path, root: Path, max_bytes: int) -> tuple[bool, str]:
 
 
 def fix_mojibake(name: str) -> str:
-    """Имя в UTF-8, прочитанное как latin-1 (ЕИС 223-ФЗ: «Ð_Ð¾ÐºÑ…» вместо «Документ…»)."""
+    """Имя в UTF-8, прочитанное как latin-1 (ЕИС 223-ФЗ: «Ð_Ð¾ÐºÑ…» вместо «Документ…»),
+    или закодированное по RFC 2047 (РАД 223-ФЗ: «=?UTF-8?B?0J_RgNC4…?=»)."""
+    if "=?" in name and "?=" in name:
+        try:
+            return str(make_header(decode_header(name)))
+        except Exception:
+            return name
     try:
         fixed = name.encode("latin-1").decode("utf-8")
     except (UnicodeEncodeError, UnicodeDecodeError):

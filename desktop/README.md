@@ -1,67 +1,55 @@
 # AI Smart Tender Desktop
 
-Windows-дистрибутив: **Electron (`start.exe`) + Open WebUI + tools-server**.
+Windows-дистрибутив: Electron (`start.exe`) + сервисы из [`services.json`](services.json).
 
-## Что внутри
+## Сервисы (вкл/выкл)
 
-| Компонент | Порт | Назначение |
-|-----------|------|------------|
-| Open WebUI | `127.0.0.1:18082` | UI в окне Electron |
-| tools-server | `127.0.0.1:18000` | `list_documents`, `read_folder`, Excel, fetch |
+Правится **`desktop/services.json`** → поле `"enabled": true|false`.
 
-## Папка данных на ПК
+| id | Порт | Назначение |
+|----|------|------------|
+| openwebui | 18082 | UI (окно Electron) |
+| tools | 18000 | Документы / Excel / fetch |
+| tender-agent | 18010 | Браузерный поиск (headed по умолчанию) |
+| dashboard | 18100 | Дашборд закупок |
+| db | — | SQLite `%LOCALAPPDATA%\AISmartTender\data\tenders\_agent\agent.sqlite3` |
+| postgres | — | **disabled** в desktop (только Docker) |
 
-Только песочница (не весь диск):
+Отключённый сервис не собирается и не запускается.
 
-`%LOCALAPPDATA%\AISmartTender\data\`
+## Данные
 
-- `tenders/`, `catalogs/`, `uploads/`, `exports/`
+`%LOCALAPPDATA%\AISmartTender\data\` — меню **Файл → Открыть папку данных**.
 
-В меню приложения: **Файл → Открыть папку данных**.  
-Данные Open WebUI: `%LOCALAPPDATA%\AISmartTender\webui-desktop\`.
-
-## Версии
-
-См. [versions.json](versions.json). При сборке пишется `dist/build-info.json` (попадает в `resources/`).
+Open WebUI: `%LOCALAPPDATA%\AISmartTender\webui-desktop\`.
 
 ## Сборка
-
-### 1. Open WebUI (один раз / при обновлении)
-
-Положите готовую onedir-папку в `desktop/vendor/OpenWebUI/` (внутри должен быть `OpenWebUI.exe`).
-
-Сборка ищет OWUI в таком порядке: `desktop/vendor/OpenWebUI` → `../open-webui-freeze/dist/OpenWebUI`.  
-После копирования в `vendor` папку `open-webui-freeze` можно не держать.
-
-### 2. Полный дистрибутив
 
 ```powershell
 cd desktop
 powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1
 ```
 
-Опции:
+Open WebUI: `desktop/vendor/OpenWebUI/` (или соседний freeze).
 
-- `-SkipOpenWebUI` — не копировать OWUI (уже лежит в `dist/OpenWebUI`)
-- `-SkipTools` — не пересобирать ToolsServer
-- `-OpenWebUISource 'C:\path\to\OpenWebUI'`
-- `-Zip` — архив `dist/AI-Smart-Tender-Desktop-{version}.zip`
+Результат: `electron/release/win-unpacked/start.exe` — копировать **всю** папку.
 
-Результат: `electron/release/win-unpacked/start.exe`  
-Копировать нужно **всю** папку `win-unpacked`.
+Версии: [`versions.json`](versions.json).
 
-### Только tools-server
+## Ключи LLM / Vision (пока из `.env`)
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\build_tools_exe.ps1
-```
+Electron при старте читает `.env` (не перезаписывает уже заданные переменные Windows):
 
-## Dev-запуск Electron
+1. `%LOCALAPPDATA%\AISmartTender\.env`
+2. рядом с `start.exe`
+3. корень репо `.env` (dev)
+4. `tender-agent/.env`
 
-Нужны уже собранные `dist/OpenWebUI` и `dist/ToolsServer`:
+Шаблон: [`desktop/.env.example`](.env.example) — `AGENT_LLM_*`, `AV_TARS_*`, `AV_PLANNER_*`, `TENDER_AGENT_VISION_ENABLED`.  
+Позже ключи переедут в dashboard.
 
-```bat
-cd electron
-npm install
-npm start
-```
+## Заметки по tender-agent
+
+- `TENDER_AGENT_HEADLESS=false` в services.json (видимый Chromium для логина).
+- Persistent browser profile — пока не делаем.
+- Рядом с `TenderAgent.exe` кладётся `ms-playwright/` (Chromium).

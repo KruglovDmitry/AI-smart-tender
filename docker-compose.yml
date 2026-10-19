@@ -50,7 +50,7 @@ services:
   tender-agent:
     image: ${TENDER_AGENT_IMAGE:-tender-agent:0.1.0}
     build:
-      context: ./tender_agent
+      context: ./tender-agent
       additional_contexts:
         # Соседний репозиторий AI-vision: библиотека ai_vision для vision-шага.
         ai_vision: ${AI_VISION_PATH:-../AI-vision}

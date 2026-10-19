@@ -141,7 +141,7 @@ AI-smart-tender/
 ├── docker-compose.yml
 ├── .env.example
 ├── prompts/tender-agent-system.txt
-├── tender_agent/          # универсальный браузерный поиск, инструмент search_tenders
+├── tender-agent/          # универсальный браузерный поиск, инструмент search_tenders
 ├── tools-server/          # OpenAPI tools для Open WebUI
 │   ├── Dockerfile
 │   ├── requirements.txt

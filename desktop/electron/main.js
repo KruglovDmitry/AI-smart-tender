@@ -4,14 +4,6 @@ const http = require("http");
 const path = require("path");
 const fs = require("fs");
 
-const OWUI_HOST = process.env.OWUI_HOST || "127.0.0.1";
-const OWUI_PORT = Number(process.env.OWUI_PORT || 18082);
-const TOOLS_HOST = process.env.TOOLS_HOST || "127.0.0.1";
-const TOOLS_PORT = Number(process.env.TOOLS_PORT || 18000);
-const OWUI_URL = `http://${OWUI_HOST}:${OWUI_PORT}/`;
-const TOOLS_URL = `http://${TOOLS_HOST}:${TOOLS_PORT}/`;
-const TOOLS_HEALTH = `http://${TOOLS_HOST}:${TOOLS_PORT}/health`;
-
 const APP_ROOT =
   process.env.OWUI_APP_ROOT ||
   path.join(process.env.LOCALAPPDATA || app.getPath("userData"), "AISmartTender");
@@ -21,26 +13,10 @@ const WEBUI_DATA_DIR =
 const LOG_DIR = path.join(WEBUI_DATA_DIR, "logs");
 const SHELL_LOG = path.join(LOG_DIR, "electron.log");
 
-const TOOL_SERVER_CONNECTIONS = JSON.stringify([
-  {
-    type: "openapi",
-    url: `http://${TOOLS_HOST}:${TOOLS_PORT}`,
-    path: "openapi.json",
-    spec_type: "url",
-    auth_type: "none",
-    key: "",
-    config: { enable: true },
-    info: {
-      id: "tender-tools",
-      name: "Tender Tools",
-      description: "Documents, Excel, page fetch",
-    },
-  },
-]);
-
-let owuiProc = null;
-let toolsProc = null;
+/** @type {Map<string, import('child_process').ChildProcess>} */
+const procs = new Map();
 let mainWindow = null;
+let servicesManifest = null;
 
 function log(msg) {
   try {
@@ -52,9 +28,114 @@ function log(msg) {
   console.log(msg);
 }
 
+/** Простой .env: KEY=VALUE, без export; # комментарии. Не перезаписывает уже заданные process.env. */
+function parseEnvFile(filePath) {
+  const out = {};
+  const text = fs.readFileSync(filePath, "utf8");
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#") || !line.includes("=")) continue;
+    const i = line.indexOf("=");
+    const key = line.slice(0, i).trim();
+    let value = line.slice(i + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (key) out[key] = value;
+  }
+  return out;
+}
+
+/**
+ * Ключи агента (DOM LLM, VL, UI-TARS) пока из .env; позже — из dashboard.
+ * Порядок: уже заданный process.env > LocalAppData > рядом с exe > корень репо > tender-agent/.env
+ */
+function loadDotEnvFiles() {
+  const candidates = [
+    path.join(APP_ROOT, ".env"),
+    path.join(path.dirname(process.execPath), ".env"),
+    path.resolve(__dirname, "..", "..", ".env"),
+    path.resolve(__dirname, "..", "..", "tender-agent", ".env"),
+  ];
+  const loaded = [];
+  for (const filePath of candidates) {
+    if (!fs.existsSync(filePath)) continue;
+    try {
+      const parsed = parseEnvFile(filePath);
+      let n = 0;
+      for (const [key, value] of Object.entries(parsed)) {
+        if (process.env[key] === undefined || process.env[key] === "") {
+          process.env[key] = value;
+          n += 1;
+        }
+      }
+      loaded.push(`${filePath} (+${n})`);
+    } catch (e) {
+      log(`env skip ${filePath}: ${e}`);
+    }
+  }
+  if (loaded.length) {
+    log(`env loaded: ${loaded.join("; ")}`);
+  } else {
+    log(
+      `env: файл не найден (положите .env в ${path.join(APP_ROOT, ".env")} или рядом с start.exe)`
+    );
+  }
+}
+
+function loadServices() {
+  const candidates = [];
+  if (app.isPackaged) {
+    candidates.push(path.join(process.resourcesPath, "services.json"));
+  }
+  candidates.push(path.join(__dirname, "..", "services.json"));
+  candidates.push(path.join(__dirname, "services.json"));
+  for (const p of candidates) {
+    if (fs.existsSync(p)) {
+      const raw = JSON.parse(fs.readFileSync(p, "utf8"));
+      log(`services from ${p}`);
+      return raw;
+    }
+  }
+  throw new Error("Не найден services.json");
+}
+
+function enabledServices(manifest) {
+  return (manifest.services || []).filter((s) => s.enabled !== false);
+}
+
+function dbService(manifest) {
+  return enabledServices(manifest).find((s) => s.kind === "sqlite") || null;
+}
+
+function dbUrl(manifest) {
+  const db = dbService(manifest);
+  if (!db) return "";
+  const abs = path.join(APP_ROOT, db.pathRelative.replace(/\//g, path.sep));
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  const posix = abs.replace(/\\/g, "/");
+  return (db.urlTemplate || "sqlite:///{absolutePosix}").replace(
+    "{absolutePosix}",
+    posix
+  );
+}
+
+function expandEnv(template, ctx) {
+  if (template == null) return template;
+  return String(template)
+    .replace(/\{dataRoot\}/g, ctx.dataRoot)
+    .replace(/\{host\}/g, ctx.host)
+    .replace(/\{port\}/g, String(ctx.port))
+    .replace(/\{dbUrl\}/g, ctx.dbUrl)
+    .replace(/\{appRoot\}/g, ctx.appRoot);
+}
+
 function ensureDataFolders() {
-  for (const sub of ["tenders", "catalogs", "uploads", "exports"]) {
-    fs.mkdirSync(path.join(DATA_ROOT, sub), { recursive: true });
+  for (const sub of ["tenders", "catalogs", "uploads", "exports", "tenders/_agent"]) {
+    fs.mkdirSync(path.join(DATA_ROOT, ...sub.split("/")), { recursive: true });
   }
   fs.mkdirSync(LOG_DIR, { recursive: true });
 }
@@ -65,12 +146,9 @@ function readBuildInfo() {
     candidates.push(path.join(process.resourcesPath, "build-info.json"));
   }
   candidates.push(path.join(__dirname, "..", "dist", "build-info.json"));
-  candidates.push(path.join(__dirname, "build-info.json"));
   for (const p of candidates) {
     try {
-      if (fs.existsSync(p)) {
-        return JSON.parse(fs.readFileSync(p, "utf8"));
-      }
+      if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, "utf8"));
     } catch (_) {
       /* ignore */
     }
@@ -78,18 +156,15 @@ function readBuildInfo() {
   return null;
 }
 
-function resolveExe(resourceName, exeName) {
+function resolveExe(resourceDir, exeName) {
   const candidates = [];
   if (app.isPackaged) {
-    candidates.push(path.join(process.resourcesPath, resourceName, exeName));
-    candidates.push(path.join(path.dirname(process.execPath), resourceName, exeName));
+    candidates.push(path.join(process.resourcesPath, resourceDir, exeName));
+    candidates.push(path.join(path.dirname(process.execPath), resourceDir, exeName));
   } else {
     const dist = path.resolve(__dirname, "..", "dist");
-    candidates.push(path.join(dist, resourceName, exeName));
-    // Dev: sibling freeze experiment
-    candidates.push(
-      path.resolve(__dirname, "..", "..", "..", "open-webui-freeze", "dist", resourceName, exeName)
-    );
+    candidates.push(path.join(dist, resourceDir, exeName));
+    candidates.push(path.join(__dirname, "..", "vendor", resourceDir, exeName));
   }
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) return candidate;
@@ -140,64 +215,85 @@ function spawnHidden(exe, env, logPrefix) {
   proc.on("error", (e) => log(`${logPrefix} spawn error: ${e}`));
   proc.on("exit", (code, signal) => {
     log(`${logPrefix} exit code=${code} signal=${signal}`);
+    procs.delete(logPrefix);
   });
   return proc;
 }
 
-function startToolsServer() {
-  const exe = resolveExe("ToolsServer", "ToolsServer.exe");
-  const env = {
-    ...process.env,
-    DATA_ROOT,
-    TOOLS_HOST,
-    TOOLS_PORT: String(TOOLS_PORT),
-    TOOLS_PUBLIC_BASE_URL: `http://${TOOLS_HOST}:${TOOLS_PORT}`,
-  };
-  toolsProc = spawnHidden(exe, env, "tools");
-  toolsProc.on("exit", () => {
-    toolsProc = null;
-  });
+function buildToolServerConnections(manifest) {
+  return enabledServices(manifest)
+    .filter((s) => s.kind === "process" && s.toolServer)
+    .map((s) => ({
+      type: "openapi",
+      url: `http://${s.host}:${s.port}`,
+      path: "openapi.json",
+      spec_type: "url",
+      auth_type: "none",
+      key: "",
+      config: { enable: true },
+      info: {
+        id: s.toolServer.id,
+        name: s.toolServer.name,
+        description: s.toolServer.description || "",
+      },
+    }));
 }
 
-function startOpenWebUI() {
-  const exe = resolveExe("OpenWebUI", "OpenWebUI.exe");
-  const env = {
-    ...process.env,
-    HOST: OWUI_HOST,
-    PORT: String(OWUI_PORT),
-    DATA_DIR: WEBUI_DATA_DIR,
-    WEBUI_SECRET_KEY: process.env.OWUI_SECRET_KEY || "ai-smart-tender-desktop-local",
-    RAG_EMBEDDING_MODEL_AUTO_UPDATE: "false",
-    WHISPER_MODEL_AUTO_UPDATE: "false",
-    TOOL_SERVER_CONNECTIONS,
+function startProcessService(svc, ctx) {
+  const exe = resolveExe(svc.resourceDir, svc.exe);
+  const env = { ...process.env };
+  const localCtx = {
+    ...ctx,
+    host: svc.host,
+    port: svc.port,
   };
-  owuiProc = spawnHidden(exe, env, "owui");
-  owuiProc.on("exit", () => {
-    owuiProc = null;
-  });
-}
-
-function killTree(proc, label) {
-  if (!proc || !proc.pid) return;
-  log(`stopping ${label} pid=${proc.pid}`);
-  try {
-    spawn("taskkill", ["/PID", String(proc.pid), "/T", "/F"], {
-      windowsHide: true,
-      stdio: "ignore",
-    });
-  } catch (e) {
-    log(`taskkill ${label} failed: ${e}`);
+  if (svc.env) {
+    for (const [k, v] of Object.entries(svc.env)) {
+      env[k] = expandEnv(v, localCtx);
+    }
   }
+  if (svc.primaryUi) {
+    env.HOST = svc.host;
+    env.PORT = String(svc.port);
+    env.DATA_DIR = WEBUI_DATA_DIR;
+    env.WEBUI_SECRET_KEY =
+      process.env.OWUI_SECRET_KEY || "ai-smart-tender-desktop-local";
+    env.RAG_EMBEDDING_MODEL_AUTO_UPDATE = "false";
+    env.WHISPER_MODEL_AUTO_UPDATE = "false";
+    env.TOOL_SERVER_CONNECTIONS = JSON.stringify(
+      buildToolServerConnections(servicesManifest)
+    );
+  }
+  const prefix = svc.logPrefix || svc.id;
+  const proc = spawnHidden(exe, env, prefix);
+  procs.set(prefix, proc);
+  return proc;
 }
 
 function stopServers() {
-  killTree(owuiProc, "owui");
-  killTree(toolsProc, "tools");
-  owuiProc = null;
-  toolsProc = null;
+  for (const [label, proc] of procs.entries()) {
+    if (!proc || !proc.pid) continue;
+    log(`stopping ${label} pid=${proc.pid}`);
+    try {
+      spawn("taskkill", ["/PID", String(proc.pid), "/T", "/F"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
+    } catch (e) {
+      log(`taskkill ${label} failed: ${e}`);
+    }
+  }
+  procs.clear();
 }
 
-function buildMenu() {
+function serviceUrl(svc) {
+  return `http://${svc.host}:${svc.port}${svc.healthPath || "/"}`;
+}
+
+function buildMenu(manifest) {
+  const openLinks = enabledServices(manifest).filter(
+    (s) => s.kind === "process" && (s.openInMenu || s.primaryUi)
+  );
   const template = [
     {
       label: "Файл",
@@ -207,9 +303,7 @@ function buildMenu() {
           click: async () => {
             ensureDataFolders();
             const err = await shell.openPath(DATA_ROOT);
-            if (err) {
-              dialog.showErrorBox("Не удалось открыть папку", err);
-            }
+            if (err) dialog.showErrorBox("Не удалось открыть папку", err);
           },
         },
         {
@@ -217,11 +311,14 @@ function buildMenu() {
           click: async () => {
             fs.mkdirSync(LOG_DIR, { recursive: true });
             const err = await shell.openPath(LOG_DIR);
-            if (err) {
-              dialog.showErrorBox("Не удалось открыть логи", err);
-            }
+            if (err) dialog.showErrorBox("Не удалось открыть логи", err);
           },
         },
+        { type: "separator" },
+        ...openLinks.map((s) => ({
+          label: `Открыть ${s.displayName || s.id}`,
+          click: () => shell.openExternal(`http://${s.host}:${s.port}/`),
+        })),
         { type: "separator" },
         { role: "quit", label: "Выход" },
       ],
@@ -233,17 +330,19 @@ function buildMenu() {
           label: "О программе",
           click: () => {
             const info = readBuildInfo();
+            const enabled = enabledServices(manifest)
+              .map((s) => `• ${s.id} (${s.kind}${s.enabled === false ? ", off" : ""})`)
+              .join("\n");
             const lines = [
               "AI Smart Tender Desktop",
               info ? `Product: ${info.product || "?"}` : "Product: (dev)",
-              info ? `tools-server: ${info.tools_server || "?"}` : null,
-              info ? `open_webui: ${info.open_webui || "?"}` : null,
-              info ? `electron_shell: ${info.electron_shell || "?"}` : null,
               info && info.git_sha ? `git: ${info.git_sha}` : null,
               "",
-              `UI: ${OWUI_URL}`,
-              `Tools: ${TOOLS_URL}`,
+              "Сервисы:",
+              enabled,
+              "",
               `Data: ${DATA_ROOT}`,
+              `DB: ${dbUrl(manifest) || "(none)"}`,
             ].filter((x) => x !== null);
             dialog.showMessageBox({
               type: "info",
@@ -258,7 +357,7 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-async function createWindow() {
+async function createWindow(uiUrl) {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 860,
@@ -282,30 +381,54 @@ async function createWindow() {
     mainWindow = null;
   });
 
-  log(`loading ${OWUI_URL}`);
-  await mainWindow.loadURL(OWUI_URL);
+  log(`loading ${uiUrl}`);
+  await mainWindow.loadURL(uiUrl);
 }
 
 app.whenReady().then(async () => {
   try {
     ensureDataFolders();
+    loadDotEnvFiles();
+    servicesManifest = loadServices();
+    const ctx = {
+      dataRoot: DATA_ROOT,
+      appRoot: APP_ROOT,
+      dbUrl: dbUrl(servicesManifest),
+      host: "127.0.0.1",
+      port: 0,
+    };
+    log(`db ${ctx.dbUrl || "(disabled)"}`);
+
     const info = readBuildInfo();
     if (info) {
-      log(
-        `build product=${info.product} tools=${info.tools_server} owui=${info.open_webui} sha=${info.git_sha || "?"}`
-      );
+      log(`build product=${info.product} sha=${info.git_sha || "?"}`);
     }
-    log("electron ready");
-    log(`data root ${DATA_ROOT}`);
-    log(`webui data ${WEBUI_DATA_DIR}`);
-    buildMenu();
-    startToolsServer();
-    startOpenWebUI();
-    await Promise.all([
-      waitForHttp(TOOLS_HEALTH, 60_000, "tools"),
-      waitForHttp(OWUI_URL, 180_000, "owui"),
-    ]);
-    await createWindow();
+    buildMenu(servicesManifest);
+
+    const processes = enabledServices(servicesManifest).filter(
+      (s) => s.kind === "process"
+    );
+    for (const svc of processes) {
+      startProcessService(svc, ctx);
+    }
+
+    await Promise.all(
+      processes.map((svc) =>
+        waitForHttp(
+          serviceUrl(svc),
+          svc.healthTimeoutMs || 60000,
+          svc.logPrefix || svc.id
+        )
+      )
+    );
+
+    const ui =
+      processes.find((s) => s.primaryUi) ||
+      processes[0];
+    if (!ui) {
+      throw new Error("Нет primaryUi сервиса в services.json");
+    }
+    await createWindow(`http://${ui.host}:${ui.port}/`);
     log("window opened");
   } catch (err) {
     log(`startup failed: ${err && err.stack ? err.stack : err}`);

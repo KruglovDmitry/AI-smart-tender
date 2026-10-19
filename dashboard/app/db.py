@@ -1,4 +1,4 @@
-"""Чтение базы закупок tender-agent (Postgres, сервис `postgres`).
+"""Чтение базы закупок tender-agent (Postgres в Docker или SQLite на desktop).
 
 Схему создаёт и ведёт tender-agent (`tender_agent/storage/tenders.py`); дашборд её
 читает и меняет только одно — пометку мягкого удаления `tenders.deleted_at`.
@@ -11,7 +11,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
-from sqlalchemy import MetaData, Table, and_, create_engine, desc, func, or_, select, text, true, update
+from sqlalchemy import MetaData, Table, and_, create_engine, desc, func, inspect, or_, select, text, true, update
 from sqlalchemy.engine import Engine
 
 DATABASE_URL = os.getenv("TENDER_DB_URL", "")
@@ -26,7 +26,9 @@ class DatabaseNotReady(RuntimeError):
 def engine() -> Engine:
     if not DATABASE_URL:
         raise DatabaseNotReady("TENDER_DB_URL не задан")
-    return create_engine(DATABASE_URL, pool_pre_ping=True, future=True)
+    # SQLite: check_same_thread=False — FastAPI может читать из разных потоков.
+    connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+    return create_engine(DATABASE_URL, pool_pre_ping=True, future=True, connect_args=connect_args)
 
 
 def _tables() -> dict[str, Table]:
@@ -45,10 +47,14 @@ def _alive(tenders: Table):
 
 def set_deleted(tender_id: int, deleted: bool) -> bool:
     """Мягкое удаление закупки (или возврат). False — такой закупки нет."""
-    with engine().begin() as conn:
-        conn.execute(text("ALTER TABLE tenders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE"))
+    eng = engine()
+    existing = {column["name"] for column in inspect(eng).get_columns("tenders")}
+    if "deleted_at" not in existing:
+        kind = "TIMESTAMP WITH TIME ZONE" if eng.dialect.name == "postgresql" else "DATETIME"
+        with eng.begin() as conn:
+            conn.execute(text(f"ALTER TABLE tenders ADD COLUMN deleted_at {kind}"))
     tenders = _tables()["tenders"]
-    with engine().begin() as conn:
+    with eng.begin() as conn:
         done = conn.execute(update(tenders).where(tenders.c.id == tender_id)
                             .values(deleted_at=datetime.now(timezone.utc) if deleted else None))
     return done.rowcount > 0

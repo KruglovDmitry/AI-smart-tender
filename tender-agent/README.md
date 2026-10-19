@@ -23,7 +23,7 @@
 Нужен Python 3.10+. Образ tools-server собран на 3.10, локально пакет проверялся на 3.12.
 
 ```powershell
-cd tender_agent
+cd tender-agent
 py -3 -m pip install -e ".[dev]"
 py -3 -m playwright install chromium
 ```

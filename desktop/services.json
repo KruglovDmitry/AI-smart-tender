@@ -1,0 +1,124 @@
+{
+  "$schema_comment": "Включение/отключение сервисов desktop-сборки. enabled=false — не собирать и не запускать.",
+  "appDataName": "AISmartTender",
+  "services": [
+    {
+      "id": "openwebui",
+      "enabled": true,
+      "kind": "process",
+      "displayName": "Open WebUI",
+      "resourceDir": "OpenWebUI",
+      "exe": "OpenWebUI.exe",
+      "host": "127.0.0.1",
+      "port": 18082,
+      "healthPath": "/",
+      "healthTimeoutMs": 180000,
+      "primaryUi": true,
+      "logPrefix": "owui",
+      "build": {
+        "type": "copy",
+        "candidates": ["vendor/OpenWebUI", "../open-webui-freeze/dist/OpenWebUI"]
+      }
+    },
+    {
+      "id": "tools",
+      "enabled": true,
+      "kind": "process",
+      "displayName": "Tender Tools",
+      "resourceDir": "ToolsServer",
+      "exe": "ToolsServer.exe",
+      "host": "127.0.0.1",
+      "port": 18000,
+      "healthPath": "/health",
+      "healthTimeoutMs": 60000,
+      "logPrefix": "tools",
+      "toolServer": {
+        "id": "tender-tools",
+        "name": "Tender Tools",
+        "description": "Documents, Excel, page fetch"
+      },
+      "env": {
+        "DATA_ROOT": "{dataRoot}",
+        "TOOLS_HOST": "{host}",
+        "TOOLS_PORT": "{port}",
+        "TOOLS_PUBLIC_BASE_URL": "http://{host}:{port}"
+      },
+      "build": {
+        "type": "script",
+        "script": "build_tools_exe.ps1"
+      }
+    },
+    {
+      "id": "tender-agent",
+      "enabled": true,
+      "kind": "process",
+      "displayName": "Tender Agent",
+      "resourceDir": "TenderAgent",
+      "exe": "TenderAgent.exe",
+      "host": "127.0.0.1",
+      "port": 18010,
+      "healthPath": "/health",
+      "healthTimeoutMs": 60000,
+      "logPrefix": "agent",
+      "toolServer": {
+        "id": "tender-agent",
+        "name": "Tender Agent",
+        "description": "Browser search of tenders"
+      },
+      "env": {
+        "TENDER_AGENT_DATA_DIR": "{dataRoot}/tenders",
+        "TENDER_AGENT_HEADLESS": "false",
+        "TENDER_AGENT_DB_URL": "{dbUrl}",
+        "HOST": "{host}",
+        "PORT": "{port}"
+      },
+      "build": {
+        "type": "script",
+        "script": "build_agent_exe.ps1",
+        "notes": "Playwright Chromium рядом с exe; headed по умолчанию"
+      }
+    },
+    {
+      "id": "dashboard",
+      "enabled": true,
+      "kind": "process",
+      "displayName": "Dashboard",
+      "resourceDir": "Dashboard",
+      "exe": "Dashboard.exe",
+      "host": "127.0.0.1",
+      "port": 18100,
+      "healthPath": "/",
+      "healthTimeoutMs": 60000,
+      "logPrefix": "dashboard",
+      "openInMenu": true,
+      "env": {
+        "DATA_ROOT": "{dataRoot}",
+        "TENDER_DB_URL": "{dbUrl}",
+        "TOOLS_SERVER_URL": "http://127.0.0.1:18000",
+        "TENDER_AGENT_URL": "http://127.0.0.1:18010",
+        "HOST": "{host}",
+        "PORT": "{port}"
+      },
+      "build": {
+        "type": "script",
+        "script": "build_dashboard_exe.ps1"
+      }
+    },
+    {
+      "id": "db",
+      "enabled": true,
+      "kind": "sqlite",
+      "displayName": "Tenders DB (SQLite)",
+      "pathRelative": "data/tenders/_agent/agent.sqlite3",
+      "urlTemplate": "sqlite:///{absolutePosix}",
+      "notes": "Desktop: встроенный SQLite (пишет tender-agent, читает dashboard). Postgres — только в Docker (enabled=false ниже)."
+    },
+    {
+      "id": "postgres",
+      "enabled": false,
+      "kind": "external",
+      "displayName": "PostgreSQL",
+      "notes": "Не бандлится в desktop. Для Docker см. docker-compose.yml service postgres."
+    }
+  ]
+}

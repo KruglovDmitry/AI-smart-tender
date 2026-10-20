@@ -21,6 +21,16 @@
     documents_access: "Доступ к документам",
   };
 
+  // ---------- тема ----------
+
+  function setTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem("theme", theme); } catch (e) { /* без localStorage тема живёт до перезагрузки */ }
+    document.querySelectorAll("[data-theme-set]").forEach((b) => b.classList.toggle("active", b.dataset.themeSet === theme));
+  }
+  document.querySelectorAll("[data-theme-set]").forEach((b) => b.addEventListener("click", () => setTheme(b.dataset.themeSet)));
+  setTheme(document.documentElement.dataset.theme || "light");
+
   // ---------- навигация ----------
 
   function showPanel(name) {

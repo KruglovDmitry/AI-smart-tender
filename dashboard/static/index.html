@@ -4,7 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ТЕНАГ — Тендерный Агент | Dashboard</title>
-  <link rel="stylesheet" href="/static/styles.css?v=9">
+  <script>
+    // Тема до отрисовки, чтобы не мигало: по умолчанию светлая.
+    try { document.documentElement.dataset.theme = localStorage.getItem("theme") || "light"; } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="/static/styles.css?v=10">
 </head>
 <body>
 <div class="bglogo"><img src="/static/logo.jpg" alt=""></div>
@@ -22,6 +26,10 @@
       <button type="button" class="it" data-panel="run">▶ Поиск на площадке</button>
       <button type="button" class="it" data-panel="status">⚙ Статус системы</button>
     </nav>
+    <div class="theme-switch" role="group" aria-label="Тема">
+      <button type="button" data-theme-set="light">☀ Светлая</button>
+      <button type="button" data-theme-set="dark">☾ Тёмная</button>
+    </div>
     <div class="user">
       <div class="av">Т</div>
       <div><div class="un">ТЕНАГ</div><div class="up">База закупок · v2</div></div>
@@ -222,6 +230,6 @@
     <div id="drawer-content"></div>
   </div>
 </div>
-<script src="/static/app.js?v=9"></script>
+<script src="/static/app.js?v=10"></script>
 </body>
 </html>

@@ -79,6 +79,21 @@ def _settings() -> Settings:
     )
 
 
+@app.on_event("startup")
+def create_schema() -> None:
+    # Таблицы создаются при старте, а не при первом прогоне: дашборд читает базу сразу
+    # и на пустой новой базе показывал ошибку «База закупок недоступна».
+    settings = _settings()
+    if not settings.store_enabled:
+        return
+    from .storage.tenders import TenderStore
+
+    try:
+        TenderStore(settings.db_url or settings.data_dir / "_agent" / "agent.sqlite3")
+    except Exception as exc:  # база недоступна — агент всё равно работает, ошибку покажет дашборд
+        print(f"Tender DB not ready: {exc}")
+
+
 @app.get("/health", summary="Health check")
 def health():
     settings = apply_overrides(_settings())

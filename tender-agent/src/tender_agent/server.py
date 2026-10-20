@@ -5,9 +5,12 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from .agent.vision import vision_available
+from .agent_settings import apply_overrides, describe, effective, save_overrides, settings_path
 from .api.service import run_task
 from .config import Settings
 
@@ -78,14 +81,70 @@ def _settings() -> Settings:
 
 @app.get("/health", summary="Health check")
 def health():
-    settings = _settings()
+    settings = apply_overrides(_settings())
     ready = bool(settings.llm_base_url and settings.llm_api_key and settings.llm_model)
     return {
         "status": "ok" if ready else "degraded",
         "data_dir": str(settings.data_dir),
         "llm_configured": ready,
         "model": settings.llm_model,
+        "vision_enabled": settings.vision_enabled,
+        "vision_available": vision_available(),
+        "headless": settings.headless,
     }
+
+
+# ---------- настройки агента для дашборда (вкладка «Агент») ----------
+# Не попадают в OpenAPI: иначе Open WebUI предложил бы их модели в чате как инструменты.
+
+
+class SettingsBody(BaseModel):
+    values: dict = Field(default_factory=dict, description="key → значение; null или пустая строка — сбросить")
+
+
+class CheckBody(BaseModel):
+    target: str = Field(..., description="dom | planner | tars")
+
+
+@app.get("/settings", include_in_schema=False)
+def get_settings():
+    data_dir = _settings().data_dir
+    return {"options": describe(data_dir), "vision_available": vision_available(),
+            "path": str(settings_path(data_dir))}
+
+
+@app.put("/settings", include_in_schema=False)
+def put_settings(body: SettingsBody):
+    data_dir = _settings().data_dir
+    try:
+        save_overrides(data_dir, body.values)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return get_settings()
+
+
+@app.post("/settings/check", include_in_schema=False)
+async def check_settings(body: CheckBody):
+    """Короткий запрос к модели, чтобы проверить адрес, ключ и имя модели до запуска поиска."""
+    data_dir = _settings().data_dir
+    prefix = {"dom": "llm", "planner": "vision_planner", "tars": "vision_tars"}.get(body.target)
+    if prefix is None:
+        raise HTTPException(status_code=400, detail="target: dom | planner | tars")
+    base = effective(data_dir, f"{prefix}_base_url").rstrip("/")
+    key = effective(data_dir, f"{prefix}_api_key")
+    model = effective(data_dir, f"{prefix}_model")
+    if not base or not model:
+        return {"ok": False, "detail": "Не заданы адрес или модель."}
+    payload = {"model": model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1}
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(f"{base}/chat/completions", json=payload,
+                                         headers={"Authorization": f"Bearer {key or 'EMPTY'}"})
+    except Exception as exc:
+        return {"ok": False, "detail": f"{type(exc).__name__}: {str(exc)[:200] or 'нет соединения'}"}
+    if response.status_code >= 400:
+        return {"ok": False, "detail": f"HTTP {response.status_code}: {response.text[:200]}"}
+    return {"ok": True, "detail": f"Модель {model} отвечает."}
 
 
 @app.post(

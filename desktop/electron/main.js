@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, Menu, shell } = require("electron");
+const { app, BaseWindow, WebContentsView, dialog, ipcMain, Menu, shell } = require("electron");
 const { spawn } = require("child_process");
 const http = require("http");
 const path = require("path");
@@ -13,10 +13,26 @@ const WEBUI_DATA_DIR =
 const LOG_DIR = path.join(WEBUI_DATA_DIR, "logs");
 const SHELL_LOG = path.join(LOG_DIR, "electron.log");
 
+const TOOLBAR_HEIGHT = 40;
+// Упавший сервис перезапускается, но не чаще RESTART_LIMIT раз за RESTART_WINDOW_MS.
+const RESTART_LIMIT = 3;
+const RESTART_WINDOW_MS = 5 * 60 * 1000;
+// Ключи моделей нужны только агенту: остальным сервисам (в том числе Open WebUI) их не передаём.
+const AGENT_ONLY_ENV = /^(AGENT_LLM_|TENDER_AGENT_|AV_)|^QWEN_API_KEY$/;
+
 /** @type {Map<string, import('child_process').ChildProcess>} */
 const procs = new Map();
-let mainWindow = null;
+/** Состояние сервисов для верхней панели: id → {name, state, detail, restarts: number[]}. */
+const serviceState = new Map();
 let servicesManifest = null;
+let baseCtx = null;
+let quitting = false;
+
+let mainWindow = null;
+let toolbarView = null;
+/** @type {Record<string, WebContentsView>} */
+const views = {};
+let currentView = "chat";
 
 function log(msg) {
   try {
@@ -50,7 +66,8 @@ function parseEnvFile(filePath) {
 }
 
 /**
- * Ключи агента (DOM LLM, VL, UI-TARS) пока из .env; позже — из dashboard.
+ * Запасной источник ключей агента (DOM LLM, VL, UI-TARS) — .env. Основной — вкладка «Агент»
+ * в дашборде (data/tenders/_agent/settings.json), она сильнее .env.
  * Порядок: уже заданный process.env > LocalAppData > рядом с exe > корень репо > tender-agent/.env
  */
 function loadDotEnvFiles() {
@@ -80,9 +97,7 @@ function loadDotEnvFiles() {
   if (loaded.length) {
     log(`env loaded: ${loaded.join("; ")}`);
   } else {
-    log(
-      `env: файл не найден (положите .env в ${path.join(APP_ROOT, ".env")} или рядом с start.exe)`
-    );
+    log(`env: .env не найден — ключи задаются во вкладке «Агент» дашборда`);
   }
 }
 
@@ -105,6 +120,10 @@ function loadServices() {
 
 function enabledServices(manifest) {
   return (manifest.services || []).filter((s) => s.enabled !== false);
+}
+
+function processServices(manifest) {
+  return enabledServices(manifest).filter((s) => s.kind === "process");
 }
 
 function dbService(manifest) {
@@ -176,6 +195,10 @@ function waitForHttp(url, timeoutMs, label) {
   const started = Date.now();
   return new Promise((resolve, reject) => {
     const tick = () => {
+      if (quitting) {
+        reject(new Error("quitting"));
+        return;
+      }
       const req = http.get(url, (res) => {
         res.resume();
         log(`${label} ready status=${res.statusCode}`);
@@ -213,16 +236,12 @@ function spawnHidden(exe, env, logPrefix) {
   });
   log(`${logPrefix} pid=${proc.pid}`);
   proc.on("error", (e) => log(`${logPrefix} spawn error: ${e}`));
-  proc.on("exit", (code, signal) => {
-    log(`${logPrefix} exit code=${code} signal=${signal}`);
-    procs.delete(logPrefix);
-  });
   return proc;
 }
 
 function buildToolServerConnections(manifest) {
-  return enabledServices(manifest)
-    .filter((s) => s.kind === "process" && s.toolServer)
+  return processServices(manifest)
+    .filter((s) => s.toolServer)
     .map((s) => ({
       type: "openapi",
       url: `http://${s.host}:${s.port}`,
@@ -239,18 +258,15 @@ function buildToolServerConnections(manifest) {
     }));
 }
 
-function startProcessService(svc, ctx) {
-  const exe = resolveExe(svc.resourceDir, svc.exe);
-  const env = { ...process.env };
-  const localCtx = {
-    ...ctx,
-    host: svc.host,
-    port: svc.port,
-  };
-  if (svc.env) {
-    for (const [k, v] of Object.entries(svc.env)) {
-      env[k] = expandEnv(v, localCtx);
-    }
+function serviceEnv(svc) {
+  const env = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (svc.id !== "tender-agent" && AGENT_ONLY_ENV.test(key)) continue;
+    env[key] = value;
+  }
+  const localCtx = { ...baseCtx, host: svc.host, port: svc.port };
+  for (const [k, v] of Object.entries(svc.env || {})) {
+    env[k] = expandEnv(v, localCtx);
   }
   if (svc.primaryUi) {
     env.HOST = svc.host;
@@ -264,10 +280,68 @@ function startProcessService(svc, ctx) {
       buildToolServerConnections(servicesManifest)
     );
   }
+  return env;
+}
+
+// ---------- состояние сервисов и верхняя панель ----------
+
+function setState(svc, state, detail = "") {
+  const item = serviceState.get(svc.id) || { restarts: [] };
+  item.name = svc.displayName || svc.id;
+  item.state = state;
+  item.detail = detail;
+  serviceState.set(svc.id, item);
+  pushState();
+}
+
+function pushState() {
+  if (!toolbarView || toolbarView.webContents.isDestroyed()) return;
+  const services = processServices(servicesManifest)
+    .filter((s) => !s.primaryUi)
+    .map((s) => {
+      const item = serviceState.get(s.id) || {};
+      return { name: s.displayName || s.id, state: item.state || "starting", detail: item.detail || "" };
+    });
+  toolbarView.webContents.send("shell:state", { view: currentView, services });
+}
+
+/** Запустить сервис и дождаться его /health; при падении — перезапуск (не больше RESTART_LIMIT за 5 минут). */
+function startService(svc) {
   const prefix = svc.logPrefix || svc.id;
-  const proc = spawnHidden(exe, env, prefix);
+  setState(svc, "starting");
+  const proc = spawnHidden(resolveExe(svc.resourceDir, svc.exe), serviceEnv(svc), prefix);
   procs.set(prefix, proc);
-  return proc;
+  proc.on("exit", (code, signal) => {
+    log(`${prefix} exit code=${code} signal=${signal}`);
+    if (procs.get(prefix) === proc) procs.delete(prefix);
+    if (quitting) return;
+    const item = serviceState.get(svc.id) || { restarts: [] };
+    const now = Date.now();
+    item.restarts = (item.restarts || []).filter((t) => now - t < RESTART_WINDOW_MS);
+    if (item.restarts.length >= RESTART_LIMIT) {
+      setState(svc, "failed", `упал ${RESTART_LIMIT} раза за 5 минут, см. логи ${prefix}-err.log`);
+      return;
+    }
+    item.restarts.push(now);
+    serviceState.set(svc.id, item);
+    setState(svc, "starting", `перезапуск после падения (код ${code})`);
+    setTimeout(() => {
+      if (!quitting) startService(svc);
+    }, 3000);
+  });
+  const ready = waitForHttp(serviceUrl(svc), svc.healthTimeoutMs || 60000, prefix);
+  ready.then(
+    () => {
+      setState(svc, "ready");
+      if (svc.id === "dashboard") loadDashboardView(svc);
+      // Open WebUI после перезапуска: открытая страница чата потеряла сервер — перезагружаем.
+      if (svc.primaryUi && views.chat) views.chat.webContents.reload();
+    },
+    (err) => {
+      if (!quitting) setState(svc, "failed", String(err.message || err));
+    }
+  );
+  return ready;
 }
 
 function stopServers() {
@@ -290,10 +364,87 @@ function serviceUrl(svc) {
   return `http://${svc.host}:${svc.port}${svc.healthPath || "/"}`;
 }
 
+// ---------- окно: верхняя панель + чат + дашборд ----------
+
+function placeholderUrl(text) {
+  const html = `<!doctype html><meta charset="utf-8"><body style="font:15px Segoe UI,sans-serif;display:flex;
+    align-items:center;justify-content:center;height:100vh;margin:0;color:#777">${text}</body>`;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
+function layout() {
+  if (!mainWindow) return;
+  const { width, height } = mainWindow.getContentBounds();
+  toolbarView.setBounds({ x: 0, y: 0, width, height: TOOLBAR_HEIGHT });
+  for (const view of Object.values(views)) {
+    view.setBounds({ x: 0, y: TOOLBAR_HEIGHT, width, height: Math.max(0, height - TOOLBAR_HEIGHT) });
+  }
+}
+
+function showView(name) {
+  if (!views[name]) return;
+  currentView = name;
+  for (const [key, view] of Object.entries(views)) view.setVisible(key === name);
+  views[name].webContents.focus();
+  pushState();
+}
+
+function openExternalLinks(view) {
+  // Ссылки «в новой вкладке» (карточки закупок, файлы) — в системный браузер, а не в новое окно Electron.
+  view.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/i.test(url)) shell.openExternal(url);
+    return { action: "deny" };
+  });
+}
+
+function createWindow(chatUrl) {
+  mainWindow = new BaseWindow({
+    width: 1280,
+    height: 860,
+    minWidth: 960,
+    minHeight: 640,
+    title: "AI Smart Tender",
+    autoHideMenuBar: false,
+  });
+  toolbarView = new WebContentsView({
+    webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false },
+  });
+  views.chat = new WebContentsView({ webPreferences: { contextIsolation: true, nodeIntegration: false } });
+  views.dashboard = new WebContentsView({ webPreferences: { contextIsolation: true, nodeIntegration: false } });
+  for (const view of [toolbarView, views.chat, views.dashboard]) mainWindow.contentView.addChildView(view);
+  openExternalLinks(views.chat);
+  openExternalLinks(views.dashboard);
+
+  toolbarView.webContents.loadFile(path.join(__dirname, "toolbar.html"));
+  toolbarView.webContents.on("did-finish-load", pushState);
+  log(`loading ${chatUrl}`);
+  views.chat.webContents.loadURL(chatUrl);
+  // Дашборд обычно готов раньше чата: тогда сразу грузим его, иначе — заглушку до готовности.
+  const dashboard = processServices(servicesManifest).find((s) => s.id === "dashboard");
+  if (dashboard && (serviceState.get("dashboard") || {}).state === "ready") {
+    loadDashboardView(dashboard);
+  } else {
+    views.dashboard.webContents.loadURL(placeholderUrl("Дашборд запускается…"));
+  }
+  mainWindow.on("resize", layout);
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
+  layout();
+  showView("chat");
+}
+
+function loadDashboardView(svc) {
+  if (!views.dashboard) return;
+  const url = `http://${svc.host}:${svc.port}/`;
+  log(`dashboard view ${url}`);
+  views.dashboard.webContents.loadURL(url);
+}
+
+ipcMain.on("shell:show", (_event, name) => showView(name));
+
 function buildMenu(manifest) {
-  const openLinks = enabledServices(manifest).filter(
-    (s) => s.kind === "process" && (s.openInMenu || s.primaryUi)
-  );
+  const openLinks = processServices(manifest).filter((s) => s.openInMenu || s.primaryUi);
   const template = [
     {
       label: "Файл",
@@ -316,11 +467,29 @@ function buildMenu(manifest) {
         },
         { type: "separator" },
         ...openLinks.map((s) => ({
-          label: `Открыть ${s.displayName || s.id}`,
+          label: `Открыть ${s.displayName || s.id} в браузере`,
           click: () => shell.openExternal(`http://${s.host}:${s.port}/`),
         })),
         { type: "separator" },
         { role: "quit", label: "Выход" },
+      ],
+    },
+    {
+      label: "Вид",
+      submenu: [
+        { label: "Чат", accelerator: "CmdOrCtrl+1", click: () => showView("chat") },
+        { label: "Дашборд", accelerator: "CmdOrCtrl+2", click: () => showView("dashboard") },
+        { type: "separator" },
+        {
+          label: "Обновить страницу",
+          accelerator: "F5",
+          click: () => views[currentView] && views[currentView].webContents.reload(),
+        },
+        {
+          label: "Инструменты разработчика",
+          accelerator: "CmdOrCtrl+Shift+I",
+          click: () => views[currentView] && views[currentView].webContents.toggleDevTools(),
+        },
       ],
     },
     {
@@ -331,7 +500,7 @@ function buildMenu(manifest) {
           click: () => {
             const info = readBuildInfo();
             const enabled = enabledServices(manifest)
-              .map((s) => `• ${s.id} (${s.kind}${s.enabled === false ? ", off" : ""})`)
+              .map((s) => `• ${s.id} (${s.kind})`)
               .join("\n");
             const lines = [
               "AI Smart Tender Desktop",
@@ -357,95 +526,62 @@ function buildMenu(manifest) {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-async function createWindow(uiUrl) {
-  mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 860,
-    minWidth: 960,
-    minHeight: 640,
-    title: "AI Smart Tender",
-    autoHideMenuBar: false,
-    show: false,
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-    },
-  });
+// ---------- запуск ----------
 
-  mainWindow.once("ready-to-show", () => {
-    mainWindow.show();
+// Второй запуск start.exe не поднимает вторую копию сервисов (порты заняты, Open WebUI падал с кодом 3),
+// а показывает уже открытое окно.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
   });
 
-  mainWindow.on("closed", () => {
-    mainWindow = null;
-  });
+  app.whenReady().then(async () => {
+    try {
+      ensureDataFolders();
+      loadDotEnvFiles();
+      servicesManifest = loadServices();
+      baseCtx = {
+        dataRoot: DATA_ROOT,
+        appRoot: APP_ROOT,
+        dbUrl: dbUrl(servicesManifest),
+        host: "127.0.0.1",
+        port: 0,
+      };
+      log(`db ${baseCtx.dbUrl || "(disabled)"}`);
+      const info = readBuildInfo();
+      if (info) log(`build product=${info.product} sha=${info.git_sha || "?"}`);
+      buildMenu(servicesManifest);
 
-  log(`loading ${uiUrl}`);
-  await mainWindow.loadURL(uiUrl);
+      const processes = processServices(servicesManifest);
+      const ui = processes.find((s) => s.primaryUi) || processes[0];
+      if (!ui) throw new Error("Нет primaryUi сервиса в services.json");
+      // Все сервисы стартуют сразу, но окно ждёт только чат: агент и дашборд догружаются в фоне,
+      // их состояние видно в верхней панели, а медленный старт одного не закрывает приложение.
+      const waits = new Map(processes.map((svc) => [svc.id, startService(svc)]));
+      await waits.get(ui.id);
+      createWindow(`http://${ui.host}:${ui.port}/`);
+      log("window opened");
+    } catch (err) {
+      log(`startup failed: ${err && err.stack ? err.stack : err}`);
+      quitting = true;
+      stopServers();
+      dialog.showErrorBox("Не удалось запустить", String(err && err.message ? err.message : err));
+      app.quit();
+    }
+  });
 }
 
-app.whenReady().then(async () => {
-  try {
-    ensureDataFolders();
-    loadDotEnvFiles();
-    servicesManifest = loadServices();
-    const ctx = {
-      dataRoot: DATA_ROOT,
-      appRoot: APP_ROOT,
-      dbUrl: dbUrl(servicesManifest),
-      host: "127.0.0.1",
-      port: 0,
-    };
-    log(`db ${ctx.dbUrl || "(disabled)"}`);
-
-    const info = readBuildInfo();
-    if (info) {
-      log(`build product=${info.product} sha=${info.git_sha || "?"}`);
-    }
-    buildMenu(servicesManifest);
-
-    const processes = enabledServices(servicesManifest).filter(
-      (s) => s.kind === "process"
-    );
-    for (const svc of processes) {
-      startProcessService(svc, ctx);
-    }
-
-    await Promise.all(
-      processes.map((svc) =>
-        waitForHttp(
-          serviceUrl(svc),
-          svc.healthTimeoutMs || 60000,
-          svc.logPrefix || svc.id
-        )
-      )
-    );
-
-    const ui =
-      processes.find((s) => s.primaryUi) ||
-      processes[0];
-    if (!ui) {
-      throw new Error("Нет primaryUi сервиса в services.json");
-    }
-    await createWindow(`http://${ui.host}:${ui.port}/`);
-    log("window opened");
-  } catch (err) {
-    log(`startup failed: ${err && err.stack ? err.stack : err}`);
-    stopServers();
-    dialog.showErrorBox(
-      "Не удалось запустить",
-      String(err && err.message ? err.message : err)
-    );
-    app.quit();
-  }
-});
-
 app.on("window-all-closed", () => {
+  quitting = true;
   stopServers();
   app.quit();
 });
 
 app.on("before-quit", () => {
+  quitting = true;
   stopServers();
 });

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ТЕНАГ — Тендерный Агент | Dashboard</title>
-  <link rel="stylesheet" href="/static/styles.css?v=8">
+  <link rel="stylesheet" href="/static/styles.css?v=9">
 </head>
 <body>
 <div class="bglogo"><img src="/static/logo.jpg" alt=""></div>
@@ -18,7 +18,7 @@
       <button type="button" class="it active" data-panel="dashboard">▦ Сводка</button>
       <button type="button" class="it" data-panel="tenders">📋 Закупки</button>
       <button type="button" class="it" data-panel="runs">🕘 Прогоны</button>
-      <button type="button" class="it" data-panel="methods">📈 Эффективность</button>
+      <button type="button" class="it" data-panel="methods">🤖 Агент</button>
       <button type="button" class="it" data-panel="run">▶ Поиск на площадке</button>
       <button type="button" class="it" data-panel="status">⚙ Статус системы</button>
     </nav>
@@ -141,8 +141,13 @@
       </div>
     </section>
 
-    <!-- Эффективность -->
+    <!-- Агент: настройки и эффективность -->
     <section class="panel" id="panel-methods">
+      <div class="card" id="agent-settings-card">
+        <h3>Настройки агента <span class="sm">действуют со следующего поиска, перезапуск не нужен</span></h3>
+        <p class="hint" id="agent-settings-hint">Загрузка…</p>
+        <form id="agent-settings"></form>
+      </div>
       <div class="card">
         <form class="filters" id="methods-filters">
           <div class="field"><label for="m-days">Период</label>
@@ -217,6 +222,6 @@
     <div id="drawer-content"></div>
   </div>
 </div>
-<script src="/static/app.js?v=8"></script>
+<script src="/static/app.js?v=9"></script>
 </body>
 </html>

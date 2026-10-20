@@ -179,6 +179,47 @@ def api_db_runs(platform: str | None = None, limit: int = 50):
     return {"runs": _db_call(db.list_runs, platform=platform, limit=max(1, min(limit, 500)))}
 
 
+# ---------- настройки агента (вкладка «Агент»): владелец — tender-agent, дашборд проксирует ----------
+
+
+async def _agent_call(method: str, path: str, json: dict | None = None):
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(45.0)) as client:
+            r = await client.request(method, f"{AGENT_URL}{path}", json=json)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"tender-agent недоступен: {exc}") from exc
+    try:
+        data = r.json()
+    except ValueError:
+        data = {"detail": r.text[:300]}
+    if r.status_code >= 400:
+        raise HTTPException(status_code=r.status_code, detail=data.get("detail", f"HTTP {r.status_code}"))
+    return data
+
+
+class AgentSettingsBody(BaseModel):
+    values: dict = Field(default_factory=dict)
+
+
+class AgentCheckBody(BaseModel):
+    target: str
+
+
+@app.get("/api/agent/settings")
+async def api_agent_settings():
+    return await _agent_call("GET", "/settings")
+
+
+@app.put("/api/agent/settings")
+async def api_agent_settings_save(body: AgentSettingsBody):
+    return await _agent_call("PUT", "/settings", {"values": body.values})
+
+
+@app.post("/api/agent/settings/check")
+async def api_agent_settings_check(body: AgentCheckBody):
+    return await _agent_call("POST", "/settings/check", {"target": body.target})
+
+
 def _database_status() -> dict:
     try:
         return {"ok": True, "tenders_total": db.summary()["tenders_total"]}

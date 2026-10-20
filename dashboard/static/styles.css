@@ -171,3 +171,12 @@ a:hover { text-decoration:underline; }
 .icon-btn.danger { color:#ef4444; border-color:rgba(239,68,68,.45); }
 .icon-btn.danger:hover { background:rgba(239,68,68,.12); }
 .icon-btn:disabled { opacity:.55; cursor:wait; }
+
+/* Вкладка «Агент»: настройки tender-agent. */
+.settings-group { border:1px solid #24304f; border-radius:11px; padding:12px 16px 4px; margin:0 0 14px; }
+.settings-group legend { padding:0 6px; font-weight:700; color:#dce3f2; }
+.settings-group .field { margin-bottom:10px; }
+.settings-group .field input { width:100%; }
+.settings-group label.check { display:inline-flex; align-items:center; gap:6px; margin:6px 12px 10px 0; }
+.link { background:none; border:none; color:#22d3ee; cursor:pointer; padding:0; font-size:12px; }
+.sm { font-size:12px; }

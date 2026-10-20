@@ -258,6 +258,35 @@ function buildToolServerConnections(manifest) {
     }));
 }
 
+/**
+ * Open WebUI берёт TOOL_SERVER_CONNECTIONS из env только при первом запуске, дальше — из своей базы.
+ * Сервисы, включённые позже (так было с tender-agent), дописываем в базу сами, по адресу; остальное не трогаем.
+ */
+function ensureToolServers(manifest) {
+  const dbPath = path.join(WEBUI_DATA_DIR, "webui.db");
+  if (!fs.existsSync(dbPath)) return;
+  let db = null;
+  try {
+    const { DatabaseSync } = require("node:sqlite");
+    db = new DatabaseSync(dbPath);
+    const row = db.prepare("SELECT value FROM config WHERE key = 'tool_server.connections'").get();
+    if (!row) return; // список ещё не сохранён — Open WebUI возьмёт его из env
+    const current = JSON.parse(row.value || "[]");
+    const known = new Set(current.map((c) => String(c.url || "").replace(/\/+$/, "")));
+    const missing = buildToolServerConnections(manifest).filter((c) => !known.has(c.url));
+    if (!missing.length) return;
+    db.prepare("UPDATE config SET value = ?, updated_at = ? WHERE key = 'tool_server.connections'").run(
+      JSON.stringify([...current, ...missing]),
+      Math.floor(Date.now() / 1000)
+    );
+    log(`tool servers added to Open WebUI: ${missing.map((c) => c.info.name).join(", ")}`);
+  } catch (e) {
+    log(`tool servers sync skipped: ${e}`);
+  } finally {
+    if (db) db.close();
+  }
+}
+
 function serviceEnv(svc) {
   const env = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -559,6 +588,7 @@ if (!app.requestSingleInstanceLock()) {
       const processes = processServices(servicesManifest);
       const ui = processes.find((s) => s.primaryUi) || processes[0];
       if (!ui) throw new Error("Нет primaryUi сервиса в services.json");
+      ensureToolServers(servicesManifest);
       // Все сервисы стартуют сразу, но окно ждёт только чат: агент и дашборд догружаются в фоне,
       // их состояние видно в верхней панели, а медленный старт одного не закрывает приложение.
       const waits = new Map(processes.map((svc) => [svc.id, startService(svc)]));

@@ -28,13 +28,12 @@ body { background:var(--bg); color:var(--text); min-height:100vh; }
 
 .sidebar { width:236px; background:var(--side); border-right:1px solid var(--border); padding:18px 0 14px;
   flex-shrink:0; display:flex; flex-direction:column; position:sticky; top:0; height:100vh; }
-.logo { display:flex; align-items:center; gap:11px; padding:0 16px 16px; border-bottom:1px solid var(--border); }
-.mark { position:relative; width:54px; height:54px; flex-shrink:0; }
-.mark img { width:54px; height:54px; border-radius:12px; object-fit:cover; display:block;
-  box-shadow:0 2px 6px var(--shadow), 0 0 0 1px var(--border-strong); }
-.logo .t2 { font-size:11.5px; color:var(--muted); font-weight:600; line-height:1.35; }
+.logo { display:flex; align-items:center; gap:10px; padding:0 16px 14px; border-bottom:1px solid var(--border); }
+.mark { width:34px; height:34px; flex-shrink:0; border-radius:9px; display:flex; align-items:center; justify-content:center;
+  background:var(--surface-2); border:1px solid var(--border-input); color:var(--accent); }
+.logo .t2 { font-size:14px; color:var(--text); font-weight:700; }
 .nav { padding:12px 8px; flex:1; }
-.nav .it { display:flex; align-items:center; gap:11px; padding:10px 14px; margin-bottom:2px;
+.nav .it { display:flex; align-items:center; gap:10px; padding:7px 12px; margin-bottom:2px;
   color:var(--muted); font-size:13.5px; border-radius:9px; cursor:pointer; border-left:3px solid transparent;
   border:none; background:transparent; width:100%; text-align:left; }
 .nav .it:hover { background:var(--hover); color:var(--text); }
@@ -47,10 +46,10 @@ body { background:var(--bg); color:var(--text); min-height:100vh; }
 
 .main { flex:1; padding:24px 28px; max-width:1560px; }
 .head { display:flex; justify-content:space-between; align-items:flex-start; gap:18px; margin-bottom:20px; flex-wrap:wrap; }
-.head h1 { font-size:25px; font-weight:800; }
+.head h1 { font-size:22px; font-weight:700; }
 .head .sub { font-size:13.5px; color:var(--muted); margin-top:5px; }
-.quick { display:flex; gap:10px; flex-wrap:wrap; }
-.qb { font-size:13px; padding:10px 16px; border-radius:11px; cursor:pointer; border:1px solid var(--border-input);
+.quick { display:flex; gap:8px; flex-wrap:wrap; }
+.qb { font-size:12.5px; padding:6px 12px; border-radius:8px; cursor:pointer; border:1px solid var(--border-input);
   background:var(--surface-2); color:var(--text); font-weight:600; display:flex; align-items:center; gap:7px; }
 .qb:hover { border-color:var(--accent); color:var(--accent); }
 .qb.orange { background:linear-gradient(135deg,#f59e0b,#f97316); border:none; color:#1a1200; }
@@ -104,7 +103,7 @@ body { background:var(--bg); color:var(--text); min-height:100vh; }
   outline:none; border-color:var(--accent); }
 .hint { font-size:12px; color:var(--muted-2); margin-top:8px; line-height:1.5; }
 .form-actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:6px; }
-.btn { font-size:13.5px; font-weight:700; padding:11px 20px; border-radius:11px; cursor:pointer; border:none; }
+.btn { font-size:13px; font-weight:600; padding:7px 14px; border-radius:8px; cursor:pointer; border:none; }
 .btn:disabled { opacity:.55; cursor:wait; }
 .btn.primary { background:var(--btn-bg); color:var(--btn-text); }
 .btn.secondary { background:var(--surface-2); border:1px solid var(--border-input); color:var(--text); }
@@ -186,7 +185,7 @@ a:hover { text-decoration:underline; }
 
 /* Действия внизу карточки закупки: корзина — мягкое удаление. */
 .drawer-actions { display:flex; justify-content:flex-end; margin-top:24px; padding-top:16px; border-top:1px solid var(--border-input); }
-.icon-btn { display:inline-flex; align-items:center; justify-content:center; width:42px; height:42px; border-radius:11px;
+.icon-btn { display:inline-flex; align-items:center; justify-content:center; width:34px; height:34px; border-radius:8px;
   cursor:pointer; background:transparent; border:1px solid var(--border-input); }
 .icon-btn.danger { color:#ef4444; border-color:rgba(239,68,68,.45); }
 .icon-btn.danger:hover { background:rgba(239,68,68,.12); }

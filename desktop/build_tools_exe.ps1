@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $Desktop = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Repo = Split-Path -Parent $Desktop
 $ToolsSrc = Join-Path $Repo "tools-server"
-$Venv = Join-Path $Desktop ".venv"
+$Venv = Join-Path $Desktop ".venv-tools"
 $Py = Join-Path $Venv "Scripts\python.exe"
 $Out = Join-Path $Desktop "dist"
 $Work = Join-Path $Desktop "build\tools"
@@ -11,16 +11,14 @@ $Work = Join-Path $Desktop "build\tools"
 Set-Location $Desktop
 
 if (-not (Test-Path $Py)) {
-  Write-Host "Creating desktop/.venv ..."
+  Write-Host "Creating desktop/.venv-tools ..."
   py -3.12 -m venv $Venv
-  if ($LASTEXITCODE -ne 0) {
-    python -m venv $Venv
-  }
+  if ($LASTEXITCODE -ne 0) { python -m venv $Venv }
   & $Py -m pip install --upgrade pip
-  & $Py -m pip install -r (Join-Path $ToolsSrc "requirements.txt")
-  # PDF/DOCX loaders (lazy-import in extract.py)
-  & $Py -m pip install "langchain-community>=0.3" "langchain-core>=0.3" pyinstaller
 }
+# Зависимости ставим при каждой сборке: requirements.txt мог измениться.
+& $Py -m pip install -r (Join-Path $ToolsSrc "requirements.txt") "langchain-community>=0.3" "langchain-core>=0.3" pyinstaller
+if ($LASTEXITCODE -ne 0) { Write-Error "pip install failed"; exit 1 }
 
 $env:DATA_ROOT = Join-Path $Desktop "data-build"
 New-Item -ItemType Directory -Force -Path $env:DATA_ROOT | Out-Null

@@ -65,6 +65,14 @@ class Settings:
     vision_enabled: bool = False
     vision_max_calls: int = 2
     vision_max_steps: int = 10
+    # Модели зрения (ai_vision): пусто — ai_vision берёт свои AV_* из окружения.
+    # Задаются из дашборда (вкладка «Агент», agent_settings.py).
+    vision_planner_base_url: str = ""
+    vision_planner_api_key: str = ""
+    vision_planner_model: str = ""
+    vision_tars_base_url: str = ""
+    vision_tars_api_key: str = ""
+    vision_tars_model: str = ""
     # Трейс прогона: data_dir/_agent/runs/… (см. observability/trace.py).
     trace_enabled: bool = True
     trace_screenshots: str = "errors"

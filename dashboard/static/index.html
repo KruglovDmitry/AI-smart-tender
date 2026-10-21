@@ -3,28 +3,33 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ТЕНАГ — Тендерный Агент | Dashboard</title>
-  <link rel="stylesheet" href="/static/styles.css?v=8">
+  <title>Тендерный агент — дашборд</title>
+  <script>
+    // Тема до отрисовки, чтобы не мигало: по умолчанию светлая.
+    try { document.documentElement.dataset.theme = localStorage.getItem("theme") || "light"; } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="/static/styles.css?v=12">
 </head>
 <body>
-<div class="bglogo"><img src="/static/logo.jpg" alt=""></div>
 <div class="app">
   <aside class="sidebar">
     <div class="logo">
-      <div class="mark"><img src="/static/logo.jpg" alt="ТЕНАГ"></div>
-      <div class="t2">ТЕНАГ<br>Тендерный агент</div>
+      <div class="mark" aria-hidden="true">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg>
+      </div>
+      <div class="t2">Тендерный агент</div>
     </div>
     <nav class="nav">
       <button type="button" class="it active" data-panel="dashboard">▦ Сводка</button>
       <button type="button" class="it" data-panel="tenders">📋 Закупки</button>
       <button type="button" class="it" data-panel="runs">🕘 Прогоны</button>
-      <button type="button" class="it" data-panel="methods">📈 Эффективность</button>
+      <button type="button" class="it" data-panel="methods">🤖 Агент</button>
       <button type="button" class="it" data-panel="run">▶ Поиск на площадке</button>
       <button type="button" class="it" data-panel="status">⚙ Статус системы</button>
     </nav>
-    <div class="user">
-      <div class="av">Т</div>
-      <div><div class="un">ТЕНАГ</div><div class="up">База закупок · v2</div></div>
+    <div class="theme-switch" role="group" aria-label="Тема">
+      <button type="button" data-theme-set="light">☀ Светлая</button>
+      <button type="button" data-theme-set="dark">☾ Тёмная</button>
     </div>
   </aside>
 
@@ -141,8 +146,13 @@
       </div>
     </section>
 
-    <!-- Эффективность -->
+    <!-- Агент: настройки и эффективность -->
     <section class="panel" id="panel-methods">
+      <div class="card" id="agent-settings-card">
+        <h3>Настройки агента <span class="sm">действуют со следующего поиска, перезапуск не нужен</span></h3>
+        <p class="hint" id="agent-settings-hint">Загрузка…</p>
+        <form id="agent-settings"></form>
+      </div>
       <div class="card">
         <form class="filters" id="methods-filters">
           <div class="field"><label for="m-days">Период</label>
@@ -174,6 +184,9 @@
               <option value="https://etpgpb.ru/">ЭТП ГПБ — etpgpb.ru</option>
               <option value="https://zakupki.mos.ru/purchase/list">Портал поставщиков — zakupki.mos.ru</option>
               <option value="https://www.b2b-center.ru/market/">B2B-Center — b2b-center.ru</option>
+              <option value="https://www.rts-tender.ru/">РТС-тендер — rts-tender.ru</option>
+              <option value="https://lot-online.ru/">lot-online (РАД) — lot-online.ru</option>
+              <option value="https://zakupki.rosatom.ru/">Росатом — zakupki.rosatom.ru</option>
               <option value="custom">Другая площадка…</option>
             </select>
           </div>
@@ -207,7 +220,7 @@
       </div>
     </section>
 
-    <footer>ТЕНАГ · Тендерный Агент · дашборд v2 · данные из базы tender-agent (Postgres)</footer>
+    <footer>Тендерный агент · данные из базы tender-agent</footer>
   </main>
 </div>
 
@@ -217,6 +230,6 @@
     <div id="drawer-content"></div>
   </div>
 </div>
-<script src="/static/app.js?v=8"></script>
+<script src="/static/app.js?v=12"></script>
 </body>
 </html>

@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $Desktop = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Repo = Split-Path -Parent $Desktop
 $DashSrc = Join-Path $Repo "dashboard"
-$Venv = Join-Path $Desktop ".venv"
+$Venv = Join-Path $Desktop ".venv-dashboard"
 $Py = Join-Path $Venv "Scripts\python.exe"
 $Out = Join-Path $Desktop "dist"
 $Work = Join-Path $Desktop "build\dashboard"
@@ -11,13 +11,14 @@ $Work = Join-Path $Desktop "build\dashboard"
 Set-Location $Desktop
 
 if (-not (Test-Path $Py)) {
-  Write-Host "Creating desktop/.venv ..."
+  Write-Host "Creating desktop/.venv-dashboard ..."
   py -3.12 -m venv $Venv
   if ($LASTEXITCODE -ne 0) { python -m venv $Venv }
   & $Py -m pip install --upgrade pip
-  & $Py -m pip install -r (Join-Path $DashSrc "requirements.txt")
-  & $Py -m pip install pyinstaller
 }
+# Зависимости ставим при каждой сборке: requirements.txt мог измениться.
+& $Py -m pip install -r (Join-Path $DashSrc "requirements.txt") pyinstaller
+if ($LASTEXITCODE -ne 0) { Write-Error "pip install failed"; exit 1 }
 
 Write-Host "Building Dashboard.exe (onedir)..."
 $prevEap = $ErrorActionPreference

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from ..agent.orchestrator import execute
+from ..agent_settings import apply_overrides
 from ..api.schemas import TaskResult
 from ..browser.runtime import BrowserRuntime
 from ..config import Settings
@@ -40,6 +41,8 @@ async def run_task(
 ) -> TaskResult:
     settings = settings or Settings.from_env()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
+    # Настройки из дашборда (вкладка «Агент») поверх окружения — читаются на каждое задание.
+    settings = apply_overrides(settings)
     repo = repo or Repository(settings.data_dir / "_agent" / "agent.sqlite3")
     if llm is None:
         client = OpenAICompatibleClient(settings)

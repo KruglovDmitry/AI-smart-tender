@@ -32,6 +32,7 @@ dist/
 
 # Desktop build artifacts
 desktop/.venv/
+desktop/.venv-*/
 desktop/build/
 desktop/dist/
 desktop/data-build/

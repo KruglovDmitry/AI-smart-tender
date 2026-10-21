@@ -41,13 +41,31 @@ def vision_goal(context: str, need: str) -> str:
     )
 
 
+def vision_available() -> bool:
+    try:
+        import ai_vision  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def configure_vision(av_settings, settings: Settings):
+    """Модели зрения из настроек агента (дашборд) поверх AV_* окружения ai_vision."""
+    av_settings.headless = settings.headless
+    for endpoint, prefix in ((av_settings.planner, "vision_planner"), (av_settings.tars, "vision_tars")):
+        for field in ("base_url", "api_key", "model"):
+            value = getattr(settings, f"{prefix}_{field}")
+            if value:
+                setattr(endpoint, field, value.rstrip("/") if field == "base_url" else value)
+    return av_settings
+
+
 async def run_vision_step(runtime: BrowserRuntime, settings: Settings, goal: str) -> VisionOutcome:
     try:
         from ai_vision import VisionAgent, load_settings
     except ImportError:
         return VisionOutcome(False, "ai_vision не установлен")
-    av_settings = load_settings()
-    av_settings.headless = settings.headless
+    av_settings = configure_vision(load_settings(), settings)
     trace = current_trace.get()
     if trace is not None:
         av_settings.runs_dir = trace.vision_dir()

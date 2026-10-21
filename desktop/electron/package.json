@@ -18,6 +18,9 @@
     },
     "files": [
       "main.js",
+      "preload.js",
+      "toolbar.html",
+      "toolbar.js",
       "package.json"
     ],
     "extraResources": [

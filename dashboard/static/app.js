@@ -7,7 +7,7 @@
     runs: ["Прогоны", "Когда, где и что искал агент"],
     run: ["Поиск на площадке", "Запуск tender-agent: результат сразу попадает в базу"],
     status: ["Статус системы", "Сервисы и база"],
-    methods: ["Эффективность", "Как часто срабатывают эвристики, модель, адреса площадок и зрение"],
+    methods: ["Агент", "Настройки tender-agent и как часто работают модель по DOM и зрение"],
   };
   const state = { offset: 0, total: 0 };
   // Поля, которые модель читает с карточки закупки (tenders.details).
@@ -21,6 +21,16 @@
     documents_access: "Доступ к документам",
   };
 
+  // ---------- тема ----------
+
+  function setTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem("theme", theme); } catch (e) { /* без localStorage тема живёт до перезагрузки */ }
+    document.querySelectorAll("[data-theme-set]").forEach((b) => b.classList.toggle("active", b.dataset.themeSet === theme));
+  }
+  document.querySelectorAll("[data-theme-set]").forEach((b) => b.addEventListener("click", () => setTheme(b.dataset.themeSet)));
+  setTheme(document.documentElement.dataset.theme || "light");
+
   // ---------- навигация ----------
 
   function showPanel(name) {
@@ -33,8 +43,121 @@
     $("#page-sub").textContent = t[1];
     if (name === "tenders") loadTenders();
     if (name === "runs") loadRuns();
-    if (name === "methods") loadMethods();
+    if (name === "methods") { loadAgentSettings(); loadMethods(); }
   }
+
+  // ---------- настройки агента (вкладка «Агент») ----------
+  // Владелец настроек — сам агент (/settings); дашборд их только показывает и меняет.
+  // Ключи приходят маской: пустое поле ключа при сохранении не меняет ключ.
+
+  const GROUPS = {
+    dom: ["Модель по DOM", "dom"],
+    vision: ["Зрение: VL-планировщик и UI-TARS", null],
+    browser: ["Браузер", null],
+    limits: ["Ограничения", null],
+  };
+  const SOURCES = { dashboard: "задано здесь", env: "из .env", default: "по умолчанию" };
+  let agentOptions = [];
+
+  function settingInput(o) {
+    const id = `as-${o.key}`;
+    const reset = o.source === "dashboard"
+      ? `<button type="button" class="link" data-reset="${o.key}" title="Вернуть значение из .env / по умолчанию">сбросить</button>` : "";
+    const source = `<span class="mu sm">${SOURCES[o.source] || o.source}</span> ${reset}`;
+    if (o.kind === "bool") {
+      return `<label class="check"><input type="checkbox" id="${id}" data-key="${o.key}" ${o.value ? "checked" : ""}> ${esc(o.label)}</label> ${source}`;
+    }
+    const type = o.kind === "secret" ? "password" : o.kind === "int" ? "number" : "text";
+    const value = o.kind === "secret" ? "" : esc(String(o.value ?? ""));
+    const placeholder = o.kind === "secret" ? (o.set ? `${o.value} — оставьте пустым, чтобы не менять` : "не задан") : "";
+    return `<div class="field"><label for="${id}">${esc(o.label)} ${source}</label>
+      <input type="${type}" id="${id}" data-key="${o.key}" value="${value}" placeholder="${esc(placeholder)}" autocomplete="off"></div>`;
+  }
+
+  function renderAgentSettings(data) {
+    agentOptions = data.options || [];
+    const blocks = Object.entries(GROUPS).map(([group, [title]]) => {
+      const items = agentOptions.filter((o) => o.group === group);
+      if (!items.length) return "";
+      const checks = group === "dom"
+        ? '<button type="button" class="btn secondary" data-check="dom">Проверить модель</button>'
+        : group === "vision"
+          ? '<button type="button" class="btn secondary" data-check="planner">Проверить VL</button> <button type="button" class="btn secondary" data-check="tars">Проверить UI-TARS</button>'
+          : "";
+      return `<fieldset class="settings-group"><legend>${title}</legend>${items.map(settingInput).join("")}
+        ${checks ? `<div class="form-actions">${checks} <span class="mu" id="check-${group}"></span></div>` : ""}</fieldset>`;
+    }).join("");
+    $("#agent-settings").innerHTML = blocks + `<div class="form-actions">
+        <button type="submit" class="btn primary">Сохранить</button> <span class="mu" id="agent-settings-saved"></span></div>`;
+    $("#agent-settings-hint").textContent = (data.vision_available ? "" :
+      "Внимание: библиотека зрения (ai_vision) не установлена в агенте — зрение работать не будет. ") +
+      `Файл настроек: ${data.path}`;
+  }
+
+  async function loadAgentSettings() {
+    try {
+      renderAgentSettings(await getJson("/api/agent/settings"));
+    } catch (e) {
+      $("#agent-settings-hint").textContent = `Агент недоступен: ${e.message}`;
+      $("#agent-settings").innerHTML = "";
+    }
+  }
+
+  async function saveAgentSettings(values) {
+    const r = await fetch("/api/agent/settings", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ values }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    renderAgentSettings(data);
+  }
+
+  $("#agent-settings").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const values = {};
+    for (const o of agentOptions) {
+      const input = document.getElementById(`as-${o.key}`);
+      if (!input) continue;
+      if (o.kind === "bool") {
+        if (input.checked !== Boolean(o.value)) values[o.key] = input.checked;
+      } else if (o.kind === "secret") {
+        if (input.value.trim()) values[o.key] = input.value.trim();
+      } else if (input.value.trim() !== String(o.value ?? "")) {
+        values[o.key] = o.kind === "int" ? Number(input.value) : input.value.trim();
+      }
+    }
+    try {
+      if (Object.keys(values).length) await saveAgentSettings(values);
+      $("#agent-settings-saved").textContent = Object.keys(values).length ? "Сохранено" : "Изменений нет";
+    } catch (e) {
+      $("#agent-settings-saved").textContent = `Ошибка: ${e.message}`;
+    }
+  });
+
+  $("#agent-settings").addEventListener("click", async (ev) => {
+    const reset = ev.target.closest("[data-reset]");
+    if (reset) {
+      try { await saveAgentSettings({ [reset.dataset.reset]: null }); } catch (e) { alert(e.message); }
+      return;
+    }
+    const check = ev.target.closest("[data-check]");
+    if (!check) return;
+    const out = $(check.dataset.check === "dom" ? "#check-dom" : "#check-vision");
+    out.textContent = "Проверяю…";
+    check.disabled = true;
+    try {
+      const r = await fetch("/api/agent/settings/check", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target: check.dataset.check }),
+      });
+      const data = await r.json();
+      out.textContent = `${check.textContent.replace("Проверить ", "")}: ${data.ok ? "✓ " : "✗ "}${data.detail || ""}`;
+    } catch (e) {
+      out.textContent = `Ошибка: ${e.message}`;
+    } finally {
+      check.disabled = false;
+    }
+  });
 
   document.querySelectorAll(".nav .it").forEach((btn) =>
     btn.addEventListener("click", () => showPanel(btn.dataset.panel))

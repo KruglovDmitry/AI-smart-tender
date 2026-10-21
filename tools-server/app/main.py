@@ -133,7 +133,7 @@ def _public_base(request: Request) -> str:
     return str(request.base_url).rstrip("/")
 
 
-@app.get("/health", summary="Health check")
+@app.get("/health", summary="Health check", include_in_schema=False)
 def health():
     return {"status": "ok", "data_root": str(config.DATA_ROOT)}
 

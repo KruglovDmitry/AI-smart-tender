@@ -94,7 +94,7 @@ def create_schema() -> None:
         print(f"Tender DB not ready: {exc}")
 
 
-@app.get("/health", summary="Health check")
+@app.get("/health", summary="Health check", include_in_schema=False)
 def health():
     settings = apply_overrides(_settings())
     ready = bool(settings.llm_base_url and settings.llm_api_key and settings.llm_model)

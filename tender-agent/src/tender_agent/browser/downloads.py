@@ -43,6 +43,21 @@ def safe_destination(root: Path, name: str) -> Path:
     return dest
 
 
+def write_unique(root: Path, name: str, body: bytes) -> Path:
+    """Записывает файл, не затирая другой с тем же именем: у закупки бывает несколько разных «НМЦК».
+    Тот же файл (повторный прогон) не дублируется — возвращается уже лежащий."""
+    dest = safe_destination(root, name)
+    stem, suffix = dest.stem, dest.suffix
+    number = 1
+    while dest.exists():
+        if dest.is_file() and dest.read_bytes() == body:
+            return dest
+        number += 1
+        dest = safe_destination(root, f"{stem}_{number}{suffix}")
+    dest.write_bytes(body)
+    return dest
+
+
 def verify_download(path: Path, root: Path, max_bytes: int) -> tuple[bool, str]:
     if not path.is_file():
         return False, "Файл не появился на диске."
@@ -135,8 +150,7 @@ async def _save_from_url(
         return _failed(source, tender_url, "По ссылке страница, а не файл.")
     if len(body) > settings.max_download_bytes:
         return _failed(source, tender_url, "Файл больше разрешённого размера.")
-    target = safe_destination(runtime.downloads_dir, _filename(header, final))
-    target.write_bytes(body)
+    target = write_unique(runtime.downloads_dir, _filename(header, final), body)
     passed, detail = verify_download(target, runtime.downloads_dir, settings.max_download_bytes)
     if not passed:
         target.unlink(missing_ok=True)
@@ -236,8 +250,13 @@ async def download_file(
                 if not await wait_download(dialog_page, 15):
                     return _failed(source, tender_url, "После «Скачать» загрузка не началась.")
         download = downloads[0]
-        target = safe_destination(runtime.downloads_dir, fix_mojibake(download.suggested_filename or "file"))
-        await download.save_as(str(target))
+        partial = safe_destination(runtime.downloads_dir, f".partial-{id(download)}")
+        await download.save_as(str(partial))
+        try:
+            target = write_unique(runtime.downloads_dir, fix_mojibake(download.suggested_filename or "file"),
+                                  partial.read_bytes())
+        finally:
+            partial.unlink(missing_ok=True)
     except PlaywrightTimeout as exc:
         return _failed(source, tender_url, f"Браузер не начал загрузку: {str(exc).splitlines()[0][:200]}")
     except Exception as exc:

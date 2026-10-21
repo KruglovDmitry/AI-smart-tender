@@ -69,3 +69,13 @@ def test_logs_redact_secrets(caplog: pytest.LogCaptureFixture) -> None:
 def test_llm_is_optional() -> None:
     client = OpenAICompatibleClient(Settings())
     assert client.configured is False
+
+
+def test_write_unique_keeps_different_files_with_same_name(tmp_path):
+    from tender_agent.browser.downloads import write_unique
+
+    first = write_unique(tmp_path, "НМЦК.xls", b"one")
+    second = write_unique(tmp_path, "НМЦК.xls", b"two")
+    again = write_unique(tmp_path, "НМЦК.xls", b"one")  # повторный прогон не плодит копии
+    assert first.name == "НМЦК.xls" and second.name == "НМЦК_2.xls" and again == first
+    assert sorted(p.read_bytes() for p in tmp_path.iterdir()) == [b"one", b"two"]

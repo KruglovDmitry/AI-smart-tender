@@ -35,7 +35,10 @@ _FETCH_JS = """async (url) => {
 
 def safe_destination(root: Path, name: str) -> Path:
     cleaned = re.sub(r"[^\w.\- ]+", "_", name, flags=re.UNICODE).strip(" .") or "file"
-    cleaned = cleaned[:140]
+    if len(cleaned) > 140:
+        # Обрезаем имя, а не расширение: без него файл не открыть.
+        stem, dot, ext = cleaned.rpartition(".")
+        cleaned = stem[: 140 - len(ext) - 1] + "." + ext if dot and len(ext) <= 8 else cleaned[:140]
     root.mkdir(parents=True, exist_ok=True)
     dest = (root / cleaned).resolve()
     if not dest.is_relative_to(root.resolve()):
@@ -98,7 +101,8 @@ def _filename(disposition: str, url: str) -> str:
     matched = re.search(r"filename\s*=\s*\"?([^\";]+)\"?", disposition, re.I)
     if matched:
         return fix_mojibake(unquote(matched.group(1).strip()))
-    return fix_mojibake(Path(urlparse(url).path).name) or "file"
+    # Имя из адреса раскодируем: ТЭК-Торг отдаёт файл по .../name/%D0%9F%D1%80... без Content-Disposition.
+    return fix_mojibake(unquote(Path(urlparse(url).path).name)) or "file"
 
 
 def _failed(source: str, tender_url: str | None, detail: str) -> DownloadRecord:

@@ -133,7 +133,7 @@ async def execute(
         progress.mark("list", "llm", bool(reading.accepted))
         rejected = ", ".join(f"{reason}: {count}" for reason, count in reading.rejected.items())
         stale = ""
-        if task.sort_by and reading.found and unique() == before and reading.rejected.get("приём заявок закончен"):
+        if site_sorted and reading.found and unique() == before and reading.rejected.get("приём заявок закончен"):
             # Выдача по дате, а новых подходящих нет и попадаются закрытые: дальше только старее.
             stale = ("; подходящих новых записей нет, а закрытые уже пошли — дальше по дате только более старые "
                      "закупки: если выдача отсортирована по дате, заверши (done)")

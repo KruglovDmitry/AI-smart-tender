@@ -30,6 +30,7 @@ from .vision import VisionOutcome, run_vision_step, vision_goal
 
 PAGE_TEXT_FOR_MODEL = 6_000
 HISTORY_FOR_MODEL = 12
+REPEAT_WINDOW, REPEAT_LIMIT = 4, 3  # 3 одинаковых действия из последних 4 — цикл
 TOOLS = {"click", "fill", "scroll", "go_back", "goto", "extract", "done", "ask_user", "vision"}
 
 
@@ -117,6 +118,7 @@ class Loop:
 
     async def run(self, goal: Goal) -> LoopResult:
         history: list[str] = []
+        repeated: list[str] = []  # подписи действий: одинаковые подряд — цикл
         unchanged = 0
         model_failures = 0
         obs = await self.observe()
@@ -170,6 +172,7 @@ class Loop:
             after, note, moved = await self._act(tool, decision, obs, goal)
             unchanged = 0 if moved else unchanged + 1
             history.append(f"{step}. {note}")
+            repeated.append(re.sub(r"\[\d+\] ", "", _label(tool, decision, _element(obs, decision.get("ref")))))
             record.update({"note": note, "changed": moved})
             await self._log(record, obs, error=not moved and tool not in {"extract", "fill"})
             obs = after
@@ -181,6 +184,17 @@ class Loop:
                 await self._log({"phase": self.phase, "step": step, "url": obs.url, "auto_vision": True,
                                  "note": note, "changed": moved}, obs)
                 unchanged = 0
+            elif tool not in {"extract", "scroll"} and repeated[-REPEAT_WINDOW:].count(repeated[-1]) >= REPEAT_LIMIT:
+                # Одно и то же действие снова и снова, хотя страница каждый раз «меняется» (Росэлторг без
+                # зрения 16 раз открывал и закрывал «По умолчанию»): это цикл, а не продвижение.
+                repeated.clear()
+                need = f"Действие «{note.split(' → ')[0]}» повторено {REPEAT_LIMIT} раза без продвижения к цели"
+                if self.vision_ready():
+                    obs, vnote, _moved = await self._vision(goal, need, obs)
+                    history.append(f"{step}. {vnote}")
+                else:
+                    history.append(f"{step}. {need}. Смени способ: другой элемент, адрес с нужными параметрами "
+                                   "(goto) или продолжай без этого шага (например, extract без сортировки).")
         return LoopResult("actions", "Исчерпан лимит шагов.", last_obs=obs, history=history)
 
     async def _act(self, tool: str, decision: dict, obs: Observation, goal: Goal) -> tuple[Observation, str, bool]:

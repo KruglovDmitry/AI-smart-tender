@@ -34,9 +34,12 @@ def list_goal_text(task, keyword: str) -> str:
     sort = (" Отсортируй выдачу по дате публикации или размещения, сначала новые, и проверь по датам первых "
             "записей, что сверху действительно самые новые; если нет — поменяй направление сортировки."
             if task.sort_by else "")
+    active = (" Нужны только актуальные закупки, по которым идёт приём заявок: если у поиска есть фильтр по "
+              "статусу («приём заявок», «активные», «актуальные») — включи его; завершённые и отменённые не нужны."
+              if task.active_only else "")
     return (
         f"На площадке {task.url} найди закупки по запросу «{keyword}» через поиск площадки. Вводи запрос дословно, "
-        f"не меняй слово и не подбирай синонимы.{sort} "
+        f"не меняй слово и не подбирай синонимы.{sort}{active} "
         f"Когда на экране выдача по запросу{' в нужном порядке' if task.sort_by else ''} — вызови extract. "
         f"Нужно {task.limit} записей: если после extract их меньше, перейди на следующую страницу выдачи "
         f"(или нажми «Показать ещё») и снова вызови extract, но не дальше {task.max_pages} страниц. "
@@ -101,7 +104,8 @@ async def execute(
         nonlocal site_sorted
         progress.llm_calls += 1
         try:
-            reading = await read_results(llm, obs, keyword=keyword, sort_required=bool(task.sort_by))
+            reading = await read_results(llm, obs, keyword=keyword, sort_required=bool(task.sort_by),
+                                         active_only=task.active_only)
         except Exception as exc:
             progress.mark("list", "llm", False)
             errors.append(f"Модель не прочитала выдачу: {type(exc).__name__}: {exc}")

@@ -17,6 +17,8 @@ class TaskSpec(BaseModel):
     sort_by: Literal["published_at"] | None = None
     filters: dict[str, str] = Field(default_factory=dict)
     download_documents: bool = False
+    # Только закупки, по которым ещё идёт приём заявок; архив — если о нём попросили явно.
+    active_only: bool = True
     max_pages: int = 5
     max_actions: int = 40
     timeout_seconds: int = 300

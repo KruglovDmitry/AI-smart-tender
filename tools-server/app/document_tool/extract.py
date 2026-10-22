@@ -53,8 +53,49 @@ def _detect_encoding(path: Path) -> str:
     return "latin-1"
 
 
+def _doc_text_ole(path: Path) -> str:
+    """Текст из Word 97–2003 (.doc) без внешних программ: таблица кусков (piece table) из потока
+    WordDocument и потока 0Table/1Table. Нужен в desktop-версии под Windows, где нет antiword/catdoc."""
+    import struct
+
+    import olefile
+
+    with olefile.OleFileIO(str(path)) as ole:
+        word = ole.openstream("WordDocument").read()
+        flags = struct.unpack_from("<H", word, 0x0A)[0]
+        table_name = "1Table" if flags & 0x0200 else "0Table"
+        if not ole.exists(table_name):
+            raise ValueError(f"нет потока {table_name}")
+        table = ole.openstream(table_name).read()
+    fc_clx, lcb_clx = struct.unpack_from("<II", word, 0x01A2)
+    clx = table[fc_clx:fc_clx + lcb_clx]
+    pos = 0
+    while pos < len(clx) and clx[pos] == 0x01:  # Prc — форматирование, пропускаем
+        pos += 3 + struct.unpack_from("<H", clx, pos + 1)[0]
+    if pos >= len(clx) or clx[pos] != 0x02:
+        raise ValueError("не найдена таблица кусков текста")
+    size = struct.unpack_from("<I", clx, pos + 1)[0]
+    plc = clx[pos + 5:pos + 5 + size]
+    count = (size - 4) // 12
+    cps = struct.unpack_from(f"<{count + 1}I", plc, 0)
+    parts: list[str] = []
+    for i in range(count):
+        fc = struct.unpack_from("<I", plc, (count + 1) * 4 + i * 8 + 2)[0]
+        length = cps[i + 1] - cps[i]
+        if fc & 0x40000000:  # 8-битный текст (cp1252)
+            start = (fc & ~0x40000000) // 2
+            parts.append(word[start:start + length].decode("cp1252", errors="replace"))
+        else:
+            parts.append(word[fc:fc + 2 * length].decode("utf-16-le", errors="replace"))
+    text = "".join(parts)
+    # Служебные символы Word: конец абзаца/ячейки → перенос строки, поля и объекты — убрать.
+    text = text.replace(chr(13), chr(10)).replace(chr(7), chr(9)).replace(chr(11), chr(10)).replace(chr(12), chr(10))
+    text = "".join(ch for ch in text if ch in (chr(10), chr(9)) or ch >= " ")
+    return text
+
+
 def _extract_legacy_doc(path: Path) -> str:
-    """Extract text from legacy .doc via antiword/catdoc (installed in image)."""
+    """Extract text from legacy .doc via antiword/catdoc (installed in image), else a built-in reader."""
     import shutil
     import subprocess
 
@@ -86,6 +127,13 @@ def _extract_legacy_doc(path: Path) -> str:
         except Exception as e:  # noqa: BLE001
             errors.append(f"{binary}: {e}")
 
+    try:
+        text = _doc_text_ole(path)
+        if text.strip():
+            return text
+        errors.append("built-in reader: empty text")
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"built-in reader: {e}")
     raise ValueError(
         "Cannot read legacy .doc ("
         + "; ".join(errors[:4])

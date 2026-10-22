@@ -73,6 +73,7 @@ class Settings:
     vision_tars_base_url: str = ""
     vision_tars_api_key: str = ""
     vision_tars_model: str = ""
+    vision_fallback_model: str = ""  # запасная модель координат на ключе планировщика; «-» — выключить
     # Трейс прогона: data_dir/_agent/runs/… (см. observability/trace.py).
     trace_enabled: bool = True
     trace_screenshots: str = "errors"

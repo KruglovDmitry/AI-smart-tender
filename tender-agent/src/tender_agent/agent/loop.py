@@ -94,6 +94,10 @@ class Loop:
         return True
 
     async def observe(self) -> Observation:
+        if self.runtime.current_page.url not in self.progress.visited:
+            # Новая страница: дождаться, пока затихнет сеть. Портал поставщиков, Сбер-АСТ, ТЭК-Торг первые
+            # секунды показывают заглушку («Войти», шапка и подвал), и модель делала вывод «нужен вход».
+            await actions.settle(self.runtime, timeout_ms=4_000)
         # page.evaluate сам по себе не ограничен по времени: зависшая страница не должна держать задание.
         obs = await asyncio.wait_for(get_page_state(self.runtime), timeout=45)
         for _ in range(6):

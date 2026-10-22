@@ -27,6 +27,7 @@ class ResultsReading:
     # (запись без адреса, элемент). Адрес карточки узнаётся кликом — agent/resolve.py.
     pending: list[tuple[TenderResult, Element]] = field(default_factory=list)
     rejected: dict[str, int] = field(default_factory=dict)  # причина → сколько
+    numbers: list[str] = field(default_factory=list)  # номера всех записей, что назвала модель
 
     def reject(self, reason: str) -> None:
         self.rejected[reason] = self.rejected.get(reason, 0) + 1
@@ -53,6 +54,8 @@ def accept_records(obs: Observation, data: dict, *, keyword: str, sort_required:
         if not isinstance(item, dict):
             continue
         reading.found += 1
+        if item.get("number"):
+            reading.numbers.append(str(item["number"]).strip())
         title = str(item.get("title") or "").strip()
         if not title or _norm(title) not in page:
             reading.reject("название не найдено на странице")
@@ -137,9 +140,11 @@ def split_lot(number: str | None) -> tuple[str | None, str]:
 
 
 async def read_results(llm: LLMClient, obs: Observation, *, keyword: str, sort_required: bool,
-                       active_only: bool = False) -> ResultsReading:
+                       active_only: bool = False, skip: list[str] | None = None) -> ResultsReading:
+    # skip — номера уже прочитанных записей: после «Показать ещё» страница растёт (10 → 40 записей),
+    # и без него модель каждый раз переписывает всю выдачу заново (до двух минут на ответ).
     data = await llm.read_results(
-        {"keyword": keyword},
+        {"keyword": keyword, "skip": (skip or [])[-300:]},
         {"url": obs.url, "title": obs.title, "text": obs.text[:RESULTS_TEXT_FOR_MODEL], "links": links_for_model(obs)},
     )
     return accept_records(obs, data, keyword=keyword, sort_required=sort_required, active_only=active_only)

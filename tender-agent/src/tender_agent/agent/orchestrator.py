@@ -94,6 +94,7 @@ async def execute(
 
     keyword = task.keywords[0]
     collected: list[TenderResult] = []
+    seen_numbers: list[str] = []  # все номера, что уже прочитала модель (и отклонённые тоже)
     pages_read: list[str] = []
     site_sorted = False
 
@@ -105,7 +106,7 @@ async def execute(
         progress.llm_calls += 1
         try:
             reading = await read_results(llm, obs, keyword=keyword, sort_required=bool(task.sort_by),
-                                         active_only=task.active_only)
+                                         active_only=task.active_only, skip=seen_numbers)
         except Exception as exc:
             progress.mark("list", "llm", False)
             errors.append(f"Модель не прочитала выдачу: {type(exc).__name__}: {exc}")
@@ -120,15 +121,21 @@ async def execute(
             progress.actions += 2 * len(resolved)
             reading.accepted.extend(resolved)
         collected.extend(reading.accepted)
+        seen_numbers.extend(n for n in reading.numbers if n not in seen_numbers)
         if obs.signature not in pages_read:
             pages_read.append(obs.signature)
         if len(pages_read) == 1 and _descending(reading.accepted):
             site_sorted = True  # даты первой страницы идут по убыванию — порядок задал сайт
         progress.mark("list", "llm", bool(reading.accepted))
         rejected = ", ".join(f"{reason}: {count}" for reason, count in reading.rejected.items())
+        stale = ""
+        if task.sort_by and reading.found and unique() == before and reading.rejected.get("приём заявок закончен"):
+            # Выдача по дате, а новых подходящих нет и попадаются закрытые: дальше только старее.
+            stale = ("; подходящих новых записей нет, а закрытые уже пошли — дальше по дате только более старые "
+                     "закупки: если выдача отсортирована по дате, заверши (done)")
         return (f"extract → записей на странице {reading.found}, принято {len(reading.accepted)}"
                 f"{f' (отклонено — {rejected})' if rejected else ''}, новых {unique() - before}, всего {unique()}"
-                f"{f'; {resolve_note}' if resolve_note else ''}")
+                f"{f'; {resolve_note}' if resolve_note else ''}{stale}")
 
     def progress_line() -> str:
         return f"Прочитано записей: {unique()} из {task.limit}; страниц выдачи прочитано: {len(pages_read)}."

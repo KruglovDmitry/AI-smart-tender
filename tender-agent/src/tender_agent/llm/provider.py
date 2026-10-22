@@ -56,6 +56,7 @@ _RESULTS_SYSTEM = (
     "бери ссылку этой площадки; если ссылки у записи нет совсем, а в links есть её строка без href "
     "(кликабельная строка таблицы) — укажи её номер. "
     "Не включай меню, фильтры, рекламу и блоки «похожие», «популярные», «вы смотрели». Если поля нет — null. "
+    "Записи, номера которых есть в skip, уже прочитаны — не возвращай их. "
     'Верни только JSON: {"records":[{"link_ref":number|null,"title":string,"number":string|null,"lot":string|null,'
     '"customer":string|null,"published":string|null,"deadline":string|null,"price":string|null,'
     '"status":string|null,"relevant":boolean}]}. Каждая цитата — подстрока текста страницы.'

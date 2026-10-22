@@ -18,6 +18,7 @@ from typing import Awaitable, Callable
 from urllib.parse import urlparse
 
 from ..api.schemas import TaskSpec
+from ..browser.navigation import same_site, task_host
 from ..browser.runtime import BrowserRuntime
 from ..browser.snapshot import get_page_state, page_changed
 from ..config import Settings
@@ -78,6 +79,9 @@ class Loop:
     # Последний отправленный поиск: (поле, текст, адрес после отправки). По нему выдачу можно вернуть,
     # если сайт сбросил её после перехода в карточку и назад (Росатом) — см. restore_search.
     last_search: tuple[Element, str, str] | None = None
+    # Карточка: можно перейти на другой сайт, но только по ссылке, которая есть на странице
+    # (B2B-Center → market.otc.ru, агрегатор → площадка-источник). Адрес, придуманный моделью, — нельзя.
+    follow_links: bool = False
 
     async def restore_search(self) -> bool:
         """Повторить последний поиск: поле ищется по подсказке или имени — номера после перерисовки другие."""
@@ -214,9 +218,10 @@ class Loop:
         label = _label(tool, decision, element)
         if tool in {"click", "fill"} and element is None:
             return obs, f"{label}: элемента с таким ref нет на странице", False
+        host = self._link_host(tool, decision, element, obs)
         try:
             if tool == "click":
-                await actions.click(self.runtime, element.ref, self.host)
+                await actions.click(self.runtime, element.ref, host)
             elif tool == "fill":
                 await actions.fill(self.runtime, element.ref, str(decision.get("text") or ""),
                                    bool(decision.get("submit")), self.host)
@@ -227,7 +232,7 @@ class Loop:
             elif tool == "go_back":
                 await actions.back(self.runtime)
             elif tool == "goto":
-                await actions.goto(self.runtime, str(decision.get("url") or ""), self.settings, self.host)
+                await actions.goto(self.runtime, str(decision.get("url") or ""), self.settings, host)
                 await actions.settle(self.runtime)
         except Exception as exc:
             self.progress.actions += 1
@@ -235,12 +240,26 @@ class Loop:
             after = await self.observe()
             return after, f"{label} → ошибка: {action_error(exc)}", page_changed(obs, after)
         self.progress.actions += 1
+        if host != self.host and same_site(self.runtime.current_page.url, host):
+            self.host = host  # дальше работаем на площадке-источнике
         after = await self.observe()
         moved = page_changed(obs, after) or (tool == "scroll" and after.scroll.get("y") != obs.scroll.get("y"))
         if tool == "fill" and not decision.get("submit"):
             moved = True  # ввод без отправки меняет только поле
         self.progress.mark("navigate", "llm", moved)
         return after, f"{label} → {_outcome(obs, after, moved)}", moved
+
+    def _link_host(self, tool: str, decision: dict, element: Element | None, obs: Observation) -> str:
+        """Хост, на котором должно оказаться действие. Чужой — только по ссылке со страницы карточки."""
+        if not self.follow_links:
+            return self.host
+        target = element.href if tool == "click" and element is not None else None
+        if tool == "goto":
+            url = str(decision.get("url") or "")
+            target = url if any(el.href == url for el in obs.elements) else None
+        if target and not same_site(target, self.host):
+            return task_host(target)
+        return self.host
 
     async def _vision(self, goal: Goal, need: str, obs: Observation) -> tuple[Observation, str, bool]:
         self.vision_used += 1

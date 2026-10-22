@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from urllib.parse import urldefrag
 
 from ..api.schemas import TenderResult
 from ..llm.base import LLMClient
@@ -115,6 +116,11 @@ def accept_card(tender: TenderResult, obs: Observation, data: dict) -> CardReadi
         except (TypeError, ValueError):
             el = None
         if el is None:
+            reading.rejected += 1
+            continue
+        if el.href and urldefrag(el.href)[0] == urldefrag(obs.url)[0]:
+            # Ссылка «#» на эту же страницу — не файл: так площадки рисуют закрытый документ
+            # (РосТендер: «1 файл» до регистрации). Скачивать нечего.
             reading.rejected += 1
             continue
         name = (str(item.get("name") or "").strip() if isinstance(item, dict) else "") or el.name

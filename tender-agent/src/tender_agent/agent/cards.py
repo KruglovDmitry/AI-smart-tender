@@ -57,8 +57,25 @@ def card_goal_text(tender: TenderResult) -> str:
         "прокрути или подожди и прочитай снова. ask_user с пояснением «нужен вход» — только если на странице "
         "форма входа или прямо написано, что документы (или карточка) доступны после входа или регистрации; "
         "входить не нужно, искать обходные пути тоже. "
+        "Если документы опубликованы на другой площадке и на карточке есть ссылка на неё (закупка №…, "
+        "«перейти на площадку», «источник») — перейди по этой ссылке и найди документы там. "
+        "Если сайт пишет, что открыто слишком много вкладок или окон, — сразу ask_user с этим текстом. "
         "Когда поля прочитаны и документы найдены (или на карточке их точно нет) — done."
     )
+
+
+_CAPTCHA = re.compile(r"captcha|капч|антибот|не робот|дополнительн\w* проверк|проверк\w* (человек|браузер)", re.I)
+_TAB_LIMIT = re.compile(r"(превыш|слишком много|максимальн).{0,60}(вклад|окон|окн|сесси)", re.I)
+
+
+def blocked_kind(note: str, obs: Observation | None) -> str:
+    """Почему карточка остановилась на «нужен человек»: вход, CAPTCHA или лимит вкладок площадки."""
+    text = f"{note or ''} {(obs.text if obs else '')[:3000]}"
+    if obs is not None and obs.page_kind == "captcha" or _CAPTCHA.search(note or ""):
+        return "captcha"
+    if _TAB_LIMIT.search(text):
+        return "tab_limit"
+    return "login"
 
 
 class CardReader:
@@ -77,8 +94,11 @@ class CardReader:
 
     async def read_all(self, tenders: list[TenderResult]) -> list[TenderResult]:
         done = await self._read_many(tenders, CARD_CONCURRENCY)
-        failed = {"error", "needs_user"}
-        if len(done) >= 2 and all(outcome in failed for _, outcome in done):
+        failed = {"error", "tab_limit", "login", "captcha", "needs_user"}
+        outcomes = [outcome for _, outcome in done]
+        # Вход и CAPTCHA — настоящие ограничения (РосТендер), повтор их не снимет; перечитываем, только
+        # если есть ошибки или прямое сообщение о лимите вкладок.
+        if len(done) >= 2 and all(o in failed for o in outcomes) and any(o in {"error", "tab_limit"} for o in outcomes):
             # Все карточки разом упали — похоже на лимит площадки на число вкладок одной сессии
             # (Росатом: «Превышено максимальное количество одновременно открытых вкладок»).
             # Перечитываем по одной; первая попытка в учёт не идёт.
@@ -171,7 +191,8 @@ class CardReader:
         loop = Loop(runtime=tab, settings=self.settings, task=self.task, llm=self.llm, host=card_host,
                     progress=self.progress, errors=self.errors,
                     deadline=time.monotonic() + self.settings.card_timeout_seconds, phase="card",
-                    max_steps=self.settings.card_max_steps, vision_limit=1, vision_extends_deadline=False)
+                    max_steps=self.settings.card_max_steps, vision_limit=1, vision_extends_deadline=False,
+                    follow_links=True)
         outcome = await loop.run(Goal(
             text=card_goal_text(tender), extract=extract, status=status,
             context=f"карточка закупки «{(tender.title or '')[:120]}» на {card_host}", extract_first=True,
@@ -179,11 +200,17 @@ class CardReader:
                 "Найди на этой карточке документы закупки (файлы документации, извещение, проект контракта) "
                 "и сделай их видимыми: открой вкладку или раскрой блок с документами"),
         ))
-        self.outcomes[outcome.outcome] += 1
-        if outcome.outcome == "needs_user":
-            # Документы за входом в личный кабинет: закупка остаётся в ответе, в карточке — пометка.
-            state["tender"].details["documents_access"] = (outcome.note or "только после входа в личный кабинет")[:300]
-        return state["tender"], outcome.outcome
+        if loop.host != card_host:
+            state["tender"].details["source"] = loop.host.removeprefix("www.")  # документы — на площадке-источнике
+        result = outcome.outcome
+        if result == "needs_user":
+            result = blocked_kind(outcome.note, outcome.last_obs)
+            if result in {"login", "captcha"}:
+                # Документы за входом или за проверкой «я не робот»: закупка остаётся в ответе, в карточке — пометка.
+                state["tender"].details["documents_access"] = (outcome.note or "только после входа в личный кабинет")[:300]
+                state["tender"].details["access_block"] = result
+        self.outcomes[result] += 1
+        return state["tender"], result
 
     async def _download(self, tab: _TabRuntime, obs: Observation, refs: list[int], tender_url: str | None) -> str:
         saved = 0

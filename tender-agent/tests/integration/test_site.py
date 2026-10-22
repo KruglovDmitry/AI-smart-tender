@@ -203,6 +203,15 @@ async def _scenarios(tmp_path: Path) -> None:
         assert runtime.current_page.url == "https://tenders.example.test/tenders/777"
         assert len(runtime.context.pages) == tabs
 
+        # Переключатель со спрятанным input: в снимке — подпись с ролью radio и пометкой выбранного.
+        await runtime.current_page.goto("https://tenders.example.test/toggles")
+        lines = page_for_model(await get_page_state(runtime))["elements"]
+        assert any("radio «По умолчанию» (выбрано)" in line for line in lines), lines
+        down = _ref({"elements": lines}, r"radio «Дата публикации \(по убыванию\)»")
+        await click_element(runtime, down)
+        lines = page_for_model(await get_page_state(runtime))["elements"]
+        assert any("по убыванию)» (выбрано)" in line for line in lines), lines
+
 
 def test_loop_on_fixture_site(tmp_path: Path) -> None:
     asyncio.run(_scenarios(tmp_path))

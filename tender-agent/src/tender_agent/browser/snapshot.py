@@ -61,6 +61,18 @@ _SNAPSHOT_JS = """() => {
   }
   const custom = new Set(candidates.filter(el => !candidates.some(other => other !== el && el.contains(other))));
   custom.forEach(el => tagged.add(el));
+  // Переключатели со спрятанным input (сортировка Росэлторга: label > input[type=radio] невидимый + текст):
+  // сам input не виден и не попадает в снимок, поэтому кликать нужно по подписи.
+  const toggles = new Map();
+  for (const label of document.querySelectorAll('label')) {
+    const input = label.querySelector('input[type=radio], input[type=checkbox]')
+      || (label.htmlFor && document.getElementById(label.htmlFor));
+    if (!input || !/^(radio|checkbox)$/.test(input.type) || visible(input) || !visible(label)) continue;
+    if (insideControl(label) || !clean(label.innerText)) continue;
+    [...label.querySelectorAll('*')].forEach(child => { tagged.delete(child); custom.delete(child); });
+    tagged.add(label);
+    toggles.set(label, input);
+  }
   // Ссылки на файлы в свёрнутых блоках («Приложения к извещению» на Росэлторге): их не видно,
   // но скачать по адресу можно и не раскрывая блок. Модель видит их с пометкой «скрыт».
   const fileHref = /\\.(pdf|docx?|xlsx?|zip|rar|7z|rtf|odt|ods)(\\?|$)|filestore|\\/download|\\/documents?\\/|attachment|getfile|file\\.html\\?uid=/i;
@@ -78,6 +90,7 @@ _SNAPSHOT_JS = """() => {
       if (value && !(name === 'type' && /^(INPUT|BUTTON)$/.test(el.tagName))) marks.push(name + '=' + value);
     }
     if (hidden.has(el)) marks.unshift('скрыт');
+    if (toggles.has(el) && toggles.get(el).checked) marks.unshift('выбрано');
     return marks.join(' ').slice(0, 120);
   };
   const nodes = [...tagged].sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1);
@@ -88,7 +101,7 @@ _SNAPSHOT_JS = """() => {
     return {
       ref,
       tag,
-      role: el.getAttribute('role') || (custom.has(el) ? 'clickable' : ''),
+      role: el.getAttribute('role') || (toggles.has(el) ? toggles.get(el).type : (custom.has(el) ? 'clickable' : '')),
       name: nameOf(el),
       href: tag === 'a' ? hrefOf(el) : null,
       placeholder: el.getAttribute('placeholder'),

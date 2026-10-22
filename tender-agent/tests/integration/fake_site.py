@@ -26,6 +26,7 @@ _PAGES = {
     "/dialog": "download_dialog.html",
     "/rows": "rows_table.html",
     "/popup": "popup.html",
+    "/toggles": "toggles.html",
 }
 
 

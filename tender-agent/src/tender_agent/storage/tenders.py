@@ -133,6 +133,10 @@ def _norm(text: str | None) -> str:
     return re.sub(r"[^\w]+", " ", (text or "").casefold().replace("ё", "е")).strip()
 
 
+def _customer(text: str | None) -> str:
+    return _norm(re.sub(r"\(?\s*инн[:\s]*\d+\s*\)?", " ", text or "", flags=re.I))
+
+
 def tender_key(tender: TenderResult) -> str:
     return (tender.id or "").strip() or (tender.url or "").strip()
 
@@ -257,18 +261,26 @@ class TenderStore:
         """Эта же закупка, найденная раньше на другой площадке: по реестровому номеру (длинный, как
         в ЕИС), иначе по названию и заказчику. Короткие внутренние номера площадок не сравниваем —
         у разных площадок они совпадают случайно."""
-        candidates = select(tenders.c.id, tenders.c.details, tenders.c.title, tenders.c.customer).where(
+        candidates = select(tenders.c.id, tenders.c.details, tenders.c.title, tenders.c.customer,
+                            tenders.c.external_id).where(
             tenders.c.platform != platform)
         external = (tender.id or "").strip()
         if len(external) >= 11:
             row = conn.execute(candidates.where(tenders.c.external_id == external)).first()
             if row is not None:
                 return row
-        title, customer = _norm(tender.title), _norm(tender.customer)
-        if len(title) < 15 or not customer:
+        title, customer = _norm(tender.title), _customer(tender.customer)
+        digits = re.sub(r"\D", "", external)
+        if len(title) < 15:
             return None
         for row in conn.execute(candidates.where(tenders.c.title.ilike(tender.title or ""))).all():
-            if _norm(row.title) == title and _norm(row.customer) == customer:
+            if _norm(row.title) != title:
+                continue
+            # Тот же номер без префикса площадки (Росэлторг «SP10325142» — Портал поставщиков «10325142»)
+            # или тот же заказчик (одна площадка дописывает «(ИНН: …)», другая нет).
+            if len(digits) >= 8 and re.sub(r"\D", "", row.external_id or "") == digits:
+                return row
+            if customer and _customer(row.customer) == customer:
                 return row
         return None
 

@@ -135,3 +135,37 @@ def test_element_href_object_does_not_fail_validation() -> None:
     element = Element.model_validate({"ref": 1, "href": {}, "name": {}})
     assert element.href is None
     assert element.name == ""
+
+
+def test_results_keep_only_relevant_active_records_and_merge_dash_lots():
+    from tender_agent.tenders.reading import accept_records
+
+    text = ("Канцтовары для школы 5582689-1 Приём заявок до 30.10.2026 "
+            "Канцтовары для офиса 5582689-2 Приём заявок до 30.10.2026 "
+            "Перевозка спирта канцтовары 777 Приём заявок "
+            "Бумага и канцтовары 32211596763 Закупка завершена "
+            "Канцтовары 1203219-10829500001126006716 Приём заявок до 01.10.2026")
+    elements = [Element(ref=n, tag="a", name=f"запись {n}", href=f"https://x.ru/t/{n}") for n in range(1, 6)]
+    obs = Observation(url="https://x.ru/search", text=text, elements=elements)
+    records = [
+        {"link_ref": 1, "title": "Канцтовары для школы", "number": "5582689-1", "deadline": "30.10.2026", "relevant": True},
+        {"link_ref": 2, "title": "Канцтовары для офиса", "number": "5582689-2", "deadline": "30.10.2026", "relevant": True},
+        {"link_ref": 3, "title": "Перевозка спирта", "number": "777", "relevant": False},
+        {"link_ref": 4, "title": "Бумага и канцтовары", "number": "32211596763", "status": "Закупка завершена"},
+        {"link_ref": 5, "title": "Канцтовары", "number": "1203219-10829500001126006716", "deadline": "01.10.2026"},
+    ]
+    reading = accept_records(obs, {"records": records}, keyword="канцтовары", sort_required=False,
+                             active_only=True, today="2026-10-22")
+    assert [(t.id, t.details.get("lot")) for t in reading.accepted] == [("5582689", "1"), ("5582689", "2")]
+    assert reading.rejected == {"не по теме запроса": 1, "приём заявок закончен": 2}
+    archive = accept_records(obs, {"records": records}, keyword="канцтовары", sort_required=False)
+    assert [t.id for t in archive.accepted][-1] == "1203219-10829500001126006716"  # один номер с хвостом — не лот
+
+
+def test_archive_request_turns_active_filter_off():
+    from tender_agent.agent.planner import parse_task
+    from tender_agent.config import Settings
+
+    base = 'С площадки https://zakupki.gov.ru/ верни последние 5 закупок по ключевому слову "канцтовары"'
+    assert parse_task(base, Settings()).active_only
+    assert not parse_task(base + ", включая завершённые", Settings()).active_only

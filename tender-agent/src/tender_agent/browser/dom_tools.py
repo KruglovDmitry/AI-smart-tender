@@ -14,11 +14,43 @@ async def click_element(runtime: BrowserRuntime, ref: int) -> None:
     locator = _locator(runtime, ref)
     if await locator.count() == 0:
         raise RuntimeError(f"Элемент {ref} нет на текущей странице.")
-    await locator.click(timeout=8_000)
+    page = runtime.current_page
+    popups: list = []
+
+    def on_popup(popup) -> None:
+        popups.append(popup)
+
+    page.on("popup", on_popup)
     try:
-        await runtime.current_page.wait_for_load_state("domcontentloaded", timeout=1_500)
+        new_tab = (await locator.get_attribute("target") or "").lower() == "_blank"
+        await locator.click(timeout=8_000)
+        # Новая вкладка открывается чуть позже клика: для target=_blank ждём её до 3 с.
+        for _ in range(12 if new_tab else 0):
+            if popups:
+                break
+            await page.wait_for_timeout(250)
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=1_500)
+        except PlaywrightTimeout:
+            pass
+    finally:
+        page.remove_listener("popup", on_popup)
+    if popups:
+        await _follow_popup(page, popups[-1])
+
+
+async def _follow_popup(page, popup) -> None:
+    """Ссылка открылась в новой вкладке (B2B-Center → market.otc.ru): открываем её адрес в этой же
+    вкладке, а новую закрываем — иначе цикл видит прежнюю страницу и решает, что клик ничего не дал."""
+    try:
+        await popup.wait_for_load_state("domcontentloaded", timeout=8_000)
     except PlaywrightTimeout:
-        return
+        pass
+    url = popup.url
+    if not popup.is_closed():
+        await popup.close()
+    if url and url != "about:blank":
+        await page.goto(url, wait_until="domcontentloaded")
 
 
 async def fill_field(runtime: BrowserRuntime, ref: int, value: str) -> None:

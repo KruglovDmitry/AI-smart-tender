@@ -124,6 +124,16 @@ def list_tenders(*, platform: str | None = None, q: str | None = None, new_days:
     return {"total": total, "tenders": rows}
 
 
+def document_path(document_id: int) -> tuple[str, str] | None:
+    """Скачанный файл документа: (путь на диске, имя). None — документа нет или он не скачан."""
+    docs = _tables()["tender_documents"]
+    with engine().connect() as conn:
+        row = conn.execute(select(docs.c.local_path, docs.c.name).where(docs.c.id == document_id)).first()
+    if row is None or not row.local_path:
+        return None
+    return row.local_path, row.name or ""
+
+
 def tender_detail(tender_id: int) -> dict | None:
     tables = _tables()
     tenders, docs, runs, links = (tables[n] for n in TABLES)

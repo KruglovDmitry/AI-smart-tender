@@ -105,6 +105,13 @@ def _filename(disposition: str, url: str) -> str:
     return fix_mojibake(unquote(Path(urlparse(url).path).name)) or "file"
 
 
+def _final(detail: str | None) -> bool:
+    """Отказ, который повтор кликом не исправит."""
+    lowered = (detail or "").lower()
+    # Запрещённый адрес (validate_navigation_url) или слишком большой файл («больше разрешённого»).
+    return any(word in lowered for word in ("запрещ", "разреш", "нет хоста"))
+
+
 def _failed(source: str, tender_url: str | None, detail: str) -> DownloadRecord:
     return DownloadRecord(
         source_url=source,
@@ -198,7 +205,10 @@ async def download_file(
         # Ссылка — качаем по адресу (filestore ЕИС без расширения тоже); если там страница, а не файл, —
         # пробуем кликом, как пользователь.
         saved = await _save_from_url(runtime, element.href, settings, tender_url)
-        if saved.status == "saved" or saved.detail != "По ссылке страница, а не файл.":
+        # Не вышло по адресу — пробуем кликом, как пользователь: по ссылке страница, а не файл, или сервер
+        # оборвал прямой запрос (ЭТП ГПБ: «socket hang up» на etp.gpb.ru — файлы отдаются только браузеру).
+        # Запрещённый адрес и слишком большой файл клик не исправит.
+        if saved.status == "saved" or _final(saved.detail):
             return saved
     ok, reason = validate_navigation_url(source, settings)
     if not ok:

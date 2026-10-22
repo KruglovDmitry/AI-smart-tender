@@ -36,3 +36,50 @@ def test_store_upserts_keeps_known_values_and_marks_new(tmp_path: Path) -> None:
     assert saved["new"] == 0 and store.search(platform="sberbank-ast.ru") == []
     assert store.set_deleted(row["id"], False) and store.search(platform="sberbank-ast.ru")[0]["seen_count"] == 3
     assert not store.set_deleted(10_000)
+
+
+def test_same_tender_from_another_platform_is_one_record(tmp_path: Path) -> None:
+    store = TenderStore(tmp_path / "agent.sqlite3")
+
+    def run(url: str, *found: TenderResult) -> dict:
+        task = TaskSpec(url=url, topic="канцтовары", keywords=["канцтовары"])
+        return store.save_run("задание", TaskResult(status="completed", task=task, results=list(found)))
+
+    eis = TenderResult(id="32616477643", title="Поставка канцтоваров", url="https://zakupki.gov.ru/223/x?regNumber=32616477643")
+    assert run("https://zakupki.gov.ru/", eis)["new"] == 1
+    roseltorg = TenderResult(id="32616477643", title="Поставка канцтоваров", url="https://www.roseltorg.ru/procedure/32616477643/1",
+                             deadline="2026-10-28")
+    assert run("https://www.roseltorg.ru/", roseltorg)["new"] == 0
+    rows = store.search()
+    assert len(rows) == 1 and rows[0]["details"]["also_on"] == ["roseltorg.ru"] and rows[0]["deadline"] == "2026-10-28"
+
+    # Разные номера, но то же название и заказчик (Росэлторг и Фабрикант).
+    a = TenderResult(id="B0510261309243", title="Поставка бумаги, канцтоваров и материалов для охраны труда",
+                     customer='ООО "РЕСУРСТРАНС"', url="https://www.roseltorg.ru/procedure/B0510261309243")
+    b = TenderResult(id="5582689", title="Поставка бумаги, канцтоваров и материалов для охраны труда",
+                     customer="ООО «Ресурстранс»", url="https://www.fabrikant.ru/trades/5582689")
+    run("https://www.roseltorg.ru/", a)
+    assert run("https://www.fabrikant.ru/", b)["new"] == 0
+    # Короткий внутренний номер другой площадки — не повод склеивать разные закупки.
+    other = TenderResult(id="5582689", title="Канцтовары для школы", url="https://www.tektorg.ru/p/5582689")
+    assert run("https://www.tektorg.ru/", other)["new"] == 1
+    assert len(store.search()) == 3
+
+
+def test_platform_prefixed_number_or_inn_suffix_still_matches(tmp_path: Path) -> None:
+    store = TenderStore(tmp_path / "agent.sqlite3")
+
+    def run(url: str, tender: TenderResult) -> dict:
+        task = TaskSpec(url=url, topic="ИБП", keywords=["ИБП"])
+        return store.save_run("задание", TaskResult(status="completed", task=task, results=[tender]))
+
+    run("https://www.roseltorg.ru/", TenderResult(id="SP10325142", title="ИБП Сайбер Электро ЭКСПЕРТ-II-6000Р 6000В",
+                                                  customer="ГБУЗ «МНПЦДК ДЗМ»", url="https://www.roseltorg.ru/procedure/SP10325142/1"))
+    assert run("https://zakupki.mos.ru/", TenderResult(id="10325142", title="ИБП Сайбер Электро ЭКСПЕРТ-II-6000Р 6000В",
+                                                       url="https://zakupki.mos.ru/auction/10325142"))["new"] == 0
+    run("https://www.roseltorg.ru/", TenderResult(id="SP10325021", title="ИБП AccordTec ББП-20 (AT-02334)",
+                                                  customer="ГБУЗ «ГП № 36 ДЗМ»", url="https://www.roseltorg.ru/procedure/SP10325021/1"))
+    assert run("https://zakupki.mos.ru/", TenderResult(id="999", title="ИБП AccordTec ББП-20 (AT-02334)",
+                                                       customer="ГБУЗ «ГП № 36 ДЗМ» (ИНН: 7723103970)",
+                                                       url="https://zakupki.mos.ru/auction/999"))["new"] == 0
+    assert len(store.search()) == 2

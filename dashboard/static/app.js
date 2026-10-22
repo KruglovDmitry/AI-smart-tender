@@ -19,6 +19,7 @@
     okpd2: "ОКПД2",
     source: "Опубликована на",
     documents_access: "Доступ к документам",
+    also_on: "Также на площадках",
   };
 
   // ---------- тема ----------
@@ -343,9 +344,13 @@
       const t = await getJson(`/api/db/tenders/${row.dataset.tender}`);
       const field = (k, v) => `<div class="status-row"><span class="k">${k}</span><span class="v">${v}</span></div>`;
       const sources = t.sources || {};
+      // Скачанный файл открывается с диска; ссылка площадки — рядом, как источник.
       const docs = (t.documents || []).map((d) => `<div class="doc">
-          <a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.name || d.url)}</a>
-          <div class="mu">${d.local_path ? `скачан: ${esc(d.local_path)}` : "не скачан — только ссылка на источник"}</div>
+          ${d.local_path
+            ? `<a href="/api/db/documents/${d.id}/file" target="_blank" rel="noopener">${esc(d.name || d.url)}</a>
+               <div class="mu">скачан · <a href="${esc(d.url)}" target="_blank" rel="noopener">источник</a></div>`
+            : `<a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.name || d.url)}</a>
+               <div class="mu">не скачан — только ссылка на источник</div>`}
         </div>`).join("") || '<div class="empty">Документов не найдено</div>';
       const lotList = (t.details || {}).lots || [];
       const lots = lotList.length ? `<h3>Лоты процедуры (${lotList.length})</h3>` + lotList.map((l) => `<div class="doc">

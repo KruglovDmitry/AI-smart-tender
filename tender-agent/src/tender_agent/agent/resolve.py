@@ -45,7 +45,15 @@ async def resolve_links(runtime, obs: Observation, pending: list[tuple[TenderRes
             stopped = "выдача после возврата изменилась — строку не нашёл"
             break
         try:
-            await actions.click(runtime, row.ref, host)
+            try:
+                await actions.click(runtime, row.ref, host)
+            except Exception as exc:
+                if "Timeout" not in str(exc):
+                    raise
+                # Строку перекрыла открытая панель фильтров (Росатом: «Параметры поиска») — щелчок
+                # событием, как пользователь мышью мимо панели. Только для строк выдачи: модельные
+                # клики по-прежнему получают «перекрыт окном — закрой его».
+                await page.locator(f'[data-ta-ref="{row.ref}"]').dispatch_event("click")
             for _ in range(32):  # до 8 с: адрес меняет скрипт
                 if page.url != list_url:
                     break

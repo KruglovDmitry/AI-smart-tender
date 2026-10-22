@@ -34,9 +34,16 @@ def list_goal_text(task, keyword: str) -> str:
     sort = (" Отсортируй выдачу по дате публикации или размещения, сначала новые, и проверь по датам первых "
             "записей, что сверху действительно самые новые; если нет — поменяй направление сортировки."
             if task.sort_by else "")
+    # Фильтр по статусу — только если включается сразу: закрытые записи отсеивает сам агент, а борьба
+    # с самодельным фильтром съедала весь бюджет (lot-online: 40 шагов без extract, Сбер-АСТ: минута на зрение).
+    active = (" Нужны только закупки, по которым идёт приём заявок. Если рядом с выдачей есть простой фильтр по "
+              "статусу («приём заявок», «активные») — можно включить его одним-двумя кликами; если он не "
+              "включился сразу или выдача после него пустая — не трать на него шаги, вызывай extract: "
+              "завершённые и отменённые записи агент отсеет сам."
+              if task.active_only else "")
     return (
         f"На площадке {task.url} найди закупки по запросу «{keyword}» через поиск площадки. Вводи запрос дословно, "
-        f"не меняй слово и не подбирай синонимы.{sort} "
+        f"не меняй слово и не подбирай синонимы.{sort}{active} "
         f"Когда на экране выдача по запросу{' в нужном порядке' if task.sort_by else ''} — вызови extract. "
         f"Нужно {task.limit} записей: если после extract их меньше, перейди на следующую страницу выдачи "
         f"(или нажми «Показать ещё») и снова вызови extract, но не дальше {task.max_pages} страниц. "
@@ -91,6 +98,7 @@ async def execute(
 
     keyword = task.keywords[0]
     collected: list[TenderResult] = []
+    seen_numbers: list[str] = []  # все номера, что уже прочитала модель (и отклонённые тоже)
     pages_read: list[str] = []
     site_sorted = False
 
@@ -101,7 +109,8 @@ async def execute(
         nonlocal site_sorted
         progress.llm_calls += 1
         try:
-            reading = await read_results(llm, obs, keyword=keyword, sort_required=bool(task.sort_by))
+            reading = await read_results(llm, obs, keyword=keyword, sort_required=bool(task.sort_by),
+                                         active_only=task.active_only, skip=seen_numbers)
         except Exception as exc:
             progress.mark("list", "llm", False)
             errors.append(f"Модель не прочитала выдачу: {type(exc).__name__}: {exc}")
@@ -116,15 +125,21 @@ async def execute(
             progress.actions += 2 * len(resolved)
             reading.accepted.extend(resolved)
         collected.extend(reading.accepted)
+        seen_numbers.extend(n for n in reading.numbers if n not in seen_numbers)
         if obs.signature not in pages_read:
             pages_read.append(obs.signature)
         if len(pages_read) == 1 and _descending(reading.accepted):
             site_sorted = True  # даты первой страницы идут по убыванию — порядок задал сайт
         progress.mark("list", "llm", bool(reading.accepted))
         rejected = ", ".join(f"{reason}: {count}" for reason, count in reading.rejected.items())
+        stale = ""
+        if site_sorted and reading.found and unique() == before and reading.rejected.get("приём заявок закончен"):
+            # Выдача по дате, а новых подходящих нет и попадаются закрытые: дальше только старее.
+            stale = ("; подходящих новых записей нет, а закрытые уже пошли — дальше по дате только более старые "
+                     "закупки: если выдача отсортирована по дате, заверши (done)")
         return (f"extract → записей на странице {reading.found}, принято {len(reading.accepted)}"
                 f"{f' (отклонено — {rejected})' if rejected else ''}, новых {unique() - before}, всего {unique()}"
-                f"{f'; {resolve_note}' if resolve_note else ''}")
+                f"{f'; {resolve_note}' if resolve_note else ''}{stale}")
 
     def progress_line() -> str:
         return f"Прочитано записей: {unique()} из {task.limit}; страниц выдачи прочитано: {len(pages_read)}."
@@ -142,9 +157,12 @@ async def execute(
                        errors=errors, download=task.download_documents)
     if results and outcome.outcome != "needs_user":
         results = await cards.read_all(results)
-        locked = sum(1 for t in results if t.details.get("documents_access"))
+        locked = sum(1 for t in results if t.details.get("access_block") == "login")
+        checked = sum(1 for t in results if t.details.get("access_block") == "captcha")
         if locked:
             errors.append(f"Документы доступны только в личном кабинете площадки: {locked} из {len(results)} закупок.")
+        if checked:
+            errors.append(f"Площадка требует пройти проверку «я не робот» вручную: {checked} из {len(results)} закупок.")
 
     if outcome.outcome == "needs_user":
         status = "needs_user"

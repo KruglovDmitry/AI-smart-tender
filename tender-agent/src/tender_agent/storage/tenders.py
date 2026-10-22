@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -127,6 +128,15 @@ def platform_of(url: str | None) -> str:
     return (urlparse(url or "").hostname or "").lower().removeprefix("www.")
 
 
+def _norm(text: str | None) -> str:
+    """Для сравнения названий и заказчиков: регистр, кавычки, пробелы и знаки не важны."""
+    return re.sub(r"[^\w]+", " ", (text or "").casefold().replace("ё", "е")).strip()
+
+
+def _customer(text: str | None) -> str:
+    return _norm(re.sub(r"\(?\s*инн[:\s]*\d+\s*\)?", " ", text or "", flags=re.I))
+
+
 def tender_key(tender: TenderResult) -> str:
     return (tender.id or "").strip() or (tender.url or "").strip()
 
@@ -218,6 +228,18 @@ class TenderStore:
             select(tenders.c.id).where(and_(tenders.c.platform == platform, tenders.c.tender_key == key))
         ).first()
         if row is None:
+            row = self._same_elsewhere(conn, platform, tender)
+            if row is not None:
+                # Та же закупка уже есть с другой площадки (223-ФЗ на ЕИС и на Росэлторге, агрегатор и
+                # первоисточник): одна запись, площадки — в details.also_on. Это не новая закупка.
+                also = [p for p in (row.details or {}).get("also_on", []) if p != platform] + [platform]
+                details = {**(row.details or {}), **dict(tender.details), "also_on": also}
+                changes = {field: value for field, value in values.items()
+                           if value is not None and field not in {"url", "external_id"}}
+                conn.execute(update(tenders).where(tenders.c.id == row.id).values(
+                    last_seen=now, seen_count=tenders.c.seen_count + 1, details=details, **changes))
+                return int(row.id), False
+        if row is None:
             new_id = conn.execute(
                 insert(tenders).values(platform=platform, tender_key=key, sources=dict(tender.sources),
                                        details=dict(tender.details) or None,
@@ -234,6 +256,33 @@ class TenderStore:
             )
         )
         return int(row.id), False
+
+    def _same_elsewhere(self, conn: Connection, platform: str, tender: TenderResult):
+        """Эта же закупка, найденная раньше на другой площадке: по реестровому номеру (длинный, как
+        в ЕИС), иначе по названию и заказчику. Короткие внутренние номера площадок не сравниваем —
+        у разных площадок они совпадают случайно."""
+        candidates = select(tenders.c.id, tenders.c.details, tenders.c.title, tenders.c.customer,
+                            tenders.c.external_id).where(
+            tenders.c.platform != platform)
+        external = (tender.id or "").strip()
+        if len(external) >= 11:
+            row = conn.execute(candidates.where(tenders.c.external_id == external)).first()
+            if row is not None:
+                return row
+        title, customer = _norm(tender.title), _customer(tender.customer)
+        digits = re.sub(r"\D", "", external)
+        if len(title) < 15:
+            return None
+        for row in conn.execute(candidates.where(tenders.c.title.ilike(tender.title or ""))).all():
+            if _norm(row.title) != title:
+                continue
+            # Тот же номер без префикса площадки (Росэлторг «SP10325142» — Портал поставщиков «10325142»)
+            # или тот же заказчик (одна площадка дописывает «(ИНН: …)», другая нет).
+            if len(digits) >= 8 and re.sub(r"\D", "", row.external_id or "") == digits:
+                return row
+            if customer and _customer(row.customer) == customer:
+                return row
+        return None
 
     def _upsert_document(self, conn: Connection, tender_id: int, url: str, **values) -> None:
         values = {key: value for key, value in values.items() if value is not None}

@@ -169,6 +169,19 @@ def api_db_tender(tender_id: int):
     return item
 
 
+@app.get("/api/db/documents/{document_id}/file")
+def api_db_document_file(document_id: int):
+    """Скачанный агентом файл — открыть с диска. У части площадок (Росатом) у файлов нет своих адресов,
+    ссылка источника ведёт на карточку, а не на файл. Отдаём только файлы из папки данных."""
+    found = _db_call(db.document_path, document_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Файл не скачан")
+    path = Path(found[0]).resolve()
+    if not path.is_relative_to(DATA_ROOT) or not path.is_file():
+        raise HTTPException(status_code=404, detail="Файла нет в папке данных")
+    return FileResponse(path, filename=path.name, content_disposition_type="inline")
+
+
 @app.get("/api/db/methods")
 def api_db_methods(days: int = 30, platform: str | None = None):
     return _db_call(db.methods_summary, days=max(1, min(days, 365)), platform=platform)

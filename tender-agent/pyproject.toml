@@ -29,5 +29,8 @@ tender-agent = "tender_agent.main:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"tender_agent.sites" = ["notes/*.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

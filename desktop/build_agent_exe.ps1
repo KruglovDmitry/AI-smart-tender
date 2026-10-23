@@ -50,6 +50,7 @@ $ErrorActionPreference = "Continue"
   --collect-all pydantic `
   --collect-all playwright `
   --collect-all ai_vision `
+  --add-data "$(Join-Path $AgentSrc 'src\tender_agent\sites\notes');tender_agent\sites\notes" `
   --hidden-import tender_agent `
   --hidden-import tender_agent.server `
   --hidden-import tender_agent.config `

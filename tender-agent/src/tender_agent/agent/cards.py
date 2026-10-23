@@ -180,7 +180,7 @@ class CardReader:
             if reading.rejected:
                 note += f"; отклонено цитат, которых нет на странице: {reading.rejected}"
             if self.download and reading.refs:
-                note += await self._download(tab, obs, reading.refs, tender.url)
+                note += await self._download(tab, obs, reading.refs, tender.url, reading.sources)
             return note
 
         def status() -> str:
@@ -212,7 +212,8 @@ class CardReader:
         self.outcomes[result] += 1
         return state["tender"], result
 
-    async def _download(self, tab: _TabRuntime, obs: Observation, refs: list[int], tender_url: str | None) -> str:
+    async def _download(self, tab: _TabRuntime, obs: Observation, refs: list[int], tender_url: str | None,
+                        sources: dict[int, str] | None = None) -> str:
         saved = 0
         tried = 0
         # Лимит — на закупку, а не на задание: закупка с десятками файлов не отнимает место у остальных.
@@ -220,7 +221,7 @@ class CardReader:
         for ref in refs:
             if done_here + tried >= self.settings.max_downloads:
                 break
-            record = await download_file(tab, obs, ref, self.settings, tender_url)
+            record = await download_file(tab, obs, ref, self.settings, tender_url, (sources or {}).get(ref))
             self.downloads.append(record)
             self.progress.actions += 1
             tried += 1

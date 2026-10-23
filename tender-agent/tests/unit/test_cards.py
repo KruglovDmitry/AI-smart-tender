@@ -51,3 +51,14 @@ def test_document_ref_is_moved_from_service_link_to_the_file():
     reading = accept_card(TenderResult(id="SBR028", url=page), obs,
                           {"documents": [{"ref": 43, "name": "ТЗ_сервер_EPYC_9475F.docx"}]})
     assert reading.refs == [41]
+
+
+def test_unnamed_icon_gets_document_address_from_its_name():
+    # Росатом: в строке таблицы кнопка-иконка без подписи; имя файла знает только модель.
+    page = "https://zakupki.rosatom.ru/?link=procurements&obj_id=khxx"
+    obs = Observation(url=page, text="7_Извещение 1_Расчет_НМЦ", elements=[
+        Element(ref=21, tag="button", name=""), Element(ref=22, tag="button", name=""),
+    ])
+    reading = accept_card(TenderResult(id="242340", url=page), obs,
+                          {"documents": [{"ref": 21, "name": "7_Извещение"}, {"ref": 22, "name": "1_Расчет_НМЦ"}]})
+    assert reading.sources == {21: page + "#file:7_Извещение", 22: page + "#file:1_Расчет_НМЦ"}

@@ -47,6 +47,7 @@ def card_for_model(obs: Observation) -> dict:
 class CardReading:
     tender: TenderResult
     refs: list[int] = field(default_factory=list)  # документы на этой странице: ref элементов
+    sources: dict[int, str] = field(default_factory=dict)  # ref → адрес документа в базе
     filled: list[str] = field(default_factory=list)  # какие поля добавила карточка
     rejected: int = 0  # цитат, которых нет на странице
 
@@ -138,6 +139,7 @@ def accept_card(tender: TenderResult, obs: Observation, data: dict) -> CardReadi
         if el.href:
             updated.document_urls.append(el.href)
         reading.refs.append(el.ref)
+        reading.sources[el.ref] = url
     return reading
 
 

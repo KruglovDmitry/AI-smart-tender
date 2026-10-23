@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import date, timedelta
 
 from ..api.schemas import TaskResult, TenderResult
 from ..browser.navigation import task_host, validate_navigation_url
@@ -53,6 +54,20 @@ def list_goal_text(task, keyword: str) -> str:
         "Когда записей достаточно или все секции проверены — done. "
         "Карточки закупок открывать не нужно: их прочитают отдельно."
     )
+
+
+STALE_DAYS = 7
+
+
+def _older_than_found(page_dates: list[str], found: list[TenderResult]) -> bool:
+    """Страница уже заметно старше найденного: самая свежая её запись на неделю старше самой свежей
+    подходящей (или сегодняшнего дня, если подходящих нет). На ЕИС по частым словам (картриджи)
+    закрытые закупки идут и среди сегодняшних — это ещё не «дальше только старые»."""
+    if not page_dates:
+        return False
+    newest = max((t.published_at for t in found if t.published_at), default=date.today().isoformat())
+    limit = (date.fromisoformat(newest) - timedelta(days=STALE_DAYS)).isoformat()
+    return max(page_dates) < limit
 
 
 def _descending(dates: list[str]) -> bool:
@@ -134,7 +149,8 @@ async def execute(
         rejected = ", ".join(f"{reason}: {count}" for reason, count in reading.rejected.items())
         stale = ""
         stale_pages = stale_pages + 1 if (site_sorted and reading.found and unique() == before
-                                          and reading.rejected.get("приём заявок закончен")) else 0
+                                          and reading.rejected.get("приём заявок закончен")
+                                          and _older_than_found(reading.published, collected)) else 0
         if stale_pages:
             # Выдача по дате, а новых подходящих нет и попадаются закрытые: дальше только старее.
             stale = ("; подходящих новых записей нет, а закрытые уже пошли — дальше по дате только более старые "

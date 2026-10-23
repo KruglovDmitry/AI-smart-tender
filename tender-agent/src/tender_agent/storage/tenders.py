@@ -137,6 +137,12 @@ def _customer(text: str | None) -> str:
     return _norm(re.sub(r"\(?\s*инн[:\s]*\d+\s*\)?", " ", text or "", flags=re.I))
 
 
+def _head(key: str) -> str:
+    """Номер без приписок: «242340 (5116123)» → «242340»."""
+    match = re.match(r"\s*([\w-]+)", key or "")
+    return match.group(1).casefold() if match else ""
+
+
 def tender_key(tender: TenderResult) -> str:
     return (tender.id or "").strip() or (tender.url or "").strip()
 
@@ -227,6 +233,13 @@ class TenderStore:
         row = conn.execute(
             select(tenders.c.id).where(and_(tenders.c.platform == platform, tenders.c.tender_key == key))
         ).first()
+        if row is None and (tender.url or "").strip():
+            # Та же карточка, а номер модель прочитала иначе (Росатом: «242340» и «242340 (5116123)»).
+            # Один адрес у разных закупок бывает (адрес выдачи вместо карточки), поэтому нужен и тот же номер.
+            head = _head(key)
+            row = next((found for found in conn.execute(select(tenders.c.id, tenders.c.tender_key).where(and_(
+                tenders.c.platform == platform, tenders.c.url == tender.url.strip()))).all()
+                if head and _head(found.tender_key) == head), None)
         if row is None:
             row = self._same_elsewhere(conn, platform, tender)
             if row is not None:

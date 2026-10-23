@@ -41,6 +41,8 @@ OPTIONS: tuple[Option, ...] = (
            default="http://10.127.0.41:8000/v1"),
     Option("vision_tars_model", "UI-TARS: модель", "vision", env=("AV_TARS_MODEL",), default="ui-tars"),
     Option("vision_tars_api_key", "UI-TARS: ключ", "vision", "secret", ("AV_TARS_API_KEY",), "EMPTY"),
+    Option("vision_fallback_model", "Запасная модель координат, если UI-TARS недоступен (на ключе планировщика; «-» — выключить)",
+           "vision", env=("AV_GROUND_FALLBACK_MODEL",), default="qwen3-vl-plus"),
     Option("headless", "Скрывать окно браузера", "browser", "bool", ("TENDER_AGENT_HEADLESS",), True),
     Option("downloads_enabled", "Скачивание разрешено", "browser", "bool", ("TENDER_AGENT_DOWNLOADS",), True),
     Option("timeout_seconds", "Время на задание, с", "limits", "int", ("TENDER_AGENT_TIMEOUT_SECONDS",), 300),

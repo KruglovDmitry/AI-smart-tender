@@ -41,6 +41,22 @@ def test_vision_models_from_settings() -> None:
     assert (av.planner.api_key, av.planner.base_url) == ("k", "env-url")
 
 
+def test_ground_fallback_uses_planner_key_and_can_be_switched_off() -> None:
+    class Endpoint:
+        def __init__(self, model: str) -> None:
+            self.base_url, self.api_key, self.model = "env-url", "env-key", model
+
+    class AV:
+        headless = True
+
+        def __init__(self) -> None:
+            self.planner, self.tars, self.ground_fallback = Endpoint("qwen3-vl-plus"), Endpoint("ui-tars"), Endpoint("qwen3-vl-plus")
+
+    av = configure_vision(AV(), Settings(vision_planner_api_key="k", vision_fallback_model="qwen3-vl-flash"))
+    assert (av.ground_fallback.api_key, av.ground_fallback.model) == ("k", "qwen3-vl-flash")
+    assert configure_vision(AV(), Settings(vision_fallback_model="-")).ground_fallback is None
+
+
 def test_settings_api_is_hidden_from_open_webui(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("TENDER_AGENT_DATA_DIR", str(tmp_path))
     from tender_agent.server import app

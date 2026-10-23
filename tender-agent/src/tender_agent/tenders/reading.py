@@ -8,7 +8,7 @@ from datetime import date
 
 from ..api.schemas import TenderResult
 from ..llm.base import LLMClient
-from .extraction import card_from_raw
+from .extraction import card_from_raw, parse_date
 from .models import Element, Observation, RawCard
 
 RESULTS_TEXT_FOR_MODEL = 20_000
@@ -28,6 +28,9 @@ class ResultsReading:
     pending: list[tuple[TenderResult, Element]] = field(default_factory=list)
     rejected: dict[str, int] = field(default_factory=dict)  # причина → сколько
     numbers: list[str] = field(default_factory=list)  # номера всех записей, что назвала модель
+    # Даты публикации всех записей страницы, и отклонённых тоже: по ним видно, отсортирована ли выдача
+    # по дате, даже когда подошли одна-две записи (Сбер-АСТ: 2 активных из 20).
+    published: list[str] = field(default_factory=list)
 
     def reject(self, reason: str) -> None:
         self.rejected[reason] = self.rejected.get(reason, 0) + 1
@@ -41,7 +44,7 @@ def links_for_model(obs: Observation) -> list[dict]:
 
 # Этапы, на которых заявку уже не подать.
 _CLOSED = re.compile(r"заверш|отмен|не\s*состоял|состоял|архив|закрыт(?:а|о|ы)?(?![а-яё])|работа комисси|рассмотрени|подведени|"
-                     r"итог|исполнени|заключ|приостанов|прием заявок окончен|приём заявок окончен", re.I)
+                     r"итог|исполнени|заключ|приостанов|прием заявок окончен|приём заявок окончен|ожидает решения", re.I)
 
 
 def accept_records(obs: Observation, data: dict, *, keyword: str, sort_required: bool,
@@ -56,6 +59,9 @@ def accept_records(obs: Observation, data: dict, *, keyword: str, sort_required:
         reading.found += 1
         if item.get("number"):
             reading.numbers.append(str(item["number"]).strip())
+        published = parse_date(str(item.get("published") or ""))
+        if published:
+            reading.published.append(published)
         title = str(item.get("title") or "").strip()
         if not title or _norm(title) not in page:
             reading.reject("название не найдено на странице")

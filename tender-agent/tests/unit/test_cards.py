@@ -39,3 +39,26 @@ def test_same_page_hash_link_is_not_a_document():
     ])
     reading = accept_card(TenderResult(id="95841975", url=page), obs, {"documents": [{"ref": 1}, {"ref": 2}]})
     assert [d["name"] for d in reading.tender.documents] == ["ТЗ.docx"] and reading.rejected == 1
+
+
+def test_document_ref_is_moved_from_service_link_to_the_file():
+    page = "https://utp.sberbank-ast.ru/VIP/NBT/PurchaseView/632/0/0/4258301"
+    obs = Observation(url=page, text="0 ТЗ_сервер_EPYC_9475F.docx Скачать архив доверенностей к подписям файла", elements=[
+        Element(ref=41, tag="span", role="clickable", name="0 ТЗ_сервер_EPYC_9475F.docx"),
+        Element(ref=43, tag="a", name="Скачать архив доверенностей к подписям файла",
+                href="https://utp.sberbank-ast.ru/VIP/File/FileAttorneyArchive?fid=1"),
+    ])
+    reading = accept_card(TenderResult(id="SBR028", url=page), obs,
+                          {"documents": [{"ref": 43, "name": "ТЗ_сервер_EPYC_9475F.docx"}]})
+    assert reading.refs == [41]
+
+
+def test_unnamed_icon_gets_document_address_from_its_name():
+    # Росатом: в строке таблицы кнопка-иконка без подписи; имя файла знает только модель.
+    page = "https://zakupki.rosatom.ru/?link=procurements&obj_id=khxx"
+    obs = Observation(url=page, text="7_Извещение 1_Расчет_НМЦ", elements=[
+        Element(ref=21, tag="button", name=""), Element(ref=22, tag="button", name=""),
+    ])
+    reading = accept_card(TenderResult(id="242340", url=page), obs,
+                          {"documents": [{"ref": 21, "name": "7_Извещение"}, {"ref": 22, "name": "1_Расчет_НМЦ"}]})
+    assert reading.sources == {21: page + "#file:7_Извещение", 22: page + "#file:1_Расчет_НМЦ"}

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import date, timedelta
 
 from ..api.schemas import TaskResult, TenderResult
 from ..browser.navigation import task_host, validate_navigation_url
@@ -55,8 +56,21 @@ def list_goal_text(task, keyword: str) -> str:
     )
 
 
-def _descending(batch: list[TenderResult]) -> bool:
-    dates = [t.published_at for t in batch if t.published_at]
+STALE_DAYS = 7
+
+
+def _older_than_found(page_dates: list[str], found: list[TenderResult]) -> bool:
+    """Страница уже заметно старше найденного: самая свежая её запись на неделю старше самой свежей
+    подходящей (или сегодняшнего дня, если подходящих нет). На ЕИС по частым словам (картриджи)
+    закрытые закупки идут и среди сегодняшних — это ещё не «дальше только старые»."""
+    if not page_dates:
+        return False
+    newest = max((t.published_at for t in found if t.published_at), default=date.today().isoformat())
+    limit = (date.fromisoformat(newest) - timedelta(days=STALE_DAYS)).isoformat()
+    return max(page_dates) < limit
+
+
+def _descending(dates: list[str]) -> bool:
     return len(dates) >= 3 and dates == sorted(dates, reverse=True)
 
 
@@ -101,12 +115,13 @@ async def execute(
     seen_numbers: list[str] = []  # все номера, что уже прочитала модель (и отклонённые тоже)
     pages_read: list[str] = []
     site_sorted = False
+    stale_pages = 0  # страниц подряд без новых подходящих, но с закрытыми — при сортировке по дате
 
     def unique() -> int:
         return len(rank_tenders(collected, sort_by=None, limit=10_000))
 
     async def extract(obs: Observation) -> str:
-        nonlocal site_sorted
+        nonlocal site_sorted, stale_pages
         progress.llm_calls += 1
         try:
             reading = await read_results(llm, obs, keyword=keyword, sort_required=bool(task.sort_by),
@@ -128,12 +143,15 @@ async def execute(
         seen_numbers.extend(n for n in reading.numbers if n not in seen_numbers)
         if obs.signature not in pages_read:
             pages_read.append(obs.signature)
-        if len(pages_read) == 1 and _descending(reading.accepted):
+        if len(pages_read) == 1 and _descending(reading.published):
             site_sorted = True  # даты первой страницы идут по убыванию — порядок задал сайт
         progress.mark("list", "llm", bool(reading.accepted))
         rejected = ", ".join(f"{reason}: {count}" for reason, count in reading.rejected.items())
         stale = ""
-        if site_sorted and reading.found and unique() == before and reading.rejected.get("приём заявок закончен"):
+        stale_pages = stale_pages + 1 if (site_sorted and reading.found and unique() == before
+                                          and reading.rejected.get("приём заявок закончен")
+                                          and _older_than_found(reading.published, collected)) else 0
+        if stale_pages:
             # Выдача по дате, а новых подходящих нет и попадаются закрытые: дальше только старее.
             stale = ("; подходящих новых записей нет, а закрытые уже пошли — дальше по дате только более старые "
                      "закупки: если выдача отсортирована по дате, заверши (done)")
@@ -147,8 +165,12 @@ async def execute(
     loop = Loop(runtime=runtime, settings=settings, task=task, llm=llm, host=host, progress=progress,
                 errors=errors, deadline=started + task.timeout_seconds, phase="list", max_steps=task.max_actions,
                 vision_limit=settings.vision_max_calls)
+    def exhausted() -> str | None:
+        # Две страницы подряд по дате — одни закрытые: модель на Сбер-АСТ листала их до таймаута.
+        return "Дальше по дате только закрытые закупки — выдача исчерпана." if stale_pages >= 2 else None
+
     outcome = await loop.run(Goal(text=list_goal_text(task, keyword), extract=extract, status=progress_line,
-                                  context=f"площадка закупок {task.url}, запрос «{keyword}»"))
+                                  context=f"площадка закупок {task.url}, запрос «{keyword}»", finished=exhausted))
     if outcome.outcome in {"timeout", "actions", "model_error"}:
         errors.append(outcome.note)
 
@@ -157,6 +179,13 @@ async def execute(
                        errors=errors, download=task.download_documents)
     if results and outcome.outcome != "needs_user":
         results = await cards.read_all(results)
+        if task.active_only:
+            # Срок подачи часто виден только на карточке (Фабрикант: в выдаче его нет) — проверяем ещё раз.
+            today = date.today().isoformat()
+            late = [t for t in results if t.deadline and t.deadline < today]
+            if late:
+                results = [t for t in results if t not in late]
+                errors.append(f"Отброшено после чтения карточки, приём заявок закончен: {len(late)}.")
         locked = sum(1 for t in results if t.details.get("access_block") == "login")
         checked = sum(1 for t in results if t.details.get("access_block") == "captcha")
         if locked:
@@ -176,7 +205,10 @@ async def execute(
             errors.append(f"Модель: {outcome.note}")
     elif len(results) < task.limit:
         status = "partial"
-        errors.append(f"Найдено {len(results)} из {task.limit}.")
+        # Обычно это не сбой: активных закупок по запросу на площадке столько и есть.
+        errors.append(f"Найдено {len(results)} из {task.limit}" + (
+            ": больше закупок с открытым приёмом заявок по этому запросу агент не нашёл."
+            if task.active_only else "."))
     else:
         status = "completed"
     if task.download_documents and status == "completed":

@@ -169,3 +169,16 @@ def test_archive_request_turns_active_filter_off():
     base = 'С площадки https://zakupki.gov.ru/ верни последние 5 закупок по ключевому слову "канцтовары"'
     assert parse_task(base, Settings()).active_only
     assert not parse_task(base + ", включая завершённые", Settings()).active_only
+
+
+def test_page_dates_include_rejected_records():
+    from tender_agent.tenders.reading import accept_records
+
+    obs = Observation(url="https://x.ru/s", text="Сервер 1 22.10.2026 Сервер 2 15.10.2026 Сервер 3 09.10.2026 завершена",
+                      elements=[Element(ref=n, tag="a", name=f"Сервер {n}", href=f"https://x.ru/t/{n}") for n in (1, 2, 3)])
+    records = [{"link_ref": 1, "title": "Сервер 1", "published": "22.10.2026"},
+               {"link_ref": 2, "title": "Сервер 2", "published": "15.10.2026", "status": "завершена"},
+               {"link_ref": 3, "title": "Сервер 3", "published": "09.10.2026", "status": "завершена"}]
+    reading = accept_records(obs, {"records": records}, keyword="сервер", sort_required=True, active_only=True,
+                             today="2026-10-23")
+    assert len(reading.accepted) == 1 and reading.published == ["2026-10-22", "2026-10-15", "2026-10-09"]

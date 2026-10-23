@@ -50,7 +50,8 @@ _SNAPSHOT_JS = """() => {
   const isList = (el) => !!el && (/^(UL|OL)$/.test(el.tagName) || /^(listbox|menu)$/.test(el.getAttribute('role') || ''));
   const candidates = [];
   // tr — строки таблиц выдачи, которые открывают карточку скриптом (Росатом: <tr> без ссылок).
-  for (const el of document.querySelectorAll('div, span, li, label, i, img, svg, tr, td, p, h1, h2, h3, h4, ul, ol')) {
+  // a без href — ссылка-кнопка со скриптом (Сбер-АСТ, раздел Банка России: имя файла — <a> без адреса).
+  for (const el of document.querySelectorAll('a:not([href]), div, span, li, label, i, img, svg, tr, td, p, h1, h2, h3, h4, ul, ol')) {
     if (tagged.has(el) || !pointer(el) || insideControl(el)) continue;
     const parent = el.parentElement;
     if (pointer(parent) && !(el.tagName === 'LI' || isList(parent))) continue;

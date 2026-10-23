@@ -89,3 +89,12 @@ def test_page_for_model_lists_elements_without_conclusions() -> None:
     assert len(page["text"]) == 6000 and page["text_truncated"]
     assert page["scroll"].startswith("прокручено 0 из 5000")
     assert not {"search_ref", "sort_ref", "next_ref", "page_kind"} & set(page)
+
+
+def test_closed_pages_count_as_exhausted_only_when_clearly_older() -> None:
+    from tender_agent.agent.orchestrator import _older_than_found
+    from tender_agent.api.schemas import TenderResult
+
+    found = [TenderResult(id="1", published_at="2026-10-22")]
+    assert _older_than_found(["2026-06-26", "2026-05-28"], found)  # Сбер-АСТ: дальше июнь — стоп
+    assert not _older_than_found(["2026-10-23", "2026-10-22"], found)  # ЕИС «картриджи»: закрытые, но свежие

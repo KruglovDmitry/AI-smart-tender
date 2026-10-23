@@ -57,6 +57,15 @@ def configure_vision(av_settings, settings: Settings):
             value = getattr(settings, f"{prefix}_{field}")
             if value:
                 setattr(endpoint, field, value.rstrip("/") if field == "base_url" else value)
+    # Запасная модель координат (UI-TARS недоступен, например без VPN): тот же облачный ключ, что у планировщика.
+    fallback = getattr(av_settings, "ground_fallback", None)
+    if fallback is not None:
+        if settings.vision_fallback_model.strip() == "-":
+            av_settings.ground_fallback = None
+        else:
+            fallback.base_url, fallback.api_key = av_settings.planner.base_url, av_settings.planner.api_key
+            if settings.vision_fallback_model:
+                fallback.model = settings.vision_fallback_model
     return av_settings
 
 

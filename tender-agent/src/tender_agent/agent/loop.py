@@ -47,6 +47,9 @@ class Goal:
     # Модель сказала done, а цель не достигнута (карточка без документов): что поручить зрению
     # для проверки. None — подтверждать нечего.
     unmet: Callable[[], str | None] | None = None
+    # Цель исчерпана по данным, а не по решению модели (выдача по дате ушла в закрытые закупки):
+    # цикл заканчивается сам, даже если модель хочет листать дальше.
+    finished: Callable[[], str | None] | None = None
 
 
 @dataclass
@@ -176,6 +179,10 @@ class Loop:
             after, note, moved = await self._act(tool, decision, obs, goal)
             unchanged = 0 if moved else unchanged + 1
             history.append(f"{step}. {note}")
+            stop = goal.finished() if goal.finished and tool == "extract" else None
+            if stop:
+                await self._log({**record, "note": note, "changed": moved}, obs)
+                return LoopResult("done", stop, last_obs=after, history=history)
             repeated.append(re.sub(r"\[\d+\] ", "", _label(tool, decision, _element(obs, decision.get("ref")))))
             record.update({"note": note, "changed": moved})
             await self._log(record, obs, error=not moved and tool not in {"extract", "fill"})

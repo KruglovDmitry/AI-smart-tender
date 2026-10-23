@@ -179,6 +179,13 @@ async def execute(
                        errors=errors, download=task.download_documents)
     if results and outcome.outcome != "needs_user":
         results = await cards.read_all(results)
+        if task.active_only:
+            # Срок подачи часто виден только на карточке (Фабрикант: в выдаче его нет) — проверяем ещё раз.
+            today = date.today().isoformat()
+            late = [t for t in results if t.deadline and t.deadline < today]
+            if late:
+                results = [t for t in results if t not in late]
+                errors.append(f"Отброшено после чтения карточки, приём заявок закончен: {len(late)}.")
         locked = sum(1 for t in results if t.details.get("access_block") == "login")
         checked = sum(1 for t in results if t.details.get("access_block") == "captcha")
         if locked:

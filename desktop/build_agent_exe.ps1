@@ -20,7 +20,9 @@ if (-not (Test-Path $Py)) {
 }
 
 Write-Host "Installing tender-agent into desktop/.venv-agent ..."
-& $Py -m pip install -e $AgentSrc "uvicorn[standard]" pyinstaller
+# --no-build-isolation: сборка пакета без скачивания setuptools — сборка не падает, если PyPI недоступен,
+# а зависимости уже стоят.
+& $Py -m pip install --no-build-isolation -e $AgentSrc "uvicorn[standard]" pyinstaller
 if ($LASTEXITCODE -ne 0) { Write-Error "pip install tender-agent failed"; exit 1 }
 
 # Библиотека ai_vision (репозиторий AI-vision) - запасной шаг по скриншотам. Без неё зрение в exe молча не работает.
@@ -31,7 +33,7 @@ if (-not (Test-Path (Join-Path $AiVision "pyproject.toml"))) {
   exit 1
 }
 Write-Host "Installing ai_vision from $AiVision ..."
-& $Py -m pip install $AiVision
+& $Py -m pip install --no-build-isolation $AiVision
 if ($LASTEXITCODE -ne 0) { Write-Error "pip install ai_vision failed"; exit 1 }
 
 Write-Host "Building TenderAgent.exe (onedir)..."

@@ -242,7 +242,10 @@ async def download_file(
     tender_url: str | None,
 ) -> DownloadRecord:
     element = element_by_ref(obs, ref)
-    source = (element.href if element else "") or runtime.current_page.url
+    # Файл без адреса (кнопка, иконка) — адрес карточки плюс имя файла: иначе у всех таких файлов
+    # карточки один source_url, и в базе они схлопывались в один документ (Росатом, Банк России).
+    page_url = runtime.current_page.url
+    source = (element.href if element else "") or (f"{page_url}#file:{element.name[:120]}" if element else page_url)
     if element and element.href:
         # Ссылка — качаем по адресу (filestore ЕИС без расширения тоже); если там страница, а не файл, —
         # пробуем кликом, как пользователь.

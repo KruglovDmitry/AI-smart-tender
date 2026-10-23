@@ -39,3 +39,15 @@ def test_same_page_hash_link_is_not_a_document():
     ])
     reading = accept_card(TenderResult(id="95841975", url=page), obs, {"documents": [{"ref": 1}, {"ref": 2}]})
     assert [d["name"] for d in reading.tender.documents] == ["ТЗ.docx"] and reading.rejected == 1
+
+
+def test_document_ref_is_moved_from_service_link_to_the_file():
+    page = "https://utp.sberbank-ast.ru/VIP/NBT/PurchaseView/632/0/0/4258301"
+    obs = Observation(url=page, text="0 ТЗ_сервер_EPYC_9475F.docx Скачать архив доверенностей к подписям файла", elements=[
+        Element(ref=41, tag="span", role="clickable", name="0 ТЗ_сервер_EPYC_9475F.docx"),
+        Element(ref=43, tag="a", name="Скачать архив доверенностей к подписям файла",
+                href="https://utp.sberbank-ast.ru/VIP/File/FileAttorneyArchive?fid=1"),
+    ])
+    reading = accept_card(TenderResult(id="SBR028", url=page), obs,
+                          {"documents": [{"ref": 43, "name": "ТЗ_сервер_EPYC_9475F.docx"}]})
+    assert reading.refs == [41]

@@ -118,6 +118,11 @@ def accept_card(tender: TenderResult, obs: Observation, data: dict) -> CardReadi
         if el is None:
             reading.rejected += 1
             continue
+        named = str(item.get("name") or "").strip() if isinstance(item, dict) else ""
+        if named and _norm(named) not in _norm(el.name):
+            # Модель назвала файл, но указала соседний элемент (Сбер-АСТ: «архив доверенностей» вместо
+            # самого файла) — берём элемент, в имени которого есть название файла.
+            el = next((other for other in obs.elements if _norm(named) in _norm(other.name)), el)
         if el.href and urldefrag(el.href)[0] == urldefrag(obs.url)[0]:
             # Ссылка «#» на эту же страницу — не файл: так площадки рисуют закрытый документ
             # (РосТендер: «1 файл» до регистрации). Скачивать нечего.

@@ -178,7 +178,10 @@ async def _save_from_url(
 
 
 # Без \b: регулярка уходит в браузер, а там \b не понимает кириллицу.
-_DOWNLOAD_BUTTON = re.compile(r"^\s*(скачать|загрузить|download)(?![а-яёa-z])", re.I)
+_DOWNLOAD_BUTTON = re.compile(r"^\s*(скачать|загрузить|выгрузить|download)(?![а-яёa-z])", re.I)
+# Служебные кнопки рядом с файлом — не сам файл (Сбер-АСТ: «Скачать архив доверенностей к подписям файла»
+# отдаёт пустой ответ, а файл — по «Выгрузить архив» в окне «Скачивание файла»).
+_SERVICE_BUTTON = re.compile(r"довереннос|подпис|сертификат", re.I)
 
 
 async def _dialog_button(page):
@@ -187,7 +190,7 @@ async def _dialog_button(page):
         has_text=_DOWNLOAD_BUTTON)
     for index in reversed(range(await buttons.count())):  # окно обычно в конце документа
         button = buttons.nth(index)
-        if await button.is_visible():
+        if await button.is_visible() and not _SERVICE_BUTTON.search(await button.inner_text()):
             return button
     return None
 

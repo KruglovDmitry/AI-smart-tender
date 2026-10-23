@@ -55,8 +55,7 @@ def list_goal_text(task, keyword: str) -> str:
     )
 
 
-def _descending(batch: list[TenderResult]) -> bool:
-    dates = [t.published_at for t in batch if t.published_at]
+def _descending(dates: list[str]) -> bool:
     return len(dates) >= 3 and dates == sorted(dates, reverse=True)
 
 
@@ -128,7 +127,7 @@ async def execute(
         seen_numbers.extend(n for n in reading.numbers if n not in seen_numbers)
         if obs.signature not in pages_read:
             pages_read.append(obs.signature)
-        if len(pages_read) == 1 and _descending(reading.accepted):
+        if len(pages_read) == 1 and _descending(reading.published):
             site_sorted = True  # даты первой страницы идут по убыванию — порядок задал сайт
         progress.mark("list", "llm", bool(reading.accepted))
         rejected = ", ".join(f"{reason}: {count}" for reason, count in reading.rejected.items())

@@ -195,6 +195,45 @@ async def _dialog_button(page):
     return None
 
 
+_MARK_ICONS_JS = """(el) => {
+  // Блок одного файла: ближайший предок с коротким текстом (имя, дата) — в нём иконки этого файла.
+  let block = el;
+  for (let i = 0; i < 4 && block.parentElement; i++) {
+    const up = block.parentElement;
+    if ((up.innerText || '').trim().length > 300) break;
+    block = up;
+  }
+  const icons = [...block.querySelectorAll('svg, i, img, button, [role=button], span, div')].filter(x =>
+    x !== el && !el.contains(x) && !x.contains(el) && getComputedStyle(x).cursor === 'pointer'
+    && !x.closest('[data-ta-icon]') && x.getBoundingClientRect().width > 0);
+  // Верхний элемент с курсором-«рукой» из вложенных, без повторов.
+  const top = icons.filter(x => !icons.some(o => o !== x && o.contains(x)));
+  top.slice(0, 4).forEach((x, i) => x.setAttribute('data-ta-icon', String(i)));
+  return Math.min(top.length, 4);
+}"""
+
+
+async def _click_neighbour_icons(page, locator, wait_download) -> bool:
+    """Имя файла не скачивает, окна «Скачать» нет — пробуем иконки в блоке этого файла
+    (Сбер-АСТ, раздел Банка России: файл отдаёт иконка-стрелка справа от имени)."""
+    try:
+        count = await locator.evaluate(_MARK_ICONS_JS)
+    except Exception:
+        return False
+    try:
+        for index in range(count):
+            icon = page.locator(f'[data-ta-icon="{index}"]').first
+            try:
+                await icon.click(timeout=3_000)
+            except Exception:
+                continue
+            if await wait_download(page, 4):
+                return True
+        return False
+    finally:
+        await page.evaluate("() => document.querySelectorAll('[data-ta-icon]').forEach(x => x.removeAttribute('data-ta-icon'))")
+
+
 async def download_file(
     runtime: BrowserRuntime,
     obs: Observation,
@@ -243,21 +282,27 @@ async def download_file(
         return bool(downloads)
 
     try:
-        try:
-            await locator.click(timeout=8_000)
-        except PlaywrightTimeout:
-            # Кнопка-иконка перекрыта всплывающим уведомлением о прошлой загрузке или вне экрана
-            # (Росатом: из 15 файлов 6 так не кликались) — шлём событие клика напрямую.
-            await locator.dispatch_event("click")
+        # На этой карточке файлы уже отдавали иконки рядом с именем — имя не кликаем.
+        by_icon = getattr(runtime, "prefer_icons", False) and await _click_neighbour_icons(page, locator, wait_download)
+        if not by_icon:
+            try:
+                await locator.click(timeout=8_000)
+            except PlaywrightTimeout:
+                # Кнопка-иконка перекрыта всплывающим уведомлением о прошлой загрузке или вне экрана
+                # (Росатом: из 15 файлов 6 так не кликались) — шлём событие клика напрямую.
+                await locator.dispatch_event("click")
         if not await wait_download(page, 6):
             dialog_page = popups[-1] if popups else page
             button = None
-            for _ in range(40):  # до 10 с: новая вкладка может сначала пройти Anti-DDoS
+            for _ in range(40 if popups else 12):  # до 10 с, если открылась вкладка (Anti-DDoS), иначе 3 с
                 button = await _dialog_button(dialog_page)
                 if button is not None or downloads:
                     break
                 await dialog_page.wait_for_timeout(250)
-            if not downloads:
+            if not downloads and button is None and await _click_neighbour_icons(page, locator, wait_download):
+                # Загрузку дала иконка рядом с именем файла: остальные файлы этой карточки — сразу так.
+                runtime.prefer_icons = True
+            elif not downloads:
                 if button is None:
                     return _failed(source, tender_url, "Браузер не начал загрузку, кнопки «Скачать» после клика нет.")
                 href = await button.get_attribute("href")

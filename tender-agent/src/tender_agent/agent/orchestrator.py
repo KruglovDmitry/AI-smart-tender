@@ -100,12 +100,13 @@ async def execute(
     seen_numbers: list[str] = []  # все номера, что уже прочитала модель (и отклонённые тоже)
     pages_read: list[str] = []
     site_sorted = False
+    stale_pages = 0  # страниц подряд без новых подходящих, но с закрытыми — при сортировке по дате
 
     def unique() -> int:
         return len(rank_tenders(collected, sort_by=None, limit=10_000))
 
     async def extract(obs: Observation) -> str:
-        nonlocal site_sorted
+        nonlocal site_sorted, stale_pages
         progress.llm_calls += 1
         try:
             reading = await read_results(llm, obs, keyword=keyword, sort_required=bool(task.sort_by),
@@ -132,7 +133,9 @@ async def execute(
         progress.mark("list", "llm", bool(reading.accepted))
         rejected = ", ".join(f"{reason}: {count}" for reason, count in reading.rejected.items())
         stale = ""
-        if site_sorted and reading.found and unique() == before and reading.rejected.get("приём заявок закончен"):
+        stale_pages = stale_pages + 1 if (site_sorted and reading.found and unique() == before
+                                          and reading.rejected.get("приём заявок закончен")) else 0
+        if stale_pages:
             # Выдача по дате, а новых подходящих нет и попадаются закрытые: дальше только старее.
             stale = ("; подходящих новых записей нет, а закрытые уже пошли — дальше по дате только более старые "
                      "закупки: если выдача отсортирована по дате, заверши (done)")
@@ -146,8 +149,12 @@ async def execute(
     loop = Loop(runtime=runtime, settings=settings, task=task, llm=llm, host=host, progress=progress,
                 errors=errors, deadline=started + task.timeout_seconds, phase="list", max_steps=task.max_actions,
                 vision_limit=settings.vision_max_calls)
+    def exhausted() -> str | None:
+        # Две страницы подряд по дате — одни закрытые: модель на Сбер-АСТ листала их до таймаута.
+        return "Дальше по дате только закрытые закупки — выдача исчерпана." if stale_pages >= 2 else None
+
     outcome = await loop.run(Goal(text=list_goal_text(task, keyword), extract=extract, status=progress_line,
-                                  context=f"площадка закупок {task.url}, запрос «{keyword}»"))
+                                  context=f"площадка закупок {task.url}, запрос «{keyword}»", finished=exhausted))
     if outcome.outcome in {"timeout", "actions", "model_error"}:
         errors.append(outcome.note)
 

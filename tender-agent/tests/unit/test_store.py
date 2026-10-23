@@ -83,3 +83,19 @@ def test_platform_prefixed_number_or_inn_suffix_still_matches(tmp_path: Path) ->
                                                        customer="ГБУЗ «ГП № 36 ДЗМ» (ИНН: 7723103970)",
                                                        url="https://zakupki.mos.ru/auction/999"))["new"] == 0
     assert len(store.search()) == 2
+
+
+def test_same_card_with_differently_read_number_is_one_record(tmp_path: Path) -> None:
+    # Росатом: в первый раз модель прочитала «242340 (5116123)», во второй — «242340».
+    store = TenderStore(tmp_path / "agent.sqlite3")
+
+    def run(*found: TenderResult) -> dict:
+        task = TaskSpec(url="https://zakupki.rosatom.ru/", topic="ИБП", keywords=["ИБП"])
+        return store.save_run("задание", TaskResult(status="completed", task=task, results=list(found)))
+
+    card = "https://zakupki.rosatom.ru/?link=procurements&obj_id=khxx"
+    assert run(TenderResult(id="242340 (5116123)", title="Модернизация ИБП", url=card))["new"] == 1
+    assert run(TenderResult(id="242340", title="Модернизация ИБП", url=card))["new"] == 0
+    # Тот же адрес (адрес выдачи), но другой номер — другая закупка.
+    assert run(TenderResult(id="242341", title="Замена ИБП", url=card))["new"] == 1
+    assert len(store.search()) == 2

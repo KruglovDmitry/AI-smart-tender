@@ -205,7 +205,10 @@ async def execute(
             errors.append(f"Модель: {outcome.note}")
     elif len(results) < task.limit:
         status = "partial"
-        errors.append(f"Найдено {len(results)} из {task.limit}.")
+        # Обычно это не сбой: активных закупок по запросу на площадке столько и есть.
+        errors.append(f"Найдено {len(results)} из {task.limit}" + (
+            ": больше закупок с открытым приёмом заявок по этому запросу агент не нашёл."
+            if task.active_only else "."))
     else:
         status = "completed"
     if task.download_documents and status == "completed":

@@ -128,12 +128,13 @@ async def execute(
     pages_read: list[str] = []
     site_sorted = False
     stale_pages = 0  # страниц подряд без новых подходящих, но с закрытыми — при сортировке по дате
+    idle_reads = 0  # повторных чтений той же страницы без новых записей подряд
 
     def unique() -> int:
         return len(rank_tenders(collected, sort_by=None, limit=10_000))
 
     async def extract(obs: Observation) -> str:
-        nonlocal site_sorted, stale_pages
+        nonlocal site_sorted, stale_pages, idle_reads
         progress.llm_calls += 1
         try:
             reading = await read_results(llm, obs, keyword=keyword, sort_required=bool(task.sort_by),
@@ -153,6 +154,9 @@ async def execute(
             reading.accepted.extend(resolved)
         collected.extend(reading.accepted)
         seen_numbers.extend(n for n in reading.numbers if n not in seen_numbers)
+        # Та же страница прочитана снова и ничего не добавила (Фабрикант: 2 записи с фильтром, пять extract
+        # подряд и две минуты до таймаута) — выдача прочитана.
+        idle_reads = idle_reads + 1 if obs.signature in pages_read and unique() == before else 0
         if obs.signature not in pages_read:
             pages_read.append(obs.signature)
         if len(pages_read) == 1 and (_descending(reading.published) or _SORT_DESC_URL.search(obs.url)):
@@ -181,7 +185,9 @@ async def execute(
                 vision_limit=settings.vision_max_calls)
     def exhausted() -> str | None:
         # Две страницы подряд по дате — одни закрытые: модель на Сбер-АСТ листала их до таймаута.
-        return "Дальше по дате только закрытые закупки — выдача исчерпана." if stale_pages >= 2 else None
+        if stale_pages >= 2:
+            return "Дальше по дате только закрытые закупки — выдача исчерпана."
+        return "Страница выдачи прочитана повторно — новых записей нет." if idle_reads >= 2 else None
 
     outcome = await loop.run(Goal(text=list_goal_text(task, keyword), extract=extract, status=progress_line,
                                   context=f"площадка закупок {task.url}, запрос «{keyword}»", finished=exhausted))

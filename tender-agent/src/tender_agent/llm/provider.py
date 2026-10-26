@@ -8,6 +8,7 @@ import httpx
 
 from ..config import Settings
 from ..observability.trace import current_trace
+from ..sites.learning import PROPOSE_SYSTEM
 
 LLM_CALL_TIMEOUT = 120  # секунд на один вызов модели целиком
 
@@ -110,6 +111,9 @@ class OpenAICompatibleClient:
 
     async def read_card(self, task: dict, observation: dict) -> dict:
         return await self._traced("read_card", _CARD_SYSTEM, task, observation)
+
+    async def propose_notes(self, task: dict, observation: dict) -> dict:
+        return await self._traced("propose_notes", PROPOSE_SYSTEM, task, observation)
 
     async def _traced(self, kind: str, system: str, task: dict, observation: dict) -> dict:
         trace = current_trace.get()

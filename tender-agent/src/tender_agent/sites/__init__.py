@@ -6,7 +6,8 @@
 доменом заменяет базовый целиком.
 
 Модель получает заметки только текущего сайта и этапа (выдача или карточка) — это подсказки,
-а не правила: сайты меняются, страница важнее заметки.
+а не правила: сайты меняются, страница важнее заметки. К ним добавляются действующие пункты,
+выведенные из прогонов (``learning.py``), с пометкой «авто».
 """
 
 from __future__ import annotations
@@ -30,10 +31,12 @@ class SiteNotes:
     sections: dict[str, list[str]] = field(default_factory=dict)
     source: str = ""
 
+    def lines(self, phase: str) -> list[str]:
+        return [f"[{name}] {item}" for name in _PHASE_SECTIONS.get(phase, ())
+                for item in self.sections.get(name, [])]
+
     def text(self, phase: str) -> str:
-        lines = [f"[{name}] {item}" for name in _PHASE_SECTIONS.get(phase, ())
-                 for item in self.sections.get(name, [])]
-        return "\n".join(lines)[:MAX_CHARS]
+        return "\n".join(self.lines(phase))[:MAX_CHARS]
 
 
 def parse(text: str, source: str = "") -> SiteNotes | None:
@@ -78,7 +81,13 @@ def notes_for(url: str, phase: str, extra_dir: Path | None = None) -> str:
     host = (urlparse(url).hostname or "").lower().removeprefix("www.")
     if not host:
         return ""
-    for notes in load(extra_dir):
-        if any(host == d or host.endswith("." + d) for d in notes.domains):
-            return notes.text(phase)
-    return ""
+    found = next((notes for notes in load(extra_dir)
+                  if any(host == d or host.endswith("." + d) for d in notes.domains)), None)
+    lines = found.lines(phase) if found else []
+    if extra_dir is not None:
+        from .learning import CandidateStore, _norm, notes_lines  # noqa: PLC0415
+
+        add, remove = notes_lines(found.domains[0] if found else host, CandidateStore(extra_dir), phase)
+        # Пункт, который прогоны признали устаревшим, модель больше не видит; выведенные — после заметки.
+        lines = [line for line in lines if _norm(line.split("] ", 1)[-1]) not in remove] + add
+    return "\n".join(lines)[:MAX_CHARS]

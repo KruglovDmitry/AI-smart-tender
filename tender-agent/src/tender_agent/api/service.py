@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 
 from ..agent.orchestrator import execute
@@ -9,7 +10,10 @@ from ..browser.runtime import BrowserRuntime
 from ..config import Settings
 from ..llm.base import LLMClient
 from ..llm.provider import OpenAICompatibleClient
+from ..agent.planner import _DOMAIN
+from ..observability.logging import get_logger
 from ..observability.trace import RunTrace, current_trace
+from ..sites.learning import learn
 from ..storage.repository import Repository
 from ..storage.tenders import TenderStore
 
@@ -50,7 +54,9 @@ async def run_task(
     trace = None
     if settings.trace_enabled:
         url = re.search(r"https?://[^\s,;»\"]+", text)
-        trace = RunTrace(settings.data_dir / "_agent" / "runs", url.group(0) if url else "", text,
+        bare = None if url else _DOMAIN.search(text)
+        trace = RunTrace(settings.data_dir / "_agent" / "runs",
+                         url.group(0) if url else f"https://{bare.group(1)}" if bare else "", text,
                          settings.trace_screenshots)
     token = current_trace.set(trace)
     result: TaskResult | None = None
@@ -69,3 +75,23 @@ async def run_task(
         current_trace.reset(token)
         if trace is not None and result is not None:
             trace.finish(result)
+            if settings.notes_learning and llm is not None and hasattr(llm, "propose_notes") and result.task:
+                summary = {"url": result.task.url, "status": result.status, "stats": result.stats,
+                           "seconds": trace.seconds()}
+                # В фоне: ответ не ждёт разбора прогона (ещё один вызов модели).
+                task = asyncio.create_task(_learn(llm, trace, settings, summary))
+                _LEARNING.add(task)
+                task.add_done_callback(_LEARNING.discard)
+
+
+_LEARNING: set[asyncio.Task] = set()
+
+
+async def _learn(llm: LLMClient, trace: RunTrace, settings: Settings, summary: dict) -> None:
+    """Заметки из прогона. Ошибка здесь не должна трогать результат."""
+    try:
+        proposal = await learn(llm, trace.dir, settings.data_dir / "_agent" / "sites", summary)
+        if proposal is not None:
+            trace.note("notes.json", proposal)
+    except Exception as exc:
+        get_logger().warning("Заметки из прогона не обновлены: %s: %s", type(exc).__name__, exc)

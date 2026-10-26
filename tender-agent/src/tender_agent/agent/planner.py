@@ -35,6 +35,12 @@ class TaskParseError(ValueError):
 
 def _limit_token(text: str, default: int) -> int:
     match = re.search(r"(?:последн\w+|перв\w+)\s+(\d+|[а-яё]+)", text, re.I)
+    if match and not match.group(1).isdigit() and match.group(1).casefold() not in _NUM_WORDS:
+        match = None  # «3 последние закупки»: число стоит перед словом
+    if not match:
+        match = re.search(r"(\d+|[а-яё]+)\s+(?:последн\w+|перв\w+|свеж\w+|нов\w+)\s+закуп", text, re.I)
+        if match and not match.group(1).isdigit() and match.group(1).casefold() not in _NUM_WORDS:
+            match = None
     if not match:
         match = re.search(r"(\d+)\s+закуп", text, re.I)
     if not match:

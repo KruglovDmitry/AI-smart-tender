@@ -249,3 +249,7 @@ def test_task_from_chat_without_scheme_and_quotes():
     for text, (url, topic) in cases.items():
         task = parse_task(text, Settings())
         assert (task.url, task.topic) == (url, topic), text
+    assert parse_task("Найди на zakupki.gov.ru 3 последние закупки ИБП (источник бесперебойного питания)", Settings()).limit == 3
+    task = parse_task("Найди на https://zakupki.gov.ru 3 последние закупки ИБП (источник бесперебойного питания) и скачай", Settings())
+    assert task.topic == "ИБП"
+    assert parse_task('С площадки https://x.ru верни последние 10 закупок по ключевому слову "ИБП"', Settings()).limit == 10

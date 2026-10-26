@@ -233,3 +233,19 @@ def test_closed_after_card_status_and_sole_supplier():
     open_ = TenderResult(title="ИБП", url="https://x.ru/3", status="Опубликована", deadline="2026-11-02")
     assert closed_after_card(done, "2026-10-26") and closed_after_card(sole, "2026-10-26")
     assert not closed_after_card(open_, "2026-10-26")
+
+
+def test_task_from_chat_without_scheme_and_quotes():
+    from tender_agent.agent.planner import parse_task
+    from tender_agent.config import Settings
+
+    cases = {
+        "Найди на zakupki.gov.ru 5 последних закупок ИБП, включая завершённые, и скачай документы": ("https://zakupki.gov.ru", "ИБП"),
+        "Найди на https://zakupki.gov.ru 5 последних закупок по ключевому слову ИБП, включая завершённые": ("https://zakupki.gov.ru", "ИБП"),
+        "Найди на zakupki.gov.ru 3 последние закупки ИБП и скачай документы": ("https://zakupki.gov.ru", "ИБП"),
+        'С площадки https://www.roseltorg.ru/ верни последние 5 закупок по ключевому слову "картриджи"': ("https://www.roseltorg.ru/", "картриджи"),
+        "Найди закупки серверного оборудования на www.sberbank-ast.ru": ("https://www.sberbank-ast.ru", "серверного оборудования"),
+    }
+    for text, (url, topic) in cases.items():
+        task = parse_task(text, Settings())
+        assert (task.url, task.topic) == (url, topic), text

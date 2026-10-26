@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from datetime import date, timedelta
 
@@ -72,6 +73,17 @@ def _older_than_found(page_dates: list[str], found: list[TenderResult]) -> bool:
 
 def _descending(dates: list[str]) -> bool:
     return len(dates) >= 3 and dates == sorted(dates, reverse=True)
+
+
+# Сортировка «сначала новые» в адресе выдачи: Росэлторг sort=date_published_down, Портал поставщиков
+# sortDesc=true. Нужна, когда в строках выдачи нет даты публикации (Росэлторг — только срок подачи).
+_SORT_DESC_URL = re.compile(r"sort\w*=[\w.]*(?:desc|down)\b|sortdesc=true", re.I)
+CLOSED_TAIL = 5  # закрытых подряд после последней подходящей — дальше по дате только они
+
+
+def _closed_tail(tail: list[str], found: list[TenderResult]) -> bool:
+    """Хвост страницы — закрытые закупки подряд, и уже на неделю старше найденного: дальше листать незачем."""
+    return len(tail) >= CLOSED_TAIL and _older_than_found(tail, found)
 
 
 async def execute(
@@ -143,7 +155,7 @@ async def execute(
         seen_numbers.extend(n for n in reading.numbers if n not in seen_numbers)
         if obs.signature not in pages_read:
             pages_read.append(obs.signature)
-        if len(pages_read) == 1 and _descending(reading.published):
+        if len(pages_read) == 1 and (_descending(reading.published) or _SORT_DESC_URL.search(obs.url)):
             site_sorted = True  # даты первой страницы идут по убыванию — порядок задал сайт
         progress.mark("list", "llm", bool(reading.accepted))
         rejected = ", ".join(f"{reason}: {count}" for reason, count in reading.rejected.items())
@@ -151,6 +163,8 @@ async def execute(
         stale_pages = stale_pages + 1 if (site_sorted and reading.found and unique() == before
                                           and reading.rejected.get("приём заявок закончен")
                                           and _older_than_found(reading.published, collected)) else 0
+        if site_sorted and _closed_tail(reading.closed_tail, collected):
+            stale_pages = 2  # хвост этой же страницы — одни закрытые: следующая страница ещё старше
         if stale_pages:
             # Выдача по дате, а новых подходящих нет и попадаются закрытые: дальше только старее.
             stale = ("; подходящих новых записей нет, а закрытые уже пошли — дальше по дате только более старые "

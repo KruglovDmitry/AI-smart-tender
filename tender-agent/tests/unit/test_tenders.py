@@ -182,3 +182,43 @@ def test_page_dates_include_rejected_records():
     reading = accept_records(obs, {"records": records}, keyword="сервер", sort_required=True, active_only=True,
                              today="2026-10-23")
     assert len(reading.accepted) == 1 and reading.published == ["2026-10-22", "2026-10-15", "2026-10-09"]
+
+
+def test_closed_tail_after_last_active_record():
+    from tender_agent.agent.orchestrator import _closed_tail
+    from tender_agent.tenders.reading import accept_records
+
+    dates = ["22.10.2026", "15.10.2026", "09.10.2026", "08.10.2026", "25.09.2026", "14.09.2026", "09.09.2026"]
+    names = [f"Сервер {n}" for n in range(1, 8)]
+    obs = Observation(url="https://x.ru/s", text=" ".join(f"{n} {d} завершена" for n, d in zip(names, dates)),
+                      elements=[Element(ref=n, tag="a", name=names[n - 1], href=f"https://x.ru/t/{n}") for n in range(1, 8)])
+    records = [{"link_ref": n, "title": names[n - 1], "published": dates[n - 1],
+                **({} if n <= 2 else {"status": "завершена"})} for n in range(1, 8)]
+    reading = accept_records(obs, {"records": records}, keyword="сервер", sort_required=True, active_only=True,
+                             today="2026-10-26")
+    assert len(reading.accepted) == 2 and len(reading.closed_tail) == 5
+    assert _closed_tail(reading.closed_tail, reading.accepted)
+    # Закрытые среди сегодняшних (ЕИС, картриджи) — не хвост старых закупок.
+    assert not _closed_tail(["2026-10-26"] * 5, reading.accepted)
+
+
+def test_results_window_starts_after_read_records():
+    from tender_agent.tenders.reading import RESULTS_TEXT_FOR_MODEL, results_window
+
+    rows = [f"Картридж {n} SP{1000 + n // 5} (Лот {n}) Прием заявок " + "x" * 400 for n in range(120)]
+    elements = [Element(ref=n, tag="a", name=f"Картридж {n}", href=f"https://x.ru/t/{n}") for n in range(120)]
+    obs = Observation(url="https://x.ru/s", text=" ".join(rows), elements=elements)
+    text, links = results_window(obs, [])
+    assert text.startswith("Картридж 0") and len(text) == RESULTS_TEXT_FOR_MODEL
+    text, links = results_window(obs, ["SP1009 (Лот 45)"])
+    assert "Картридж 49 " in text and "Картридж 40 " not in text and "Картридж 90 " in text
+    names = {link["text"] for link in links}
+    assert "Картридж 49" in names and "Картридж 30" not in names
+
+
+def test_sort_desc_in_url():
+    from tender_agent.agent.orchestrator import _SORT_DESC_URL
+
+    assert _SORT_DESC_URL.search("https://www.roseltorg.ru/procedures/search?query_field=x&sort=date_published_down")
+    assert _SORT_DESC_URL.search("https://zakupki.mos.ru/purchase/list?sortField=PublishDate&sortDesc=true")
+    assert not _SORT_DESC_URL.search("https://zakupki.gov.ru/epz/order/extendedsearch/results.html?sortBy=PUBLISH_DATE")

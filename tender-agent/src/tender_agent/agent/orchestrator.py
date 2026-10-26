@@ -220,6 +220,10 @@ async def execute(
     elif not results and outcome.empty:
         status = "partial"
         errors.append("По применённому запросу ничего не найдено. Это не вывод обо всей площадке.")
+    elif not results and outcome.outcome == "done" and task.active_only and (seen_numbers or collected):
+        # Выдача прочитана, но все закупки закрыты (Росатом «ИБП»): это ответ, а не сбой.
+        status = "partial"
+        errors.append("Закупок с открытым приёмом заявок по этому запросу нет.")
     elif not results:
         status = "failed"
         if outcome.outcome == "done" and outcome.note:

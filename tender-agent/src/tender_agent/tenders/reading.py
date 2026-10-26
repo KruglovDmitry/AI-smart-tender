@@ -47,7 +47,9 @@ def links_for_model(obs: Observation, limit: int | None = MAX_LINKS) -> list[dic
 
 # Этапы, на которых заявку уже не подать.
 _CLOSED = re.compile(r"заверш|отмен|не\s*состоял|состоял|архив|закрыт(?:а|о|ы)?(?![а-яё])|работа комисси|рассмотрени|подведени|"
-                     r"итог|исполнени|заключ|приостанов|прием заявок окончен|приём заявок окончен|ожидает решения", re.I)
+                     r"итог|исполнени|заключ|приостанов|прием заявок окончен|приём заявок окончен|ожидает решения|проведен", re.I)
+# Закупка у единственного поставщика (Росатом «Прямая закупка у ЕП», ЕИС п. 4/5 ст. 93): заявку не подать.
+_SOLE_SUPPLIER = re.compile(r"единствен", re.I)
 
 
 def accept_records(obs: Observation, data: dict, *, keyword: str, sort_required: bool,
@@ -110,6 +112,12 @@ def accept_records(obs: Observation, data: dict, *, keyword: str, sort_required:
             reading.pending.append((card, element))
     _merge_dash_lots(reading)
     return reading
+
+
+def closed_after_card(card: TenderResult, today: str) -> bool:
+    """После карточки: срок, статус или способ «у единственного поставщика» — участвовать нельзя."""
+    method = str(card.details.get("procurement_method") or "")
+    return _closed(card, today) or bool(_SOLE_SUPPLIER.search(method))
 
 
 def _closed(card: TenderResult, today: str) -> bool:

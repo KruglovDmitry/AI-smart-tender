@@ -21,7 +21,7 @@ from ..observability.trace import current_trace
 from ..storage.repository import Repository
 from ..tenders.models import Observation
 from ..tenders.ranking import rank_tenders
-from ..tenders.reading import read_results
+from ..tenders.reading import closed_after_card, read_results
 from . import actions
 from .cards import CardReader
 from .resolve import resolve_links
@@ -200,12 +200,13 @@ async def execute(
     if results and outcome.outcome != "needs_user":
         results = await cards.read_all(results)
         if task.active_only:
-            # Срок подачи часто виден только на карточке (Фабрикант: в выдаче его нет) — проверяем ещё раз.
+            # Срок подачи часто виден только на карточке (Фабрикант: в выдаче его нет), способ закупки — тоже
+            # (Росатом: «Прямая закупка у ЕП» в статусе «Опубликована») — проверяем ещё раз.
             today = date.today().isoformat()
-            late = [t for t in results if t.deadline and t.deadline < today]
+            late = [t for t in results if closed_after_card(t, today)]
             if late:
                 results = [t for t in results if t not in late]
-                errors.append(f"Отброшено после чтения карточки, приём заявок закончен: {len(late)}.")
+                errors.append(f"Отброшено после чтения карточки, приём заявок закончен или закупка у единственного поставщика: {len(late)}.")
         locked = sum(1 for t in results if t.details.get("access_block") == "login")
         checked = sum(1 for t in results if t.details.get("access_block") == "captcha")
         if locked:

@@ -222,3 +222,14 @@ def test_sort_desc_in_url():
     assert _SORT_DESC_URL.search("https://www.roseltorg.ru/procedures/search?query_field=x&sort=date_published_down")
     assert _SORT_DESC_URL.search("https://zakupki.mos.ru/purchase/list?sortField=PublishDate&sortDesc=true")
     assert not _SORT_DESC_URL.search("https://zakupki.gov.ru/epz/order/extendedsearch/results.html?sortBy=PUBLISH_DATE")
+
+
+def test_closed_after_card_status_and_sole_supplier():
+    from tender_agent.tenders.reading import closed_after_card
+
+    done = TenderResult(title="ИБП", url="https://x.ru/1", status="Проведена")
+    sole = TenderResult(title="ИБП", url="https://x.ru/2", status="Опубликована",
+                        details={"procurement_method": "Прямая закупка у единственного поставщика"})
+    open_ = TenderResult(title="ИБП", url="https://x.ru/3", status="Опубликована", deadline="2026-11-02")
+    assert closed_after_card(done, "2026-10-26") and closed_after_card(sole, "2026-10-26")
+    assert not closed_after_card(open_, "2026-10-26")

@@ -24,6 +24,7 @@ from ..browser.snapshot import get_page_state, page_changed
 from ..config import Settings
 from ..llm.base import LLMClient
 from ..observability.trace import current_trace
+from ..sites import notes_for
 from ..tenders.models import Element, Observation
 from . import actions
 from .state import Progress
@@ -143,11 +144,14 @@ class Loop:
             record: dict = {"phase": self.phase, "step": step, "url": obs.url, "title": obs.title[:120],
                             "elements": len(obs.elements), "text_chars": len(obs.text)}
             self.progress.llm_calls += 1
+            request = {"goal": goal.text, "progress": goal.status(), "history": history[-HISTORY_FOR_MODEL:]}
+            # Заметки о площадке — по адресу страницы, а не по площадке запуска: карточка могла увести
+            # на площадку-источник.
+            site = notes_for(obs.url, self.phase, self.settings.data_dir / "_agent" / "sites")
+            if site:
+                request["site_notes"] = site
             try:
-                decision = await self.llm.next_action(
-                    {"goal": goal.text, "progress": goal.status(), "history": history[-HISTORY_FOR_MODEL:]},
-                    page_for_model(obs),
-                )
+                decision = await self.llm.next_action(request, page_for_model(obs))
                 model_failures = 0
             except Exception as exc:
                 model_failures += 1

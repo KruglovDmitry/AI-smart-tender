@@ -9,6 +9,12 @@ from ..config import Settings
 
 _URL = re.compile(r"https?://[^\s,;]+", re.I)
 _QUOTED = re.compile(r"[\"«](.+?)[\"»]")
+# Адрес без схемы: модель чата пишет «на zakupki.gov.ru» — так же, как человек.
+_DOMAIN = re.compile(r"(?<![\w.@/-])((?:[a-z0-9-]+\.)+(?:ru|su|com|net|org|info|pro|online)(?:/[^\s,;]*)?)(?![\w-])", re.I)
+# Слово без кавычек: «по ключевому слову ИБП, …», «3 последние закупки ИБП и скачай …».
+_END = r"(?=\s*[,.;(]|\s+(?:и|с|со|включая|за|на|в|по|для|без)\s|\s*$)"
+_UNQUOTED = (re.compile(r"(?:по\s+(?:ключевому\s+)?слову|по\s+запросу)\s+(.+?)" + _END, re.I),
+             re.compile(r"закуп\w*\s+(?!по\s|на\s|с\s|в\s|и\s)(.+?)" + _END, re.I))
 _NUM_WORDS = {
     "один": 1,
     "два": 2,
@@ -29,6 +35,12 @@ class TaskParseError(ValueError):
 
 def _limit_token(text: str, default: int) -> int:
     match = re.search(r"(?:последн\w+|перв\w+)\s+(\d+|[а-яё]+)", text, re.I)
+    if match and not match.group(1).isdigit() and match.group(1).casefold() not in _NUM_WORDS:
+        match = None  # «3 последние закупки»: число стоит перед словом
+    if not match:
+        match = re.search(r"(\d+|[а-яё]+)\s+(?:последн\w+|перв\w+|свеж\w+|нов\w+)\s+закуп", text, re.I)
+        if match and not match.group(1).isdigit() and match.group(1).casefold() not in _NUM_WORDS:
+            match = None
     if not match:
         match = re.search(r"(\d+)\s+закуп", text, re.I)
     if not match:
@@ -44,15 +56,24 @@ def parse_task(text: str, settings: Settings) -> TaskSpec:
     if not raw:
         raise TaskParseError("Пустое задание.")
     found = _URL.search(raw)
-    if not found:
+    if found:
+        url = found.group(0).rstrip(".,)")
+    elif bare := _DOMAIN.search(raw):
+        url = "https://" + bare.group(1).rstrip(".,)")
+    else:
         raise TaskParseError("В задании нет URL площадки.")
-    url = found.group(0).rstrip(".,)")
     quoted = [item.strip() for item in _QUOTED.findall(raw) if item.strip()]
     topic = quoted[0] if quoted else ""
     if not topic:
         themed = re.search(r"на тему\s+(.+?)\s*$", raw, re.I)
         if themed:
             topic = themed.group(1).strip(" «».")
+    for pattern in _UNQUOTED:
+        if topic:
+            break
+        unquoted = pattern.search(_URL.sub(" ", raw))
+        if unquoted:
+            topic = unquoted.group(1).strip(" «».")
     if not topic:
         raise TaskParseError("Не удалось однозначно определить ключевое слово или тему.")
     sort_by = "published_at" if re.search(r"последн|дат[аеуы]\s+публикац", raw, re.I) else None

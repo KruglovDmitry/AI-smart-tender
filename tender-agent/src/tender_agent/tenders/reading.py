@@ -31,20 +31,25 @@ class ResultsReading:
     # Даты публикации всех записей страницы, и отклонённых тоже: по ним видно, отсортирована ли выдача
     # по дате, даже когда подошли одна-две записи (Сбер-АСТ: 2 активных из 20).
     published: list[str] = field(default_factory=list)
+    # Даты закрытых записей, что идут подряд после последней подходящей (не по теме — не прерывает).
+    # При сортировке по дате это хвост выдачи: Сбер-АСТ — 2 активных сверху, ниже 18 закрытых.
+    closed_tail: list[str] = field(default_factory=list)
 
     def reject(self, reason: str) -> None:
         self.rejected[reason] = self.rejected.get(reason, 0) + 1
 
 
-def links_for_model(obs: Observation) -> list[dict]:
+def links_for_model(obs: Observation, limit: int | None = MAX_LINKS) -> list[dict]:
     """Ссылки страницы и кликабельные элементы без адреса (строки таблиц, открывающие карточку скриптом)."""
     return [{"ref": el.ref, "text": el.name[:120], "href": (el.href or "")[:200]}
-            for el in obs.elements if el.href or el.role == "clickable"][:MAX_LINKS]
+            for el in obs.elements if el.href or el.role == "clickable"][:limit]
 
 
 # Этапы, на которых заявку уже не подать.
 _CLOSED = re.compile(r"заверш|отмен|не\s*состоял|состоял|архив|закрыт(?:а|о|ы)?(?![а-яё])|работа комисси|рассмотрени|подведени|"
-                     r"итог|исполнени|заключ|приостанов|прием заявок окончен|приём заявок окончен|ожидает решения", re.I)
+                     r"итог|исполнени|заключ|приостанов|прием заявок окончен|приём заявок окончен|ожидает решения|проведен", re.I)
+# Закупка у единственного поставщика (Росатом «Прямая закупка у ЕП», ЕИС п. 4/5 ст. 93): заявку не подать.
+_SOLE_SUPPLIER = re.compile(r"единствен", re.I)
 
 
 def accept_records(obs: Observation, data: dict, *, keyword: str, sort_required: bool,
@@ -93,7 +98,10 @@ def accept_records(obs: Observation, data: dict, *, keyword: str, sort_required:
             continue
         if active_only and _closed(card, today or date.today().isoformat()):
             reading.reject("приём заявок закончен")
+            if card.published_at:
+                reading.closed_tail.append(card.published_at)
             continue
+        reading.closed_tail.clear()
         if lot:
             # Строка выдачи — лот процедуры: склеится с другими лотами по номеру процедуры (ranking),
             # а название процедуры возьмём с её карточки.
@@ -104,6 +112,12 @@ def accept_records(obs: Observation, data: dict, *, keyword: str, sort_required:
             reading.pending.append((card, element))
     _merge_dash_lots(reading)
     return reading
+
+
+def closed_after_card(card: TenderResult, today: str) -> bool:
+    """После карточки: срок, статус или способ «у единственного поставщика» — участвовать нельзя."""
+    method = str(card.details.get("procurement_method") or "")
+    return _closed(card, today) or bool(_SOLE_SUPPLIER.search(method))
 
 
 def _closed(card: TenderResult, today: str) -> bool:
@@ -149,8 +163,27 @@ async def read_results(llm: LLMClient, obs: Observation, *, keyword: str, sort_r
                        active_only: bool = False, skip: list[str] | None = None) -> ResultsReading:
     # skip — номера уже прочитанных записей: после «Показать ещё» страница растёт (10 → 40 записей),
     # и без него модель каждый раз переписывает всю выдачу заново (до двух минут на ответ).
+    text, links = results_window(obs, skip or [])
     data = await llm.read_results(
         {"keyword": keyword, "skip": (skip or [])[-300:]},
-        {"url": obs.url, "title": obs.title, "text": obs.text[:RESULTS_TEXT_FOR_MODEL], "links": links_for_model(obs)},
+        {"url": obs.url, "title": obs.title, "text": text, "links": links},
     )
     return accept_records(obs, data, keyword=keyword, sort_required=sort_required, active_only=active_only)
+
+
+def results_window(obs: Observation, skip: list[str]) -> tuple[str, list[dict]]:
+    """Текст и ссылки выдачи для модели. Длинная страница после «Показать ещё» (Росэлторг: 50–58 тыс.
+    символов) — окно с последней уже прочитанной записи: новые строки внизу, а первые 20 тыс. символов
+    модель уже читала и возвращала пустой список."""
+    if len(obs.text) <= RESULTS_TEXT_FOR_MODEL:
+        return obs.text, links_for_model(obs)
+    seen = [split_lot(number)[0] for number in skip[-300:]]
+    last = max((obs.text.rfind(number) for number in seen if number), default=-1)
+    start = max(0, last - 300) if last > 0 else 0
+    text = obs.text[start:start + RESULTS_TEXT_FOR_MODEL]
+    if not start:
+        return text, links_for_model(obs)
+    # Ссылки — те, чья подпись есть в окне: иначе первые 300 ссылок страницы — уже прочитанные строки.
+    window = _norm(text)
+    links = [link for link in links_for_model(obs, None) if link["text"] and _norm(link["text"]) in window]
+    return text, (links or links_for_model(obs))[:MAX_LINKS]

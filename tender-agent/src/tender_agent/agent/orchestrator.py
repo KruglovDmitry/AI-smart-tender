@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from datetime import date, timedelta
 
@@ -20,7 +21,7 @@ from ..observability.trace import current_trace
 from ..storage.repository import Repository
 from ..tenders.models import Observation
 from ..tenders.ranking import rank_tenders
-from ..tenders.reading import read_results
+from ..tenders.reading import closed_after_card, read_results
 from . import actions
 from .cards import CardReader
 from .resolve import resolve_links
@@ -74,6 +75,17 @@ def _descending(dates: list[str]) -> bool:
     return len(dates) >= 3 and dates == sorted(dates, reverse=True)
 
 
+# Сортировка «сначала новые» в адресе выдачи: Росэлторг sort=date_published_down, Портал поставщиков
+# sortDesc=true. Нужна, когда в строках выдачи нет даты публикации (Росэлторг — только срок подачи).
+_SORT_DESC_URL = re.compile(r"sort\w*=[\w.]*(?:desc|down)\b|sortdesc=true", re.I)
+CLOSED_TAIL = 5  # закрытых подряд после последней подходящей — дальше по дате только они
+
+
+def _closed_tail(tail: list[str], found: list[TenderResult]) -> bool:
+    """Хвост страницы — закрытые закупки подряд, и уже на неделю старше найденного: дальше листать незачем."""
+    return len(tail) >= CLOSED_TAIL and _older_than_found(tail, found)
+
+
 async def execute(
     text: str,
     *,
@@ -116,12 +128,13 @@ async def execute(
     pages_read: list[str] = []
     site_sorted = False
     stale_pages = 0  # страниц подряд без новых подходящих, но с закрытыми — при сортировке по дате
+    idle_reads = 0  # повторных чтений той же страницы без новых записей подряд
 
     def unique() -> int:
         return len(rank_tenders(collected, sort_by=None, limit=10_000))
 
     async def extract(obs: Observation) -> str:
-        nonlocal site_sorted, stale_pages
+        nonlocal site_sorted, stale_pages, idle_reads
         progress.llm_calls += 1
         try:
             reading = await read_results(llm, obs, keyword=keyword, sort_required=bool(task.sort_by),
@@ -141,9 +154,12 @@ async def execute(
             reading.accepted.extend(resolved)
         collected.extend(reading.accepted)
         seen_numbers.extend(n for n in reading.numbers if n not in seen_numbers)
+        # Та же страница прочитана снова и ничего не добавила (Фабрикант: 2 записи с фильтром, пять extract
+        # подряд и две минуты до таймаута) — выдача прочитана.
+        idle_reads = idle_reads + 1 if obs.signature in pages_read and unique() == before else 0
         if obs.signature not in pages_read:
             pages_read.append(obs.signature)
-        if len(pages_read) == 1 and _descending(reading.published):
+        if len(pages_read) == 1 and (_descending(reading.published) or _SORT_DESC_URL.search(obs.url)):
             site_sorted = True  # даты первой страницы идут по убыванию — порядок задал сайт
         progress.mark("list", "llm", bool(reading.accepted))
         rejected = ", ".join(f"{reason}: {count}" for reason, count in reading.rejected.items())
@@ -151,6 +167,8 @@ async def execute(
         stale_pages = stale_pages + 1 if (site_sorted and reading.found and unique() == before
                                           and reading.rejected.get("приём заявок закончен")
                                           and _older_than_found(reading.published, collected)) else 0
+        if site_sorted and _closed_tail(reading.closed_tail, collected):
+            stale_pages = 2  # хвост этой же страницы — одни закрытые: следующая страница ещё старше
         if stale_pages:
             # Выдача по дате, а новых подходящих нет и попадаются закрытые: дальше только старее.
             stale = ("; подходящих новых записей нет, а закрытые уже пошли — дальше по дате только более старые "
@@ -167,7 +185,9 @@ async def execute(
                 vision_limit=settings.vision_max_calls)
     def exhausted() -> str | None:
         # Две страницы подряд по дате — одни закрытые: модель на Сбер-АСТ листала их до таймаута.
-        return "Дальше по дате только закрытые закупки — выдача исчерпана." if stale_pages >= 2 else None
+        if stale_pages >= 2:
+            return "Дальше по дате только закрытые закупки — выдача исчерпана."
+        return "Страница выдачи прочитана повторно — новых записей нет." if idle_reads >= 2 else None
 
     outcome = await loop.run(Goal(text=list_goal_text(task, keyword), extract=extract, status=progress_line,
                                   context=f"площадка закупок {task.url}, запрос «{keyword}»", finished=exhausted))
@@ -180,12 +200,13 @@ async def execute(
     if results and outcome.outcome != "needs_user":
         results = await cards.read_all(results)
         if task.active_only:
-            # Срок подачи часто виден только на карточке (Фабрикант: в выдаче его нет) — проверяем ещё раз.
+            # Срок подачи часто виден только на карточке (Фабрикант: в выдаче его нет), способ закупки — тоже
+            # (Росатом: «Прямая закупка у ЕП» в статусе «Опубликована») — проверяем ещё раз.
             today = date.today().isoformat()
-            late = [t for t in results if t.deadline and t.deadline < today]
+            late = [t for t in results if closed_after_card(t, today)]
             if late:
                 results = [t for t in results if t not in late]
-                errors.append(f"Отброшено после чтения карточки, приём заявок закончен: {len(late)}.")
+                errors.append(f"Отброшено после чтения карточки, приём заявок закончен или закупка у единственного поставщика: {len(late)}.")
         locked = sum(1 for t in results if t.details.get("access_block") == "login")
         checked = sum(1 for t in results if t.details.get("access_block") == "captcha")
         if locked:
@@ -199,6 +220,10 @@ async def execute(
     elif not results and outcome.empty:
         status = "partial"
         errors.append("По применённому запросу ничего не найдено. Это не вывод обо всей площадке.")
+    elif not results and outcome.outcome == "done" and task.active_only and (seen_numbers or collected):
+        # Выдача прочитана, но все закупки закрыты (Росатом «ИБП»): это ответ, а не сбой.
+        status = "partial"
+        errors.append("Закупок с открытым приёмом заявок по этому запросу нет.")
     elif not results:
         status = "failed"
         if outcome.outcome == "done" and outcome.note:

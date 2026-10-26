@@ -77,6 +77,8 @@ class Settings:
     # Трейс прогона: data_dir/_agent/runs/… (см. observability/trace.py).
     trace_enabled: bool = True
     trace_screenshots: str = "errors"
+    # Заметки из прогонов: после прогона модель предлагает дополнения к заметке площадки (sites/learning.py).
+    notes_learning: bool = True
     # База найденных закупок в data_dir/_agent/agent.sqlite3 (storage/tenders.py).
     store_enabled: bool = True
     # SQLAlchemy URL базы закупок; пусто — SQLite в data_dir/_agent/agent.sqlite3.
@@ -107,6 +109,7 @@ class Settings:
             vision_max_steps=int(os.getenv("TENDER_AGENT_VISION_MAX_STEPS", "10")),
             trace_enabled=_flag("TENDER_AGENT_TRACE", True),
             trace_screenshots=os.getenv("TENDER_AGENT_TRACE_SCREENSHOTS", "errors"),
+            notes_learning=_flag("TENDER_AGENT_NOTES_LEARNING", True),
             store_enabled=_flag("TENDER_AGENT_STORE", True),
             db_url=os.getenv("TENDER_AGENT_DB_URL", ""),
             data_dir=data_dir,

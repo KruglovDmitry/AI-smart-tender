@@ -88,6 +88,12 @@ class RunTrace:
         path.mkdir(exist_ok=True)
         return path
 
+    def seconds(self) -> float:
+        return round(time.monotonic() - self.started, 1)
+
+    def note(self, name: str, data: object) -> None:
+        self._write(name, data)
+
     def finish(self, result: object) -> None:
         data = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
         self._write("result.json", data)

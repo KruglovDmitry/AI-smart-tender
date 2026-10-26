@@ -12,3 +12,6 @@ class LLMClient(Protocol):
 
     async def read_card(self, task: dict, observation: dict) -> dict:
         """Поля, лоты и документы карточки закупки дословными цитатами и номерами элементов."""
+
+    async def propose_notes(self, task: dict, observation: dict) -> dict:
+        """Разбор трейса прогона: {"confirm": [id], "refute": [id], "new": [...]} для заметки площадки."""

@@ -183,7 +183,7 @@ class Loop:
             after, note, moved = await self._act(tool, decision, obs, goal)
             unchanged = 0 if moved else unchanged + 1
             history.append(f"{step}. {note}")
-            stop = goal.finished() if goal.finished and tool == "extract" else None
+            stop = goal.finished() if goal.finished else None
             if stop:
                 await self._log({**record, "note": note, "changed": moved}, obs)
                 return LoopResult("done", stop, last_obs=after, history=history)

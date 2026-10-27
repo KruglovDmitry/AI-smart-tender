@@ -79,6 +79,7 @@ def _descending(dates: list[str]) -> bool:
 # sortDesc=true. Нужна, когда в строках выдачи нет даты публикации (Росэлторг — только срок подачи).
 _SORT_DESC_URL = re.compile(r"sort\w*=[\w.]*(?:desc|down)\b|sortdesc=true", re.I)
 CLOSED_TAIL = 5  # закрытых подряд после последней подходящей — дальше по дате только они
+IDLE_STEPS = 6  # шагов выдачи подряд без новых записей, когда что-то уже найдено, — выдача исчерпана
 
 
 def _closed_tail(tail: list[str], found: list[TenderResult]) -> bool:
@@ -129,6 +130,8 @@ async def execute(
     site_sorted = False
     stale_pages = 0  # страниц подряд без новых подходящих, но с закрытыми — при сортировке по дате
     idle_reads = 0  # повторных чтений той же страницы без новых записей подряд
+    idle_steps = 0  # шагов подряд без новых записей после первой найденной
+    last_unique = 0
 
     def unique() -> int:
         return len(rank_tenders(collected, sort_by=None, limit=10_000))
@@ -184,10 +187,21 @@ async def execute(
                 errors=errors, deadline=started + task.timeout_seconds, phase="list", max_steps=task.max_actions,
                 vision_limit=settings.vision_max_calls)
     def exhausted() -> str | None:
+        """Вызывается после каждого шага выдачи."""
+        nonlocal idle_steps, last_unique
+        count = unique()
+        idle_steps = 0 if count > last_unique or not count else idle_steps + 1
+        last_unique = count
         # Две страницы подряд по дате — одни закрытые: модель на Сбер-АСТ листала их до таймаута.
         if stale_pages >= 2:
             return "Дальше по дате только закрытые закупки — выдача исчерпана."
-        return "Страница выдачи прочитана повторно — новых записей нет." if idle_reads >= 2 else None
+        if idle_reads >= 2:
+            return "Страница выдачи прочитана повторно — новых записей нет."
+        # Фабрикант 27.10: запись найдена на 5-м шаге, дальше 250 с переключений «Все»/«Закупки»
+        # и фильтра до таймаута — разные страницы, поэтому idle_reads не срабатывал.
+        if idle_steps >= IDLE_STEPS:
+            return f"{IDLE_STEPS} шагов подряд без новых записей — выдача исчерпана."
+        return None
 
     outcome = await loop.run(Goal(text=list_goal_text(task, keyword), extract=extract, status=progress_line,
                                   context=f"площадка закупок {task.url}, запрос «{keyword}»", finished=exhausted))

@@ -31,6 +31,9 @@ from .state import Progress
 from .vision import VisionOutcome, run_vision_step, vision_goal
 
 PAGE_TEXT_FOR_MODEL = 6_000
+BROWSER_CHECK_WAITS = 7  # по 3 с — до 21 с ждём, пока проверка браузера пропустит
+_BROWSER_CHECK = re.compile(r"anti-?ddos|проверк\w* (?:вашего )?браузера|checking your browser|ddos-guard|just a moment",
+                            re.I)
 HISTORY_FOR_MODEL = 12
 REPEAT_WINDOW, REPEAT_LIMIT = 4, 3  # 3 одинаковых действия из последних 4 — цикл
 TOOLS = {"click", "fill", "scroll", "go_back", "goto", "extract", "done", "ask_user", "vision"}
@@ -115,6 +118,13 @@ class Loop:
             if obs.text.strip() or obs.elements:
                 break
             await self.runtime.current_page.wait_for_timeout(2_000)
+            obs = await asyncio.wait_for(get_page_state(self.runtime), timeout=45)
+        for _ in range(BROWSER_CHECK_WAITS):
+            # Проверка браузера без капчи (РТС «Anti-DDoS», таймер 5 с) проходит сама. 27.10 модель «подождала»
+            # прокруткой, через 6 с решила, что не пустили, и позвала человека — ждём здесь, а не моделью.
+            if obs.page_kind == "captcha" or not _BROWSER_CHECK.search(f"{obs.title}\n{obs.text[:500]}"):
+                break
+            await self.runtime.current_page.wait_for_timeout(3_000)
             obs = await asyncio.wait_for(get_page_state(self.runtime), timeout=45)
         if obs.url not in self.progress.visited:
             self.progress.visited.append(obs.url)

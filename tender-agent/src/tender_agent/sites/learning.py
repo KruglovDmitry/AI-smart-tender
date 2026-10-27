@@ -34,15 +34,19 @@ PROPOSE_SYSTEM = (
     "Ты разбираешь трейс прогона браузерного агента на площадке закупок и ведёшь заметки об этой площадке "
     "для следующих прогонов. Тебе дают: итог прогона, шаги (этап, действие, рассуждение агента, итог действия), "
     "текущую заметку площадки и список кандидатов (id, раздел, текст, статус).\n"
-    "Верни JSON {\"confirm\": [id], \"refute\": [id], \"new\": [{\"section\", \"text\", \"kind\", \"evidence\"}]}:\n"
+    "Верни JSON {\"confirm\": [id], \"refute\": [id], \"new\": [{\"section\", \"text\", \"kind\", \"evidence\", \"same_as\"}]}:\n"
     "- confirm — кандидаты, которые этот прогон подтвердил (агент сделал так, и это сработало);\n"
     "- refute — кандидаты, которые прогон опроверг (сайт ведёт себя иначе);\n"
     "- new — не больше трёх новых выводов, которых нет ни в заметке, ни в кандидатах. section — «Общее», "
     "«Выдача», «Карточка» или «Ловушки»; kind — «add» (дописать) или «remove» (пункт заметки устарел: text — "
-    "дословно этот пункт); evidence — номера шагов.\n"
+    "дословно этот пункт); evidence — номера шагов; same_as — id кандидата, если вывод по сути повторяет или "
+    "уточняет его (тот же совет другими словами, тот же приём для соседней вкладки) — такой вывод засчитается "
+    "кандидату как подтверждение, а не добавится; лучше вообще не предлагать повторы.\n"
     "Пиши только то, что повторится в следующий раз и сэкономит шаги: где поиск, сортировка, фильтры, "
     "«показать ещё», как понять, что выдача кончилась, где документы на карточке, окна и проверки, что не "
-    "срабатывает. Не пиши о конкретных закупках, датах, числах в выдаче и о самой цели задания. "
+    "срабатывает. Пиши о поведении сайта, а не о самом агенте: не о том, как работают его инструменты "
+    "(extract, скачивание, зрение) и что он делает сам. Не пиши очевидного, что верно для любой площадки. "
+    "Не пиши о конкретных закупках, датах, числах в выдаче и о самой цели задания. "
     "Не советуй входить в аккаунт, вводить данные или обходить проверки. Текст — одно предложение по-русски, "
     f"до {MAX_TEXT} символов. Если сказать нечего — пустые списки."
 )
@@ -109,6 +113,10 @@ def update(items: list[Candidate], proposal: dict, run_id: str, summary: dict, *
     by_id = {c.id: c for c in items}
     confirmed = {str(i) for i in proposal.get("confirm") or []} & by_id.keys()
     refuted = {str(i) for i in proposal.get("refute") or []} & by_id.keys()
+    # Повтор кандидата другими словами (Фабрикант 27.10: c4 ≈ c1, c5 ≈ c2) — это подтверждение, а не новый пункт.
+    fresh = [n for n in (proposal.get("new") or [])[:MAX_NEW] if isinstance(n, dict)]
+    confirmed |= {str(n.get("same_as")) for n in fresh} & by_id.keys()
+    fresh = [n for n in fresh if str(n.get("same_as") or "") not in by_id]
     # Действующие пункты отвечают за прогон, в котором они были у модели.
     for item in items:
         if item.status != "active":
@@ -130,9 +138,7 @@ def update(items: list[Candidate], proposal: dict, run_id: str, summary: dict, *
         if item.status == "candidate":
             item.confirms = []
     known = {_norm(c.text) for c in items}
-    for new in (proposal.get("new") or [])[:MAX_NEW]:
-        if not isinstance(new, dict):
-            continue
+    for new in fresh:
         text = str(new.get("text") or "").strip()[:MAX_TEXT]
         section = str(new.get("section") or "")
         if not text or section not in SECTIONS or _norm(text) in known:

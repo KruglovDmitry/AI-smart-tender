@@ -36,6 +36,17 @@ def test_new_items_are_checked():
     assert [c.text for c in items] == ["Окно обучения перекрывает клики."]
 
 
+def test_restated_candidate_counts_as_confirmation():
+    items = [Candidate(id="c1", section="Ловушки", text="Чекбокс перекрыт — фильтр адресом statuses[]=1.",
+                       confirms=["run1"])]
+    proposal = {"new": [{"section": "Ловушки", "text": "Пункт меню не находится — ставь statuses[]=1 в адресе.",
+                         "same_as": "c1"},
+                        {"section": "Выдача", "text": "Чужой id не мешает.", "same_as": "c9"}]}
+    items = update(items, proposal, "run2", GOOD)
+    assert items[0].confirms == ["run1", "run2"] and items[0].status == "active"
+    assert [c.text for c in items[1:]] == ["Чужой id не мешает."]
+
+
 def test_active_items_reach_the_model_and_removed_lines_do_not(tmp_path):
     (tmp_path / "x.ru.md").write_text("---\ndomain: x.ru\n---\n## Выдача\n- Фильтр по этапу работает.\n- Сортировка сверху.\n",
                                       encoding="utf-8")

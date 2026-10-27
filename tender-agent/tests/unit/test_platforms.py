@@ -91,6 +91,15 @@ def test_page_for_model_lists_elements_without_conclusions() -> None:
     assert not {"search_ref", "sort_ref", "next_ref", "page_kind"} & set(page)
 
 
+def test_long_page_keeps_top_controls_and_bottom_rows_for_model() -> None:
+    elements = [Element(ref=i, tag="a", name=f"Строка {i}", href=f"https://www.roseltorg.ru/procedure/{i}")
+                for i in range(1, 701)]
+    page = page_for_model(Observation(url="https://www.roseltorg.ru/procedures/search", title="", text="",
+                                      elements=elements))
+    refs = [int(line[1:line.index("]")]) for line in page["elements"]]
+    assert len(refs) == 300 and refs[0] == 1 and refs[199] == 200 and refs[200] == 601 and refs[-1] == 700
+
+
 def test_closed_pages_count_as_exhausted_only_when_clearly_older() -> None:
     from tender_agent.agent.orchestrator import _older_than_found
     from tender_agent.api.schemas import TenderResult

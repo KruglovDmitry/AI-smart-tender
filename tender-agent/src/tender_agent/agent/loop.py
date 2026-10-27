@@ -375,5 +375,15 @@ def page_for_model(obs: Observation) -> dict:
         "scroll": position,
         "text": obs.text[:PAGE_TEXT_FOR_MODEL],
         "text_truncated": len(obs.text) > PAGE_TEXT_FOR_MODEL,
-        "elements": [element_line(el, host) for el in obs.elements],
+        "elements": [element_line(el, host) for el in _elements_for_model(obs.elements)],
     }
+
+
+ELEMENTS_FOR_MODEL = 300
+ELEMENTS_TAIL = 100  # низ длинной страницы: свежие строки после «Показать ещё» и сама кнопка
+
+
+def _elements_for_model(elements: list) -> list:
+    if len(elements) <= ELEMENTS_FOR_MODEL:
+        return elements
+    return elements[:ELEMENTS_FOR_MODEL - ELEMENTS_TAIL] + elements[-ELEMENTS_TAIL:]

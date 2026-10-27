@@ -14,8 +14,11 @@ from ..tenders.models import Element, Observation
 from .runtime import BrowserRuntime
 
 CAPTCHA_RE = re.compile(r"captcha|капча|я не робот|подтвердите, что вы не", re.I)
-MAX_ELEMENTS = 300
-MAX_TEXT = 40_000
+# Росэлторг 27.10: после двух «Показать ещё» 30+ лотов, и строки ниже 300-го элемента оставались без ссылки —
+# закупка в тексте есть, а чтение выдачи отбрасывало её («нет ссылки на карточку»). Модели для выбора
+# действия всё равно уходит не больше ELEMENTS_FOR_MODEL (agent/loop.py).
+MAX_ELEMENTS = 1000
+MAX_TEXT = 120_000
 
 _SNAPSHOT_JS = """() => {
   if (!document.body) return { pending: true };

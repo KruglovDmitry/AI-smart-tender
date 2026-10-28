@@ -69,7 +69,7 @@ def cmd_issue(args) -> None:
     log = Path(args.secret).with_name("issued.log")
     with log.open("a", encoding="utf-8") as f:
         f.write(f"{payload['iss']}\t{payload['id']}\t{payload['to']}\t{machine}\t{','.join(modules)}\t"
-                f"{payload['exp'] or 'бессрочно'}\n")
+                f"{payload['exp'] or 'бессрочно'}\t{key}\n")
 
 
 def cmd_show(args) -> None:

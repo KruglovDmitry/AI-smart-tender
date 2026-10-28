@@ -7,7 +7,26 @@ const fs = require("fs");
 const APP_ROOT =
   process.env.OWUI_APP_ROOT ||
   path.join(process.env.LOCALAPPDATA || app.getPath("userData"), "AISmartTender");
-const DATA_ROOT = process.env.OWUI_DATA_ROOT || path.join(APP_ROOT, "data");
+// Настройки оболочки (папка данных) — всегда в APP_ROOT, чтобы их можно было найти до выбора папки.
+const SETTINGS_PATH = path.join(APP_ROOT, "settings.json");
+
+function readSettings() {
+  try {
+    // Блокнот и PowerShell пишут UTF-8 с BOM — JSON.parse на нём падает.
+    return JSON.parse(fs.readFileSync(SETTINGS_PATH, "utf8").replace(/^﻿/, ""));
+  } catch {
+    return {};
+  }
+}
+
+function writeSettings(patch) {
+  fs.mkdirSync(APP_ROOT, { recursive: true });
+  fs.writeFileSync(SETTINGS_PATH, JSON.stringify({ ...readSettings(), ...patch }, null, 2));
+}
+
+// Папка данных: переменная окружения (администратор) → выбор в «Файл → Папка данных…» → по умолчанию.
+const DATA_ROOT_FROM_ENV = Boolean(process.env.OWUI_DATA_ROOT);
+const DATA_ROOT = process.env.OWUI_DATA_ROOT || readSettings().dataRoot || path.join(APP_ROOT, "data");
 const WEBUI_DATA_DIR =
   process.env.OWUI_DATA_DIR || path.join(APP_ROOT, "webui-desktop");
 const LOG_DIR = path.join(WEBUI_DATA_DIR, "logs");
@@ -133,7 +152,11 @@ function dbService(manifest) {
 function dbUrl(manifest) {
   const db = dbService(manifest);
   if (!db) return "";
-  const abs = path.join(APP_ROOT, db.pathRelative.replace(/\//g, path.sep));
+  // «data/…» — внутри папки данных (её можно перенести), остальное — от APP_ROOT.
+  const rel = db.pathRelative.replace(/\\/g, "/");
+  const abs = rel.startsWith("data/")
+    ? path.join(DATA_ROOT, ...rel.slice(5).split("/"))
+    : path.join(APP_ROOT, ...rel.split("/"));
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   const posix = abs.replace(/\\/g, "/");
   return (db.urlTemplate || "sqlite:///{absolutePosix}").replace(
@@ -566,6 +589,59 @@ async function checkLicenseOnStart(waits) {
   }
 }
 
+/** Выбрать другую папку данных: запомнить в settings.json, по желанию перенести данные и перезапустить программу. */
+async function chooseDataFolder() {
+  const owner = mainWindow || undefined;
+  if (DATA_ROOT_FROM_ENV) {
+    await dialog.showMessageBox(owner, {
+      type: "info",
+      title: "Папка данных",
+      message: `Папка данных задана администратором (переменная OWUI_DATA_ROOT):\n${DATA_ROOT}`,
+    });
+    return;
+  }
+  const picked = await dialog.showOpenDialog(owner, {
+    title: "Папка данных AI Smart Tender",
+    defaultPath: DATA_ROOT,
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (picked.canceled || !picked.filePaths.length) return;
+  const target = path.resolve(picked.filePaths[0]);
+  const current = path.resolve(DATA_ROOT);
+  if (target.toLowerCase() === current.toLowerCase()) return;
+  if (target.toLowerCase().startsWith(current.toLowerCase() + path.sep)) {
+    dialog.showErrorBox("Папка данных", "Новая папка не может лежать внутри текущей.");
+    return;
+  }
+  const answer = await dialog.showMessageBox(owner, {
+    type: "question",
+    title: "Папка данных",
+    message: `Новая папка данных:\n${target}\n\nПеренести туда закупки, документы и базу из\n${current}?`,
+    detail: "Программа перезапустится. Файлы, которые уже есть в новой папке, не перезаписываются; старая папка остаётся как есть.",
+    buttons: ["Перенести и перезапустить", "Не переносить, перезапустить", "Отмена"],
+    defaultId: 0,
+    cancelId: 2,
+  });
+  if (answer.response === 2) return;
+  quitting = true;
+  stopServers();
+  try {
+    if (answer.response === 0) {
+      // Сервисы держат базу SQLite открытой — копируем после их остановки.
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      fs.mkdirSync(target, { recursive: true });
+      fs.cpSync(current, target, { recursive: true, force: false, errorOnExist: false });
+    }
+    writeSettings({ dataRoot: target });
+    log(`data root ${current} -> ${target} (copy=${answer.response === 0})`);
+  } catch (err) {
+    log(`data root change failed: ${err && err.stack ? err.stack : err}`);
+    dialog.showErrorBox("Не удалось перенести данные", String(err && err.message ? err.message : err));
+  }
+  app.relaunch();
+  app.exit(0);
+}
+
 function buildMenu(manifest) {
   const openLinks = processServices(manifest).filter((s) => s.openInMenu || s.primaryUi);
   const template = [
@@ -580,6 +656,7 @@ function buildMenu(manifest) {
             if (err) dialog.showErrorBox("Не удалось открыть папку", err);
           },
         },
+        { label: "Папка данных…", click: chooseDataFolder },
         {
           label: "Открыть логи",
           click: async () => {

@@ -7,7 +7,7 @@
   "author": "AI Smart Tender",
   "scripts": {
     "start": "electron .",
-    "dist": "node ./node_modules/electron-builder/cli.js --win dir"
+    "dist": "node ./node_modules/electron-builder/cli.js --win dir -c.electronDist=node_modules/electron/dist"
   },
   "build": {
     "appId": "local.aismarttender.desktop",
@@ -56,15 +56,15 @@
         "to": "Dashboard"
       },
       {
+        "to": "services.json",
+        "from": "../services.json"
+      },
+      {
         "filter": [
           "**/*"
         ],
         "from": "../licenses",
         "to": "licenses"
-      },
-      {
-        "to": "services.json",
-        "from": "../services.json"
       }
     ],
     "win": {

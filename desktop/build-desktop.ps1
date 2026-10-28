@@ -149,6 +149,8 @@ if (-not $SkipElectron) {
     $resJson += @{ from = "../dist/$($svc.resourceDir)"; to = [string]$svc.resourceDir; filter = @("**/*") }
   }
   $resJson += @{ from = "../services.json"; to = "services.json" }
+  # Тексты лицензий сторонних компонентов (Open WebUI требует их в дистрибутиве) — «Справка» открывает отсюда.
+  $resJson += @{ from = "../licenses"; to = "licenses"; filter = @("**/*") }
   $resFile = Join-Path $Dist "extra-resources.json"
   [System.IO.File]::WriteAllText($resFile, (($resJson | ConvertTo-Json -Depth 5) + "`n"), $utf8NoBom)
 

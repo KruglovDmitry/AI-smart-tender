@@ -1,4 +1,4 @@
-const { app, BaseWindow, WebContentsView, dialog, ipcMain, Menu, shell } = require("electron");
+const { app, BaseWindow, BrowserWindow, WebContentsView, dialog, ipcMain, Menu, shell } = require("electron");
 const { spawn } = require("child_process");
 const http = require("http");
 const path = require("path");
@@ -472,6 +472,100 @@ function loadDashboardView(svc) {
 
 ipcMain.on("shell:show", (_event, name) => showView(name));
 
+// ---------- лицензия ----------
+// Проверяют сами сервисы (общий модуль smart_license): без лицензии они отвечают 403.
+// Оболочка только показывает состояние и принимает ключ — через /license любого запущенного сервиса.
+
+const LICENSE_SERVICES = ["tools", "tender-agent", "dashboard"];
+let licenseWindow = null;
+
+function httpJson(method, url, body) {
+  return new Promise((resolve, reject) => {
+    const data = body ? Buffer.from(JSON.stringify(body)) : null;
+    const req = http.request(
+      url,
+      { method, timeout: 10000, headers: data ? { "Content-Type": "application/json", "Content-Length": data.length } : {} },
+      (res) => {
+        let text = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => (text += chunk));
+        res.on("end", () => {
+          let json = null;
+          try {
+            json = JSON.parse(text);
+          } catch {
+            /* не JSON */
+          }
+          resolve({ status: res.statusCode, json });
+        });
+      }
+    );
+    req.on("error", reject);
+    req.on("timeout", () => req.destroy(new Error("timeout")));
+    if (data) req.write(data);
+    req.end();
+  });
+}
+
+async function licenseRequest(method, pathname, body) {
+  const services = processServices(servicesManifest).filter((s) => LICENSE_SERVICES.includes(s.id));
+  let lastError = null;
+  for (const svc of services) {
+    try {
+      return await httpJson(method, `http://${svc.host}:${svc.port}${pathname}`, body);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError || new Error("Сервисы ещё не запустились");
+}
+
+ipcMain.handle("license:get", async () => {
+  const res = await licenseRequest("GET", "/license");
+  return res.json;
+});
+
+ipcMain.handle("license:submit", async (_event, key) => {
+  const res = await licenseRequest("POST", "/license/key", { key });
+  if (res.status !== 200) return { ok: false, error: (res.json && res.json.detail) || `Ошибка ${res.status}` };
+  if (views.dashboard) views.dashboard.webContents.reload();
+  return { ok: true, status: res.json };
+});
+
+function openLicenseWindow() {
+  if (licenseWindow && !licenseWindow.isDestroyed()) {
+    licenseWindow.focus();
+    return;
+  }
+  licenseWindow = new BrowserWindow({
+    width: 560,
+    height: 520,
+    resizable: false,
+    minimizable: false,
+    title: "Лицензия — AI Smart Tender",
+    autoHideMenuBar: true,
+    webPreferences: { preload: path.join(__dirname, "license-preload.js"), contextIsolation: true, nodeIntegration: false },
+  });
+  licenseWindow.loadFile(path.join(__dirname, "license.html"));
+  licenseWindow.on("closed", () => {
+    licenseWindow = null;
+  });
+}
+
+/** После старта сервисов: без действующей лицензии сразу открыть окно ключа. */
+async function checkLicenseOnStart(waits) {
+  const first = LICENSE_SERVICES.map((id) => waits.get(id)).filter(Boolean);
+  try {
+    await Promise.any(first);
+    const res = await licenseRequest("GET", "/license");
+    const status = res.json || {};
+    log(`license state=${status.state} days_left=${status.days_left}`);
+    if (status.required && !status.active) openLicenseWindow();
+  } catch (err) {
+    log(`license check failed: ${err}`);
+  }
+}
+
 function buildMenu(manifest) {
   const openLinks = processServices(manifest).filter((s) => s.openInMenu || s.primaryUi);
   const template = [
@@ -524,6 +618,15 @@ function buildMenu(manifest) {
     {
       label: "Справка",
       submenu: [
+        { label: "Лицензия…", click: openLicenseWindow },
+        {
+          label: "Лицензии сторонних компонентов",
+          click: async () => {
+            const dir = app.isPackaged ? path.join(process.resourcesPath, "licenses") : path.join(__dirname, "..", "licenses");
+            const err = await shell.openPath(path.join(dir, "README.txt"));
+            if (err) dialog.showErrorBox("Не удалось открыть", err);
+          },
+        },
         {
           label: "О программе",
           click: () => {
@@ -592,6 +695,7 @@ if (!app.requestSingleInstanceLock()) {
       // Все сервисы стартуют сразу, но окно ждёт только чат: агент и дашборд догружаются в фоне,
       // их состояние видно в верхней панели, а медленный старт одного не закрывает приложение.
       const waits = new Map(processes.map((svc) => [svc.id, startService(svc)]));
+      checkLicenseOnStart(waits);
       await waits.get(ui.id);
       createWindow(`http://${ui.host}:${ui.port}/`);
       log("window opened");

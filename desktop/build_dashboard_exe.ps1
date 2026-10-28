@@ -21,38 +21,34 @@ if (-not (Test-Path $Py)) {
 if ($LASTEXITCODE -ne 0) { Write-Error "pip install failed"; exit 1 }
 
 Write-Host "Building Dashboard.exe (onedir)..."
-$prevEap = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-& $Py -m PyInstaller `
-  --noconfirm --clean --onedir --console `
-  --name Dashboard `
-  --distpath $Out `
-  --workpath $Work `
-  --paths $DashSrc `
-  --add-data "$(Join-Path $DashSrc 'static');static" `
-  --collect-all uvicorn `
-  --collect-all fastapi `
-  --collect-all pydantic `
-  --hidden-import app `
-  --hidden-import app.main `
-  --hidden-import app.db `
-  --hidden-import app.data_scan `
-  --hidden-import uvicorn.logging `
-  --hidden-import uvicorn.loops.auto `
-  --hidden-import uvicorn.protocols.http.auto `
-  --hidden-import uvicorn.lifespan.on `
-  --exclude-module playwright `
-  --exclude-module tkinter `
-  (Join-Path $Desktop "run_dashboard.py")
-$pyExit = $LASTEXITCODE
-$ErrorActionPreference = $prevEap
-if ($pyExit -ne 0) { Write-Error "PyInstaller Dashboard failed: $pyExit"; exit $pyExit }
+. (Join-Path $Desktop "protect.ps1")
 
+Invoke-ProtectedPyInstaller $Py "Dashboard" $Out $Work @("app", "smart_license") @(
+  "--onedir", "--console",
+  "--paths", $DashSrc,
+  "--paths", $Licensing,
+  "--add-data", "$(Join-Path $DashSrc 'static');static",
+  "--collect-all", "uvicorn",
+  "--collect-all", "fastapi",
+  "--collect-all", "pydantic",
+  "--hidden-import", "app",
+  "--hidden-import", "app.main",
+  "--hidden-import", "app.db",
+  "--hidden-import", "app.data_scan",
+  "--hidden-import", "smart_license",
+  "--hidden-import", "smart_license.web",
+  "--hidden-import", "uvicorn.logging",
+  "--hidden-import", "uvicorn.loops.auto",
+  "--hidden-import", "uvicorn.protocols.http.auto",
+  "--hidden-import", "uvicorn.lifespan.on",
+  "--exclude-module", "playwright",
+  "--exclude-module", "tkinter",
+  (Join-Path $Desktop "run_dashboard.py")
+)
+
+# Наш код — только скомпилированным (.pyd); статика страницы — рядом, как раньше.
 $destInternal = Join-Path $Out "Dashboard\_internal"
-$destApp = Join-Path $destInternal "app"
-Write-Host "Copying dashboard/app into _internal..."
-if (Test-Path $destApp) { Remove-Item -Recurse -Force $destApp }
-Copy-Item -Recurse -Force (Join-Path $DashSrc "app") $destApp
+Compile-Packages $Py $destInternal $Work @((Join-Path $DashSrc "app"), (Join-Path $Licensing "smart_license"))
 $staticSrc = Join-Path $DashSrc "static"
 $staticDst = Join-Path $destInternal "static"
 if (Test-Path $staticSrc) {

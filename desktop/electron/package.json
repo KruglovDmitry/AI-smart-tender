@@ -21,6 +21,9 @@
       "preload.js",
       "toolbar.html",
       "toolbar.js",
+      "license.html",
+      "license.js",
+      "license-preload.js",
       "package.json"
     ],
     "extraResources": [
@@ -51,6 +54,13 @@
         ],
         "from": "../dist/Dashboard",
         "to": "Dashboard"
+      },
+      {
+        "filter": [
+          "**/*"
+        ],
+        "from": "../licenses",
+        "to": "licenses"
       },
       {
         "to": "services.json",

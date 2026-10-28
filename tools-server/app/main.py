@@ -54,6 +54,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+try:
+    from smart_license.web import install as install_license
+except ImportError:  # Docker и разработка: пакета лицензии нет, а в собранной программе он обязателен
+    if getattr(sys, "frozen", False):
+        raise
+else:
+    install_license(app, "documents")
+
 
 class ReadDocumentBody(BaseModel):
     path: str = Field(

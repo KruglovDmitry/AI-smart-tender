@@ -36,43 +36,38 @@ Write-Host "Installing ai_vision from $AiVision ..."
 & $Py -m pip install --no-build-isolation $AiVision
 if ($LASTEXITCODE -ne 0) { Write-Error "pip install ai_vision failed"; exit 1 }
 
-Write-Host "Building TenderAgent.exe (onedir)..."
-$prevEap = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-& $Py -m PyInstaller `
-  --noconfirm --clean --onedir --console `
-  --name TenderAgent `
-  --distpath $Out `
-  --workpath $Work `
-  --paths (Join-Path $AgentSrc "src") `
-  --collect-all uvicorn `
-  --collect-all fastapi `
-  --collect-all pydantic `
-  --collect-all playwright `
-  --collect-all ai_vision `
-  --add-data "$(Join-Path $AgentSrc 'src\tender_agent\sites\notes');tender_agent\sites\notes" `
-  --hidden-import tender_agent `
-  --hidden-import tender_agent.server `
-  --hidden-import tender_agent.config `
-  --hidden-import tender_agent.api.service `
-  --hidden-import ai_vision `
-  --hidden-import uvicorn.logging `
-  --hidden-import uvicorn.loops.auto `
-  --hidden-import uvicorn.protocols.http.auto `
-  --hidden-import uvicorn.lifespan.on `
-  --exclude-module tkinter `
-  --exclude-module matplotlib `
-  (Join-Path $Desktop "run_agent_server.py")
-$pyExit = $LASTEXITCODE
-$ErrorActionPreference = $prevEap
-if ($pyExit -ne 0) { Write-Error "PyInstaller TenderAgent failed: $pyExit"; exit $pyExit }
+. (Join-Path $Desktop "protect.ps1")
 
+Write-Host "Building TenderAgent.exe (onedir)..."
+Invoke-ProtectedPyInstaller $Py "TenderAgent" $Out $Work @("tender_agent", "smart_license", "ai_vision") @(
+  "--onedir", "--console",
+  "--paths", (Join-Path $AgentSrc "src"),
+  "--paths", $Licensing,
+  "--collect-all", "uvicorn",
+  "--collect-all", "fastapi",
+  "--collect-all", "pydantic",
+  "--collect-all", "playwright",
+  "--collect-all", "ai_vision",
+  "--hidden-import", "tender_agent",
+  "--hidden-import", "tender_agent.server",
+  "--hidden-import", "tender_agent.config",
+  "--hidden-import", "tender_agent.api.service",
+  "--hidden-import", "smart_license",
+  "--hidden-import", "smart_license.web",
+  "--hidden-import", "ai_vision",
+  "--hidden-import", "uvicorn.logging",
+  "--hidden-import", "uvicorn.loops.auto",
+  "--hidden-import", "uvicorn.protocols.http.auto",
+  "--hidden-import", "uvicorn.lifespan.on",
+  "--exclude-module", "tkinter",
+  "--exclude-module", "matplotlib",
+  (Join-Path $Desktop "run_agent_server.py")
+)
+
+# Наш код — только скомпилированным (.pyd), данные пакета (заметки площадок и т.п.) — рядом.
 $destInternal = Join-Path $Out "TenderAgent\_internal"
-$pkgSrc = Join-Path $AgentSrc "src\tender_agent"
-$pkgDst = Join-Path $destInternal "tender_agent"
-Write-Host "Copying tender_agent package into _internal..."
-if (Test-Path $pkgDst) { Remove-Item -Recurse -Force $pkgDst }
-Copy-Item -Recurse -Force $pkgSrc $pkgDst
+Compile-Packages $Py $destInternal $Work @(
+  (Join-Path $AgentSrc "src\tender_agent"), (Join-Path $Licensing "smart_license"), (Join-Path $AiVision "src\ai_vision"))
 
 # Chromium для Playwright ставится прямо рядом с exe: только нужная версия, без копирования всего кэша.
 # Сертификат Минцифры не копируем: на Windows Chromium берёт корневые сертификаты из системы.

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'">
+<title>Лицензия</title>
+<style>
+  :root { color-scheme: light dark; }
+  html, body { margin: 0; font: 14px "Segoe UI", system-ui, sans-serif; background: #f4f4f2; color: #2b2b2b; }
+  @media (prefers-color-scheme: dark) { html, body { background: #1f1f1f; color: #e6e6e6; } }
+  main { padding: 20px 24px; }
+  h1 { font-size: 18px; margin: 0 0 14px; }
+  .state { padding: 10px 12px; border-radius: 8px; background: rgba(127,127,127,.14); margin-bottom: 16px; line-height: 1.45; }
+  .state.ok { background: rgba(34,163,90,.16); } .state.bad { background: rgba(210,60,60,.16); }
+  label { display: block; font-size: 12px; opacity: .75; margin: 12px 0 4px; }
+  .code { display: flex; gap: 8px; align-items: center; }
+  .code b { font: 600 18px Consolas, monospace; letter-spacing: 1px; }
+  button { font: inherit; padding: 6px 14px; border-radius: 7px; border: 1px solid rgba(127,127,127,.4);
+    background: rgba(127,127,127,.12); color: inherit; cursor: pointer; }
+  button.primary { background: #2f6fdb; border-color: #2f6fdb; color: #fff; }
+  textarea { width: 100%; box-sizing: border-box; height: 96px; font: 12px Consolas, monospace; padding: 8px;
+    border-radius: 7px; border: 1px solid rgba(127,127,127,.4); background: transparent; color: inherit; resize: none; }
+  .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+  .msg { min-height: 20px; margin-top: 8px; font-size: 13px; }
+  .msg.err { color: #d23c3c; } .msg.ok { color: #22a35a; }
+  .hint { font-size: 12px; opacity: .7; margin-top: 14px; line-height: 1.45; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Лицензия AI Smart Tender</h1>
+  <div class="state" id="state">Проверяю лицензию…</div>
+  <label>Код компьютера — отправьте его, чтобы получить ключ</label>
+  <div class="code"><b id="code">…</b><button id="copy">Копировать</button></div>
+  <label for="key">Ключ лицензии</label>
+  <textarea id="key" placeholder="AST1.…" spellcheck="false"></textarea>
+  <div class="row"><button class="primary" id="apply">Применить ключ</button></div>
+  <div class="msg" id="msg"></div>
+  <div class="hint">Ключ привязан к этому компьютеру. Пробный период — 14 дней со дня первого запуска на все модули.</div>
+</main>
+<script src="license.js"></script>
+</body>
+</html>

@@ -30,71 +30,55 @@ $env:TOOLS_PORT = "18000"
 
 Write-Host "Building ToolsServer.exe (onedir)..."
 
-# PyInstaller пишет DEPRECATION в stderr — не роняем скрипт из-за этого
-$prevEap = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-& $Py -m PyInstaller `
-  --noconfirm `
-  --clean `
-  --onedir `
-  --console `
-  --name ToolsServer `
-  --distpath $Out `
-  --workpath $Work `
-  --paths $ToolsSrc `
-  --collect-all uvicorn `
-  --collect-all starlette `
-  --collect-all fastapi `
-  --collect-all pydantic `
-  --collect-all pydantic_core `
-  --collect-all httpx `
-  --collect-all trafilatura `
-  --collect-all pandas `
-  --collect-all openpyxl `
-  --hidden-import app `
-  --hidden-import app.main `
-  --hidden-import app.config `
-  --hidden-import app.document_tool `
-  --hidden-import app.document_tool.extract `
-  --hidden-import app.excel_tool `
-  --hidden-import app.web_tool `
-  --hidden-import uvicorn.logging `
-  --hidden-import uvicorn.loops `
-  --hidden-import uvicorn.loops.auto `
-  --hidden-import uvicorn.protocols `
-  --hidden-import uvicorn.protocols.http `
-  --hidden-import uvicorn.protocols.http.auto `
-  --hidden-import uvicorn.protocols.websockets `
-  --hidden-import uvicorn.protocols.websockets.auto `
-  --hidden-import uvicorn.lifespan `
-  --hidden-import uvicorn.lifespan.on `
-  --hidden-import langchain_community `
-  --hidden-import langchain_community.document_loaders `
-  --hidden-import langchain_community.document_loaders.pdf `
-  --hidden-import langchain_community.document_loaders.word_document `
-  --hidden-import langchain_community.document_loaders.html_bs `
-  --exclude-module tkinter `
-  --exclude-module matplotlib `
-  --exclude-module playwright `
+. (Join-Path $Desktop "protect.ps1")
+
+Invoke-ProtectedPyInstaller $Py "ToolsServer" $Out $Work @("app", "smart_license") @(
+  "--onedir",
+  "--console",
+  "--paths", $ToolsSrc,
+  "--paths", $Licensing,
+  "--collect-all", "uvicorn",
+  "--collect-all", "starlette",
+  "--collect-all", "fastapi",
+  "--collect-all", "pydantic",
+  "--collect-all", "pydantic_core",
+  "--collect-all", "httpx",
+  "--collect-all", "trafilatura",
+  "--collect-all", "pandas",
+  "--collect-all", "openpyxl",
+  "--hidden-import", "app",
+  "--hidden-import", "app.main",
+  "--hidden-import", "app.config",
+  "--hidden-import", "app.document_tool",
+  "--hidden-import", "app.document_tool.extract",
+  "--hidden-import", "app.excel_tool",
+  "--hidden-import", "app.web_tool",
+  "--hidden-import", "smart_license",
+  "--hidden-import", "smart_license.web",
+  "--hidden-import", "uvicorn.logging",
+  "--hidden-import", "uvicorn.loops",
+  "--hidden-import", "uvicorn.loops.auto",
+  "--hidden-import", "uvicorn.protocols",
+  "--hidden-import", "uvicorn.protocols.http",
+  "--hidden-import", "uvicorn.protocols.http.auto",
+  "--hidden-import", "uvicorn.protocols.websockets",
+  "--hidden-import", "uvicorn.protocols.websockets.auto",
+  "--hidden-import", "uvicorn.lifespan",
+  "--hidden-import", "uvicorn.lifespan.on",
+  "--hidden-import", "langchain_community",
+  "--hidden-import", "langchain_community.document_loaders",
+  "--hidden-import", "langchain_community.document_loaders.pdf",
+  "--hidden-import", "langchain_community.document_loaders.word_document",
+  "--hidden-import", "langchain_community.document_loaders.html_bs",
+  "--exclude-module", "tkinter",
+  "--exclude-module", "matplotlib",
+  "--exclude-module", "playwright",
   (Join-Path $Desktop "run_tools_server.py")
-$pyExit = $LASTEXITCODE
-$ErrorActionPreference = $prevEap
+)
 
-if ($pyExit -ne 0) {
-  Write-Error "PyInstaller ToolsServer failed with code $pyExit"
-  exit $pyExit
-}
-
-# Всегда кладём исходники app/ в _internal (надёжный import на диске)
+# Наш код — только скомпилированным (.pyd).
 $destInternal = Join-Path $Out "ToolsServer\_internal"
-$destApp = Join-Path $destInternal "app"
-Write-Host "Copying tools-server/app into _internal..."
-if (Test-Path $destApp) { Remove-Item -Recurse -Force $destApp }
-Copy-Item -Recurse -Force (Join-Path $ToolsSrc "app") $destApp
-if (-not (Test-Path (Join-Path $destApp "main.py"))) {
-  Write-Error "Failed to copy app into $destApp"
-  exit 1
-}
+Compile-Packages $Py $destInternal $Work @((Join-Path $ToolsSrc "app"), (Join-Path $Licensing "smart_license"))
 
 $exe = Join-Path $Out "ToolsServer\ToolsServer.exe"
 Write-Host ""

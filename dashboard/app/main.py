@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import httpx
@@ -25,6 +26,14 @@ PROXY_TIMEOUT = httpx.Timeout(connect=30.0, read=1800.0, write=60.0, pool=30.0)
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 app = FastAPI(title="TENAG Dashboard", version="1.0.0")
+
+try:
+    from smart_license.web import install as install_license
+except ImportError:  # Docker и разработка: пакета лицензии нет, а в собранной программе он обязателен
+    if getattr(sys, "frozen", False):
+        raise
+else:
+    install_license(app, "dashboard")
 
 
 @app.middleware("http")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import httpx
@@ -22,6 +23,14 @@ app = FastAPI(
         "Separate from the document tools server."
     ),
 )
+
+try:
+    from smart_license.web import install as install_license
+except ImportError:  # Docker и разработка: пакета лицензии нет, а в собранной программе он обязателен
+    if getattr(sys, "frozen", False):
+        raise
+else:
+    install_license(app, "search")
 
 
 class SearchTendersBody(BaseModel):

@@ -312,11 +312,17 @@ function ensureToolServers(manifest) {
   }
 }
 
-const MULTILINGUAL_EMBEDDING = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2";
+const MULTILINGUAL_EMBEDDING = "paraphrase-multilingual-MiniLM-L12-v2";
+const STOCK_EMBEDDINGS = ["sentence-transformers/all-MiniLM-L6-v2", `sentence-transformers/${MULTILINGUAL_EMBEDDING}`];
 
-function embeddingModelCached(model) {
-  const home = process.env.HF_HOME || path.join(process.env.USERPROFILE || app.getPath("home"), ".cache", "huggingface");
-  return fs.existsSync(path.join(home, "hub", `models--${model.replace("/", "--")}`));
+/** Папка модели векторов: рядом с программой (сборка) или в APP_ROOT\models. Open WebUI принимает путь вместо имени
+ * и тогда ничего не скачивает — в кэше Hugging Face ему нужен полный снимок репозитория (несколько ГБ). */
+function embeddingModelDir() {
+  for (const base of [path.join(process.resourcesPath || "", "models"), path.join(APP_ROOT, "models")]) {
+    const dir = path.join(base, MULTILINGUAL_EMBEDDING);
+    if (fs.existsSync(path.join(dir, "modules.json"))) return dir;
+  }
+  return "";
 }
 
 /**
@@ -336,10 +342,9 @@ function ragSettings(manifest) {
     ["rag.chunk_overlap", 100, 200, "CHUNK_OVERLAP"],
     ["rag.top_k", 3, 5, "RAG_TOP_K"],
   ];
-  // Модель векторов скачивается отдельно; без неё в кэше Open WebUI не поднимет поиск, поэтому только если она есть.
-  if (embeddingModelCached(MULTILINGUAL_EMBEDDING)) {
-    settings.push(["rag.embedding_model", "sentence-transformers/all-MiniLM-L6-v2", MULTILINGUAL_EMBEDDING, "RAG_EMBEDDING_MODEL"]);
-  }
+  // Без файлов модели Open WebUI не поднимет поиск, поэтому переключаем, только если папка модели есть.
+  const modelDir = embeddingModelDir();
+  if (modelDir) settings.push(["rag.embedding_model", STOCK_EMBEDDINGS, modelDir, "RAG_EMBEDDING_MODEL"]);
   return settings.filter(([, , value]) => value !== "");
 }
 
@@ -356,7 +361,9 @@ function ensureRagSettings(manifest) {
     for (const [key, stock, value] of ragSettings(manifest)) {
       const row = get.get(key);
       if (!row) continue; // ещё не сохранено — Open WebUI возьмёт значение из env
-      if (JSON.stringify(JSON.parse(row.value)) !== JSON.stringify(stock)) continue;
+      const current = JSON.stringify(JSON.parse(row.value));
+      const stockValues = Array.isArray(stock) ? stock : [stock];
+      if (!stockValues.some((v) => JSON.stringify(v) === current)) continue;
       set.run(JSON.stringify(value), Math.floor(Date.now() / 1000), key);
       changed.push(key);
     }

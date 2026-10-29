@@ -244,9 +244,52 @@ def _extract_by_ext(path: Path, ext: str) -> str:
     if ext == ".doc":
         return _extract_legacy_doc(path)
 
+    if ext in {".odt", ".ods", ".odp"}:
+        return _extract_opendocument(path)
+
     # text-like
     enc = _detect_encoding(path)
     return path.read_text(encoding=enc, errors="replace")
+
+
+def _extract_opendocument(path: Path) -> str:
+    """OpenDocument (LibreOffice): текст из content.xml — абзацы и заголовки строками, ячейки таблиц через « | »."""
+    import xml.etree.ElementTree as ET
+
+    ns_text = "urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+    ns_table = "urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+    with zipfile.ZipFile(path) as zf:
+        root = ET.fromstring(zf.read("content.xml"))
+    lines: list[str] = []
+
+    def text_of(el) -> str:
+        parts = [el.text or ""]
+        for ch in el:
+            tag = ch.tag.split("}")[-1]
+            if tag == "s":
+                parts.append(" " * int(ch.get(f"{{{ns_text}}}c", "1")))
+            elif tag in ("tab", "line-break"):
+                parts.append(" ")
+            else:
+                parts.append(text_of(ch))
+            parts.append(ch.tail or "")
+        return "".join(parts)
+
+    def walk(el) -> None:
+        for ch in el:
+            if ch.tag == f"{{{ns_table}}}table-row":
+                cells = [text_of(c).strip() for c in ch if c.tag.endswith("}table-cell")]
+                if any(cells):
+                    lines.append(" | ".join(cells))
+            elif ch.tag in (f"{{{ns_text}}}p", f"{{{ns_text}}}h"):
+                t = text_of(ch).strip()
+                if t:
+                    lines.append(t)
+            else:
+                walk(ch)
+
+    walk(root)
+    return "\n".join(lines)
 
 
 ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z"}

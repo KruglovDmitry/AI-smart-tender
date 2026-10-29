@@ -42,8 +42,17 @@ def process_upload(data: bytes, filename: str, content_type: str | None = None) 
     with tempfile.TemporaryDirectory(prefix="owui-") as tmp:
         path = Path(tmp) / f"upload{suffix}"
         path.write_bytes(data)
-        pages, backend = _build_pages(path)
-        is_pdf = suffix == ".pdf"
+        try:
+            pages, backend = _build_pages(path)
+        except Exception as e:
+            # Свой разбор упал (битый файл, ошибка библиотеки) — отдаём текст прежним простым способом.
+            # Неподдерживаемый формат пробрасываем: Open WebUI тогда разберёт файл сам.
+            log.warning("OWUI loader: page parsing failed for %s (%s), falling back to extract_file", name, e)
+            from ..document_tool.extract import extract_file
+
+            pages = [pdf.page_record(extract_file(path)["content"], images=0)]
+            backend = "extract_file"
+        is_pdf = suffix == ".pdf" and backend != "extract_file"
         docs = []
         for n, p in enumerate(pages, 1):
             text, source = p["text"], "text"

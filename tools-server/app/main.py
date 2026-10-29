@@ -581,3 +581,33 @@ def api_download_file(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         content_disposition_type="attachment",
     )
+
+
+def _inline_refs(node: Any, schemas: dict[str, Any], depth: int = 0) -> Any:
+    if isinstance(node, dict):
+        ref = node.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/components/schemas/") and depth < 8:
+            target = schemas.get(ref.rsplit("/", 1)[-1], {})
+            extra = {k: v for k, v in node.items() if k != "$ref"}
+            return _inline_refs({**target, **extra}, schemas, depth + 1)
+        return {k: _inline_refs(v, schemas, depth) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_inline_refs(v, schemas, depth) for v in node]
+    return node
+
+
+def _openapi_without_refs() -> dict[str, Any]:
+    """Open WebUI не разрешает $ref внутри вложенных типов (например, словарь {колонка: JobOutput}) и отказывается
+    звать такой инструмент. Отдаём схему, где все ссылки на компоненты подставлены на место."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    from fastapi.openapi.utils import get_openapi
+
+    schema = get_openapi(title=app.title, version=app.version, description=app.description, routes=app.routes)
+    components = schema.get("components", {}).get("schemas", {})
+    schema["paths"] = _inline_refs(schema.get("paths", {}), components)
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _openapi_without_refs

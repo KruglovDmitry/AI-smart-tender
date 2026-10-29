@@ -51,6 +51,23 @@ def _cell_value(v: Any) -> Any:
     return str(v)
 
 
+def export_dest(filename: str) -> Path:
+    """Свободное имя файла в exports/YYYY-MM-DD/."""
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    out_dir = DATA_ROOT / "exports" / day
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest = out_dir / _safe_filename(filename)
+    if dest.exists():
+        ts = datetime.now(timezone.utc).strftime("%H%M%S")
+        dest = out_dir / f"{dest.stem}_{ts}.xlsx"
+    return dest
+
+
+def make_download_url(rel: str, public_base_url: str = "") -> str:
+    base = (public_base_url or "").rstrip("/")
+    return f"{base}/download_file?path={quote(rel)}"
+
+
 def write_excel(
     *,
     filename: str,
@@ -67,16 +84,7 @@ def write_excel(
     if len(sheets) > MAX_SHEETS:
         raise ValueError(f"Too many sheets (max {MAX_SHEETS})")
 
-    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    out_dir = DATA_ROOT / "exports" / day
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    fname = _safe_filename(filename)
-    dest = out_dir / fname
-    if dest.exists():
-        stem = dest.stem
-        ts = datetime.now(timezone.utc).strftime("%H%M%S")
-        dest = out_dir / f"{stem}_{ts}.xlsx"
+    dest = export_dest(filename)
 
     wb = Workbook()
     # remove default sheet after we add real ones
@@ -136,10 +144,7 @@ def write_excel(
 
     wb.save(dest)
     rel = str(dest.relative_to(DATA_ROOT)).replace("\\", "/")
-    base = (public_base_url or "").rstrip("/")
-    download_url = (
-        f"{base}/download_file?path={quote(rel)}" if base else f"/download_file?path={quote(rel)}"
-    )
+    download_url = make_download_url(rel, public_base_url)
 
     return {
         "ok": True,

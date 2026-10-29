@@ -27,6 +27,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from . import config
+from . import doc_index, table_tool
 from .document_tool import list_directory, read_document, read_folder_documents
 from .excel_tool import resolve_export_file, write_excel
 from .web_tool import fetch_page
@@ -42,7 +43,7 @@ logging.basicConfig(level=logging.INFO, handlers=[_handler], force=True)
 
 app = FastAPI(
     title="Tender Tools API",
-    version="1.4.0",
+    version="1.5.0",
     description="Server documents, URL fetch, and Excel export.",
 )
 
@@ -134,6 +135,90 @@ class WriteExcelBody(BaseModel):
     )
 
 
+class DocumentInfoBody(BaseModel):
+    path: str = Field(..., description="Relative path under data root, e.g. 'catalogs/Finder 23-24.pdf'.")
+    page_from: int = Field(1, description="First page of the outline.")
+    page_to: int = Field(0, description="Last page of the outline (0 = all; prefer ranges of ~100 pages for big files).")
+
+
+class SearchDocumentBody(BaseModel):
+    path: str = Field(..., description="Relative path under data root.")
+    query: str = Field(
+        ...,
+        description=(
+            "Article/part number (55.32.9.024.0000 and 553290240000 match the same) or words to find. "
+            "For codes the search falls back to the longest printed prefix (series)."
+        ),
+    )
+    max_results: int = Field(10, description="Max pages to return.")
+    mode: str = Field("auto", description="auto | code | text")
+
+
+class ReadPagesBody(BaseModel):
+    path: str = Field(..., description="Relative path under data root.")
+    pages: str = Field(..., description="Pages to read: '94', '94-96' or '12,40,41' (max 10 per call).")
+    include_tables: bool = Field(True, description="Also return tables of these pages as Markdown.")
+    max_chars: int = Field(60000, description="Max characters in the response.")
+
+
+class DescribeTableBody(BaseModel):
+    path: str = Field(..., description="Relative path under data root to .xlsx/.xls/.csv.")
+    sheet: str | None = Field(None, description="Sheet name; empty = all sheets.")
+    header_row: int | None = Field(None, description="Header row number if auto-detection is wrong.")
+
+
+class TableFilter(BaseModel):
+    column: str = Field(..., description="Column letter (B), number or header text.")
+    op: str = Field("eq", description="eq | ne | contains | not_contains | startswith | in | empty | not_empty | gt | lt")
+    value: Any = Field(None, description="Value to compare; for 'in' a list or 'a|b|c'.")
+
+
+class QueryTableBody(BaseModel):
+    path: str = Field(..., description="Relative path under data root to .xlsx/.xls/.csv.")
+    sheet: str | None = Field(None, description="Sheet name; empty = first sheet.")
+    header_row: int | None = Field(None, description="Header row number; empty = auto.")
+    data_start_row: int | None = Field(None, description="First data row when service rows follow the header.")
+    columns: list[str] | None = Field(None, description="Columns to return (letters or headers); empty = all.")
+    filters: list[TableFilter] = Field(default_factory=list, description="All filters must match.")
+    offset: int = Field(0, description="Skip this many matched rows (paging).")
+    limit: int = Field(50, description="Rows to return, max 200.")
+    distinct: str | None = Field(None, description="Instead of rows, count distinct values of this column.")
+
+
+class TableUpdate(BaseModel):
+    row: int | None = Field(None, description="Sheet row number to write.")
+    key: str | None = Field(None, description="Value of key_column identifying the row(s), instead of row.")
+    values: dict[str, Any] = Field(..., description="{column letter or header: value}")
+
+
+class FillTableBody(BaseModel):
+    path: str = Field(
+        ...,
+        description="Source .xlsx under data root; or a file under exports/ returned earlier to keep filling it.",
+    )
+    updates: list[TableUpdate] = Field(..., description="Cells to write.")
+    sheet: str | None = Field(None, description="Sheet name; empty = first sheet.")
+    header_row: int | None = Field(None, description="Header row number; empty = auto.")
+    key_column: str | None = Field(None, description="Column used to find rows by `key` (e.g. article column).")
+    allowed_values: dict[str, list[str]] | None = Field(
+        None, description="{column: [allowed values]}: values outside the list are rejected, not written."
+    )
+
+
+def _http_errors(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except (ValueError, KeyError, IsADirectoryError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
+    except Exception as e:
+        logging.getLogger(__name__).exception("tool failed")
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}") from e
+
+
 def _public_base(request: Request) -> str:
     configured = config.TOOLS_PUBLIC_BASE_URL
     if configured:
@@ -180,7 +265,8 @@ def list_documents(
         "Extract text from a file on the server data volume "
         "(PDF/DOCX/TXT/CSV/XLSX/ZIP/...). "
         "Do NOT call this for files attached in the chat — use chat context instead. "
-        "Use only for paths under tenders/, catalogs/, uploads/ on the server."
+        "Use only for paths under tenders/, catalogs/, uploads/ on the server. "
+        "For big PDFs use document_info/search_document/read_pages; for spreadsheets describe_table/query_table."
     ),
 )
 def api_read_document(body: ReadDocumentBody):
@@ -218,6 +304,97 @@ def api_read_folder(body: ReadFolderBody):
         raise HTTPException(status_code=400, detail=str(e)) from e
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e)) from e
+
+
+@app.post(
+    "/document_info",
+    summary="Outline of a large document",
+    description=(
+        "Page count and a one-line title per page for a PDF/DOCX on the server, plus pages that needed OCR. "
+        "Use for big files (catalogs, tender documentation) instead of read_document; then search_document "
+        "and read_pages."
+    ),
+)
+def api_document_info(body: DocumentInfoBody):
+    return _http_errors(doc_index.document_info, body.path, body.page_from, body.page_to)
+
+
+@app.post(
+    "/search_document",
+    summary="Find pages in a document by article number or words",
+    description=(
+        "Search a server document page by page. Article numbers are matched ignoring dots/spaces; if the exact "
+        "code is not printed, returns pages of its series (match=prefix): catalogs often build codes from "
+        "option tables, read those pages to decode it."
+    ),
+)
+def api_search_document(body: SearchDocumentBody):
+    return _http_errors(doc_index.search_document, body.path, body.query, body.max_results, body.mode)
+
+
+@app.post(
+    "/read_pages",
+    summary="Read selected pages of a document",
+    description="Text and tables (Markdown) of chosen pages; broken-font or scanned pages are OCR-ed.",
+)
+def api_read_pages(body: ReadPagesBody):
+    return _http_errors(doc_index.read_pages, body.path, body.pages, body.include_tables, body.max_chars)
+
+
+@app.post(
+    "/describe_table",
+    summary="Structure of a spreadsheet",
+    description=(
+        "Sheets, header row, columns with fill counts and example/distinct values, first rows. "
+        "Call first for any Excel/CSV on the server instead of reading it whole: big tables do not fit "
+        "into the model context."
+    ),
+)
+def api_describe_table(body: DescribeTableBody):
+    return _http_errors(table_tool.describe_table, body.path, body.sheet, body.header_row)
+
+
+@app.post(
+    "/query_table",
+    summary="Get spreadsheet rows by filter",
+    description="Rows matching filters with paging (max 200 per call), or distinct value counts of a column.",
+)
+def api_query_table(body: QueryTableBody):
+    return _http_errors(
+        table_tool.query_table,
+        body.path,
+        body.sheet,
+        body.header_row,
+        body.data_start_row,
+        body.columns,
+        [f.model_dump() for f in body.filters],
+        body.offset,
+        body.limit,
+        body.distinct,
+    )
+
+
+@app.post(
+    "/fill_table",
+    summary="Write values into a copy of a spreadsheet",
+    description=(
+        "Fill cells of an existing .xlsx (template) keeping its formatting and other sheets. The first call "
+        "makes a copy under exports/; pass the returned path to keep filling. Rows by number or by key_column. "
+        "Returns download_url for the user."
+    ),
+)
+def api_fill_table(body: FillTableBody, request: Request):
+    return _http_errors(
+        table_tool.fill_table,
+        body.path,
+        [u.model_dump() for u in body.updates],
+        body.sheet,
+        body.header_row,
+        body.key_column,
+        body.allowed_values,
+        None,
+        _public_base(request),
+    )
 
 
 @app.post(

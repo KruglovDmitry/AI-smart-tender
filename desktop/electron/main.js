@@ -1,4 +1,4 @@
-const { app, BaseWindow, BrowserWindow, WebContentsView, dialog, ipcMain, Menu, shell } = require("electron");
+const { app, BaseWindow, BrowserWindow, WebContentsView, dialog, ipcMain, Menu, session, shell } = require("electron");
 const { spawn } = require("child_process");
 const http = require("http");
 const path = require("path");
@@ -737,10 +737,6 @@ function buildMenu(manifest) {
 
 // ---------- запуск ----------
 
-// pdf.js из Open WebUI (5.5) зовёт Uint8Array.toHex/fromBase64: в Chromium 138 (Electron 37) они за флагом V8,
-// без него предпросмотр любого PDF в «Знаниях» падал с «Failed to load PDF». Флаг действует и в воркерах.
-app.commandLine.appendSwitch("js-flags", "--js-base-64");
-
 // Второй запуск start.exe не поднимает вторую копию сервисов (порты заняты, Open WebUI падал с кодом 3),
 // а показывает уже открытое окно.
 if (!app.requestSingleInstanceLock()) {
@@ -754,6 +750,9 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     try {
+      // Файлы Open WebUI отдаются как immutable: после правки сборки (owui-patches) старые копии
+      // оставались бы в кэше навсегда. Сервер локальный, так что кэш просто сбрасываем при старте.
+      await session.defaultSession.clearCache();
       ensureDataFolders();
       loadDotEnvFiles();
       servicesManifest = loadServices();

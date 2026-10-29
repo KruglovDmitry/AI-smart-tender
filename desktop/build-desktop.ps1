@@ -90,6 +90,9 @@ function Build-ProcessService($svc) {
     Write-Host "Copy $src -> $dest"
     if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
     Copy-Item -Recurse -Force $src $dest
+    if ($svc.id -eq "openwebui") {
+      & (Join-Path $Desktop "owui-patches\apply.ps1") -OpenWebUIDir $dest
+    }
     return
   }
   Write-Error "Unknown build.type for $($svc.id): $($build.type)"

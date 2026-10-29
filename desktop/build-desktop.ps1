@@ -152,6 +152,22 @@ if (-not $SkipElectron) {
     $resJson += @{ from = "../dist/$($svc.resourceDir)"; to = [string]$svc.resourceDir; filter = @("**/*") }
   }
   $resJson += @{ from = "../services.json"; to = "services.json" }
+  # Модель векторов для «Знаний» (main.js ищет её в resources/models): из desktop/vendor/models или из уже
+  # настроенной установки в %LOCALAPPDATA%\AISmartTender\models. Без неё остаётся англоязычная модель.
+  $modelsDist = Join-Path $Dist "models"
+  foreach ($src in @((Join-Path $Desktop "vendor\models"), (Join-Path $env:LOCALAPPDATA "AISmartTender\models"))) {
+    if (Test-Path (Join-Path $src "paraphrase-multilingual-MiniLM-L12-v2\modules.json")) {
+      Write-Host "Embedding model: $src"
+      if (Test-Path $modelsDist) { Remove-Item -Recurse -Force $modelsDist }
+      Copy-Item -Recurse -Force $src $modelsDist
+      break
+    }
+  }
+  if (Test-Path $modelsDist) {
+    $resJson += @{ from = "../dist/models"; to = "models"; filter = @("**/*") }
+  } else {
+    Write-Warning "Embedding model not found: Knowledge will use the English all-MiniLM model"
+  }
   # Тексты лицензий сторонних компонентов (Open WebUI требует их в дистрибутиве) — «Справка» открывает отсюда.
   $resJson += @{ from = "../licenses"; to = "licenses"; filter = @("**/*") }
   $resFile = Join-Path $Dist "extra-resources.json"

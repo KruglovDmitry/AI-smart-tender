@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from . import config
 from . import doc_index, table_tool
+from .table_tool import jobs as table_jobs
 from .document_tool import list_directory, read_document, read_folder_documents
 from .excel_tool import resolve_export_file, write_excel
 from .web_tool import fetch_page
@@ -161,6 +162,15 @@ class ReadPagesBody(BaseModel):
     max_chars: int = Field(60000, description="Max characters in the response.")
 
 
+class ViewPageBody(BaseModel):
+    path: str = Field(..., description="Relative path under data root to a PDF.")
+    page: int = Field(..., description="Page number.")
+    question: str = Field(
+        "",
+        description="What to look at, e.g. 'какие клеммы на схеме подключения' (empty = describe the page).",
+    )
+
+
 class DescribeTableBody(BaseModel):
     path: str = Field(..., description="Relative path under data root to .xlsx/.xls/.csv.")
     sheet: str | None = Field(None, description="Sheet name; empty = all sheets.")
@@ -203,6 +213,32 @@ class FillTableBody(BaseModel):
     allowed_values: dict[str, list[str]] | None = Field(
         None, description="{column: [allowed values]}: values outside the list are rejected, not written."
     )
+
+
+class JobOutput(BaseModel):
+    description: str = Field("", description="What to put into this column and how to decide it.")
+    allowed: list[str] | None = Field(None, description="Allowed values (e.g. from the template's reference sheet).")
+
+
+class StartTableJobBody(BaseModel):
+    path: str = Field(..., description="Source .xlsx under data root (a copy is filled, the source is untouched).")
+    instruction: str = Field(..., description="Task for every row, in plain words.")
+    input_columns: list[str] = Field(..., description="Columns the model sees for each row (letters or headers).")
+    outputs: dict[str, JobOutput] = Field(..., description="{column to fill: {description, allowed}}")
+    sheet: str | None = Field(None, description="Sheet name; empty = first sheet.")
+    header_row: int | None = Field(None, description="Header row number; empty = auto.")
+    data_start_row: int | None = Field(None, description="First data row when service rows follow the header.")
+    filters: list[TableFilter] = Field(default_factory=list, description="Process only rows matching all filters.")
+    document: str | None = Field(None, description="Reference document under data root (catalog) to look rows up in.")
+    lookup_column: str | None = Field(None, description="Column whose value (article) is searched in `document`.")
+    batch_size: int = Field(30, description="Rows per model call (1-60).")
+    workers: int = Field(3, description="Parallel model calls (1-6).")
+    max_rows: int = Field(0, description="Process only the first N matching rows (0 = all); use 20-50 for a trial run.")
+    example_rows: list[int] | None = Field(
+        None,
+        description="Rows the user filled by hand to show the style. Empty = up to 6 rows whose outputs are already filled.",
+    )
+    skip_filled: bool = Field(True, description="Do not reprocess rows whose output columns are all filled.")
 
 
 def _http_errors(fn, *args, **kwargs):
@@ -342,6 +378,20 @@ def api_read_pages(body: ReadPagesBody):
 
 
 @app.post(
+    "/view_page",
+    summary="Look at a document page as an image",
+    description=(
+        "Render a PDF page and ask a vision model a question about it: diagrams, drawings, photos, "
+        "tables printed as images. Use when read_pages text is not enough to decide. Answers are cached."
+    ),
+)
+def api_view_page(body: ViewPageBody):
+    from .doc_index import vision
+
+    return _http_errors(vision.view_page, body.path, body.page, body.question)
+
+
+@app.post(
     "/describe_table",
     summary="Structure of a spreadsheet",
     description=(
@@ -395,6 +445,47 @@ def api_fill_table(body: FillTableBody, request: Request):
         None,
         _public_base(request),
     )
+
+
+@app.post(
+    "/start_table_job",
+    summary="Process a big spreadsheet row by row in the background",
+    description=(
+        "For tables too big for the chat (hundreds to tens of thousands of rows): the server walks the rows in "
+        "batches, asks the model to fill the output columns for each batch (optionally looking every row up "
+        "in a reference document such as a catalog) and writes results into a copy of the file. Returns job_id "
+        "at once; poll table_job_status. Try max_rows=30 first and show the user the sample."
+    ),
+)
+def api_start_table_job(body: StartTableJobBody, request: Request):
+    return _http_errors(
+        table_jobs.start_job,
+        body.path,
+        body.instruction,
+        body.input_columns,
+        {k: v.model_dump() for k, v in body.outputs.items()},
+        sheet=body.sheet,
+        header_row=body.header_row,
+        data_start_row=body.data_start_row,
+        filters=[f.model_dump() for f in body.filters],
+        document=body.document,
+        lookup_column=body.lookup_column,
+        batch_size=body.batch_size,
+        workers=body.workers,
+        max_rows=body.max_rows,
+        example_rows=body.example_rows,
+        skip_filled=body.skip_filled,
+        public_base_url=_public_base(request),
+    )
+
+
+@app.get(
+    "/table_job_status",
+    summary="Progress and result of a table job",
+    description="Rows done/filled, errors, unresolved and low-confidence rows, download_url when finished.",
+)
+def api_table_job_status(job_id: str = Query(..., description="job_id from start_table_job")):
+    return _http_errors(table_jobs.job_status, job_id)
 
 
 @app.post(

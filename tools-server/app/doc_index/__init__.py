@@ -98,14 +98,46 @@ class DocIndex:
         return [i for i in range(1, len(self.pages) + 1) if self.needs_ocr(i) and not self.ocr_file(i).exists()]
 
 
-def _build_pages(path: Path) -> tuple[list[dict[str, Any]], str]:
-    if path.suffix.lower() == ".pdf":
-        return pdf.extract_pages(path), pdf.BACKEND
-    from ..document_tool.extract import extract_file
+# Эти форматы MarkItDown переводит в Markdown с заголовками и таблицами; остальное — прежним extract_file.
+MARKITDOWN_EXTENSIONS = {".docx", ".pptx", ".html", ".htm", ".msg", ".epub", ".xml", ".rtf"}
 
-    text = extract_file(path)["content"]
-    chunks = [text[i : i + PSEUDO_PAGE_CHARS] for i in range(0, len(text), PSEUDO_PAGE_CHARS)] or [""]
-    return [pdf.page_record(c, images=0) for c in chunks], "extract_file"
+
+def _split_pseudo_pages(text: str) -> list[str]:
+    """Условные страницы ~PSEUDO_PAGE_CHARS, разрез по заголовку или пустой строке, а не посреди таблицы."""
+    pages, cur = [], []
+    size = 0
+    for line in text.splitlines(keepends=True):
+        boundary = line.startswith("#") or not line.strip()
+        if size >= PSEUDO_PAGE_CHARS and boundary and not line.lstrip().startswith("|"):
+            pages.append("".join(cur))
+            cur, size = [], 0
+        cur.append(line)
+        size += len(line)
+        if size >= PSEUDO_PAGE_CHARS * 2:  # длинный абзац или таблица без пустых строк
+            pages.append("".join(cur))
+            cur, size = [], 0
+    if cur:
+        pages.append("".join(cur))
+    return pages or [""]
+
+
+def _build_pages(path: Path) -> tuple[list[dict[str, Any]], str]:
+    ext = path.suffix.lower()
+    if ext == ".pdf":
+        return pdf.extract_pages(path), pdf.BACKEND
+    text, backend = "", ""
+    if ext in MARKITDOWN_EXTENSIONS:
+        try:
+            from markitdown import MarkItDown
+
+            text, backend = MarkItDown(enable_plugins=False).convert(str(path)).text_content or "", "markitdown"
+        except Exception as e:
+            log.warning("MarkItDown failed for %s: %s; falling back", path.name, e)
+    if not backend:
+        from ..document_tool.extract import extract_file
+
+        text, backend = extract_file(path)["content"], "extract_file"
+    return [pdf.page_record(c, images=0) for c in _split_pseudo_pages(text)], backend
 
 
 def get_index(path_str: str) -> DocIndex:
@@ -162,7 +194,8 @@ def _start_background_ocr(idx: DocIndex) -> None:
 
 def _title(text: str) -> str:
     for line in text.splitlines():
-        s = line.strip()
+        # Разметка Markdown (заголовки, ячейки таблиц, жирный) в оглавлении только мешает.
+        s = re.sub(r"\s{2,}", " ", re.sub(r"[#|*]+", " ", line)).strip()
         if len(s) >= 4 and not s.isdigit() and not re.fullmatch(r"[\W\d_]+", s):
             return s[:90]
     return ""

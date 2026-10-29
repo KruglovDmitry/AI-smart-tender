@@ -78,25 +78,26 @@ def read_document(path: str, max_chars: int) -> dict[str, Any]:
     if not file_path.is_file():
         raise IsADirectoryError(f"Expected file, got directory: {path}")
 
-    result = extract_file(file_path)
+    rel = str(file_path.relative_to(DATA_ROOT)).replace("\\", "/")
+    ext = file_path.suffix.lower()
+    from .. import doc_index
+
+    if ext == ".pdf" or ext in doc_index.MARKITDOWN_EXTENSIONS:
+        # Тот же разбор, что у постраничного индекса: OCR сканов и битых шрифтов, таблицы DOCX в Markdown.
+        # pypdf на скачанных тендерах отдавал пустыми 21 PDF из 95.
+        idx = doc_index.get_index(rel)
+        pages = [idx.text(n, run_ocr=True)[0] for n in range(1, len(idx.pages) + 1)]
+        text = "\n\n".join(f"[стр. {n}]\n{t}" for n, t in enumerate(pages, 1)) if ext == ".pdf" else "\n\n".join(pages)
+        result = {"path": str(file_path), "filename": file_path.name, "extension": ext, "pages": len(pages), "chars": len(text), "content": text}
+    else:
+        result = extract_file(file_path)
     content = result["content"]
     truncated = False
     if max_chars > 0 and len(content) > max_chars:
-        content = content[:max_chars] + "\n\n[... truncated ...]"
+        content = content[:max_chars] + "\n\n[... truncated: use search_document / read_pages for the rest ...]"
         truncated = True
 
-    rel = str(file_path.relative_to(DATA_ROOT)).replace("\\", "/")
-    out = {
-        **result,
-        "path": rel,
-        "content": content,
-        "truncated": truncated,
-        "note": (
-            "Text extracted the same way as Open WebUI default document upload "
-            "(PyPDF / Docx2txt / Text / Excel / etc.), then passed as context."
-        ),
-    }
-    return out
+    return {**result, "path": rel, "content": content, "truncated": truncated}
 
 
 def read_folder_documents(
@@ -104,6 +105,7 @@ def read_folder_documents(
     max_files: int,
     max_chars_per_file: int,
     recursive: bool = True,
+    max_total_chars: int = 150_000,
 ) -> dict[str, Any]:
     root = resolve_under_data(path)
     if not root.exists():
@@ -120,14 +122,25 @@ def read_folder_documents(
         if ext in ALLOWED_EXTENSIONS or ext in TEXT_EXTENSIONS:
             files.append(p)
 
-    selected = files[: max(1, max_files)]
+    # Сначала маленькие файлы: так целиком попадает больше документов, а оглавлениями идут большие.
+    selected = sorted(files[: max(1, max_files)], key=lambda p: p.stat().st_size)
     documents: list[dict[str, Any]] = []
+    outlines: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
+    used = 0
 
+    # Гибрид: пока папка помещается в бюджет, отдаём файлы целиком (быстро и дёшево); дальше — только оглавления,
+    # остальное модель дочитывает поиском и страницами. Так маленькая закупка читается за один вызов,
+    # а большая не переполняет контекст.
     for p in selected:
         rel = str(p.relative_to(DATA_ROOT)).replace("\\", "/")
         try:
-            documents.append(read_document(rel, max_chars_per_file))
+            if used < max_total_chars:
+                doc = read_document(rel, min(max_chars_per_file, max_total_chars - used))
+                used += len(doc["content"])
+                documents.append(doc)
+            else:
+                outlines.append(_outline(rel))
         except Exception as e:
             errors.append({"path": rel, "error": str(e)})
 
@@ -138,9 +151,26 @@ def read_folder_documents(
         "total_supported_files": len(files),
         "returned_files": len(documents),
         "documents": documents,
+        "not_read_fully": outlines,
         "errors": errors,
         "note": (
-            "Each file is extracted like an Open WebUI chat attachment "
-            "(full text into context, with per-file char limit)."
+            "Full text of the first files fits the budget. Files in not_read_fully and truncated ones are "
+            "given as outlines: read them with search_document / read_pages (PDF, DOCX) or "
+            "describe_table / query_table (Excel)."
+            if outlines or any(d.get("truncated") for d in documents)
+            else "All files are given in full."
         ),
     }
+
+
+def _outline(rel: str) -> dict[str, Any]:
+    if rel.lower().endswith((".xlsx", ".xls", ".csv")):
+        from ..table_tool import describe_table
+
+        d = describe_table(rel)
+        return {"path": rel, "sheets": [{"sheet": s["sheet"], "rows": s["data_rows"], "columns": [c["header"] or c["column"] for c in s["columns"]][:30]} for s in d["details"]]}
+    from .. import doc_index
+
+    info = doc_index.document_info(rel)
+    titles = [f"{o['page']}: {o['title']}" for o in info["outline"] if o["title"]]
+    return {"path": rel, "pages": info["pages"], "chars": info["chars"], "outline": titles[:40]}

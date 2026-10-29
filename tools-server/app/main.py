@@ -94,6 +94,10 @@ class ReadFolderBody(BaseModel):
         default=config.DEFAULT_MAX_CHARS,
         description="Max characters per file.",
     )
+    max_total_chars: int = Field(
+        150_000,
+        description="Budget for full text of the folder; files beyond it come as outlines to read with search/read_pages.",
+    )
 
 
 class FetchUrlBody(BaseModel):
@@ -322,8 +326,9 @@ def api_read_document(body: ReadDocumentBody):
     "/read_folder",
     summary="Read all documents from a server folder",
     description=(
-        "Extract text from every supported file in a server data folder "
-        "(tenders/, catalogs/, ...). Not a substitute for chat attachments."
+        "Start here for a tender folder (tenders/, catalogs/, ...): small files come in full, the rest as "
+        "outlines (pages and titles, sheets and columns) to read further with search_document / read_pages / "
+        "query_table. Not a substitute for chat attachments."
     ),
 )
 def api_read_folder(body: ReadFolderBody):
@@ -332,6 +337,7 @@ def api_read_folder(body: ReadFolderBody):
             body.path,
             max_files=body.max_files,
             max_chars_per_file=body.max_chars_per_file,
+            max_total_chars=body.max_total_chars,
             recursive=body.recursive,
         )
     except FileNotFoundError as e:

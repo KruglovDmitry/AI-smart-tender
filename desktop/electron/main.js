@@ -261,7 +261,34 @@ function spawnHidden(exe, env, logPrefix) {
   });
   log(`${logPrefix} pid=${proc.pid}`);
   proc.on("error", (e) => log(`${logPrefix} spawn error: ${e}`));
+  if (proc.pid) disablePowerThrottling(proc.pid, logPrefix);
   return proc;
+}
+
+// Windows 11 переводит скрытые фоновые процессы в режим эффективности (медленные ядра): OCR страницы
+// в ToolsServer шёл 30–40 с вместо 3–4. Снимаем это с каждого сервиса через SetProcessInformation.
+function disablePowerThrottling(pid, label) {
+  if (process.platform !== "win32") return;
+  const script = `
+Add-Type @'
+using System; using System.Runtime.InteropServices;
+public static class PT {
+  [StructLayout(LayoutKind.Sequential)] public struct S { public uint V; public uint C; public uint St; }
+  [DllImport("kernel32.dll")] public static extern IntPtr OpenProcess(uint a, bool b, int pid);
+  [DllImport("kernel32.dll")] public static extern bool SetProcessInformation(IntPtr h, int cls, ref S i, int n);
+}
+'@
+$s = New-Object PT+S; $s.V = 1; $s.C = 1; $s.St = 0
+$h = [PT]::OpenProcess(0x0200, $false, ${pid})
+[PT]::SetProcessInformation($h, 4, [ref]$s, 12)`;
+  const ps = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  let out = "";
+  ps.stdout.on("data", (d) => (out += d));
+  ps.on("close", () => log(`${label} power throttling off: ${out.trim() || "?"}`));
+  ps.on("error", (e) => log(`${label} power throttling: ${e}`));
 }
 
 function buildToolServerConnections(manifest) {

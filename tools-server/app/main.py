@@ -377,6 +377,21 @@ def api_read_pages(body: ReadPagesBody):
     return _http_errors(doc_index.read_pages, body.path, body.pages, body.include_tables, body.max_chars)
 
 
+@app.put("/process", include_in_schema=False)
+async def api_owui_process(request: Request):
+    """Внешний загрузчик документов для «Знаний» Open WebUI. Не инструмент модели, поэтому скрыт из схемы."""
+    from starlette.concurrency import run_in_threadpool
+
+    from .doc_index.owui_loader import process_upload
+
+    data = await request.body()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty body")
+    return await run_in_threadpool(
+        _http_errors, process_upload, data, request.headers.get("X-Filename", ""), request.headers.get("Content-Type")
+    )
+
+
 @app.post(
     "/view_page",
     summary="Look at a document page as an image",

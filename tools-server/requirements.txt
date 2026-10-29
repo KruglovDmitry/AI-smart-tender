@@ -15,3 +15,8 @@ beautifulsoup4==4.13.3
 lxml_html_clean==0.4.1
 pytest==8.3.5
 olefile==0.47
+# Постраничный индекс PDF (AGPL: до поставки заказчику — лицензия Artifex или замена), OCR, прочие форматы
+pymupdf==2.0
+rapidocr==3.10.0
+onnxruntime==1.31.1
+markitdown[docx,pptx,outlook]==0.1.9

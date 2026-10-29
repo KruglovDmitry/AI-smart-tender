@@ -36,8 +36,10 @@ const TOOLBAR_HEIGHT = 40;
 // Упавший сервис перезапускается, но не чаще RESTART_LIMIT раз за RESTART_WINDOW_MS.
 const RESTART_LIMIT = 3;
 const RESTART_WINDOW_MS = 5 * 60 * 1000;
-// Ключи моделей нужны только агенту: остальным сервисам (в том числе Open WebUI) их не передаём.
+// Ключи моделей нужны только агенту и tool-server (фоновые задания по таблицам, «посмотреть страницу»):
+// остальным сервисам (в том числе Open WebUI) их не передаём.
 const AGENT_ONLY_ENV = /^(AGENT_LLM_|TENDER_AGENT_|AV_)|^QWEN_API_KEY$/;
+const MODEL_KEY_SERVICES = new Set(["tender-agent", "tools"]);
 
 /** @type {Map<string, import('child_process').ChildProcess>} */
 const procs = new Map();
@@ -310,10 +312,66 @@ function ensureToolServers(manifest) {
   }
 }
 
+const MULTILINGUAL_EMBEDDING = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2";
+
+function embeddingModelCached(model) {
+  const home = process.env.HF_HOME || path.join(process.env.USERPROFILE || app.getPath("home"), ".cache", "huggingface");
+  return fs.existsSync(path.join(home, "hub", `models--${model.replace("/", "--")}`));
+}
+
+/**
+ * Настройки RAG для «Знаний»: разбор файлов через tool-server (OCR, таблицы, номера страниц), гибридный поиск
+ * (артикулы ищутся по словам, а не только по смыслу), крупные куски и многоязычная модель векторов.
+ * Меняем только значения, которые остались заводскими, — то, что администратор поменял сам, не трогаем.
+ */
+function ragSettings(manifest) {
+  const tools = processServices(manifest).find((s) => s.id === "tools");
+  const settings = [
+    ["rag.content_extraction_engine", "", "external", "CONTENT_EXTRACTION_ENGINE"],
+    ["rag.external_document_loader_url", "", tools ? `http://${tools.host}:${tools.port}` : "", "EXTERNAL_DOCUMENT_LOADER_URL"],
+    // Open WebUI включает внешний загрузчик только при непустом ключе; tool-server локальный и ключ не проверяет.
+    ["rag.external_document_loader_api_key", "", "local", "EXTERNAL_DOCUMENT_LOADER_API_KEY"],
+    ["rag.enable_hybrid_search", false, true, "ENABLE_RAG_HYBRID_SEARCH"],
+    ["rag.chunk_size", 1000, 2500, "CHUNK_SIZE"],
+    ["rag.chunk_overlap", 100, 200, "CHUNK_OVERLAP"],
+    ["rag.top_k", 3, 5, "RAG_TOP_K"],
+  ];
+  // Модель векторов скачивается отдельно; без неё в кэше Open WebUI не поднимет поиск, поэтому только если она есть.
+  if (embeddingModelCached(MULTILINGUAL_EMBEDDING)) {
+    settings.push(["rag.embedding_model", "sentence-transformers/all-MiniLM-L6-v2", MULTILINGUAL_EMBEDDING, "RAG_EMBEDDING_MODEL"]);
+  }
+  return settings.filter(([, , value]) => value !== "");
+}
+
+function ensureRagSettings(manifest) {
+  const dbPath = path.join(WEBUI_DATA_DIR, "webui.db");
+  if (!fs.existsSync(dbPath)) return;
+  let db = null;
+  try {
+    const { DatabaseSync } = require("node:sqlite");
+    db = new DatabaseSync(dbPath);
+    const get = db.prepare("SELECT value FROM config WHERE key = ?");
+    const set = db.prepare("UPDATE config SET value = ?, updated_at = ? WHERE key = ?");
+    const changed = [];
+    for (const [key, stock, value] of ragSettings(manifest)) {
+      const row = get.get(key);
+      if (!row) continue; // ещё не сохранено — Open WebUI возьмёт значение из env
+      if (JSON.stringify(JSON.parse(row.value)) !== JSON.stringify(stock)) continue;
+      set.run(JSON.stringify(value), Math.floor(Date.now() / 1000), key);
+      changed.push(key);
+    }
+    if (changed.length) log(`RAG settings updated: ${changed.join(", ")}`);
+  } catch (e) {
+    log(`RAG settings sync skipped: ${e}`);
+  } finally {
+    if (db) db.close();
+  }
+}
+
 function serviceEnv(svc) {
   const env = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (svc.id !== "tender-agent" && AGENT_ONLY_ENV.test(key)) continue;
+    if (!MODEL_KEY_SERVICES.has(svc.id) && AGENT_ONLY_ENV.test(key)) continue;
     env[key] = value;
   }
   const localCtx = { ...baseCtx, host: svc.host, port: svc.port };
@@ -331,6 +389,9 @@ function serviceEnv(svc) {
     env.TOOL_SERVER_CONNECTIONS = JSON.stringify(
       buildToolServerConnections(servicesManifest)
     );
+    for (const [, , value, envName] of ragSettings(servicesManifest)) {
+      if (!(envName in process.env)) env[envName] = String(value);
+    }
   }
   return env;
 }
@@ -772,6 +833,7 @@ if (!app.requestSingleInstanceLock()) {
       const ui = processes.find((s) => s.primaryUi) || processes[0];
       if (!ui) throw new Error("Нет primaryUi сервиса в services.json");
       ensureToolServers(servicesManifest);
+      ensureRagSettings(servicesManifest);
       // Все сервисы стартуют сразу, но окно ждёт только чат: агент и дашборд догружаются в фоне,
       // их состояние видно в верхней панели, а медленный старт одного не закрывает приложение.
       const waits = new Map(processes.map((svc) => [svc.id, startService(svc)]));

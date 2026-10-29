@@ -1,4 +1,4 @@
-# Сборка onedir ToolsServer.exe через PyInstaller.
+﻿# Сборка onedir ToolsServer.exe через PyInstaller.
 $ErrorActionPreference = "Stop"
 $Desktop = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Repo = Split-Path -Parent $Desktop
@@ -46,6 +46,11 @@ Invoke-ProtectedPyInstaller $Py "ToolsServer" $Out $Work @("app", "smart_license
   "--collect-all", "trafilatura",
   "--collect-all", "pandas",
   "--collect-all", "openpyxl",
+  "--collect-all", "pymupdf",
+  "--collect-all", "rapidocr",
+  "--collect-all", "onnxruntime",
+  "--collect-all", "markitdown",
+  "--collect-all", "magika",
   "--hidden-import", "app",
   "--hidden-import", "app.main",
   "--hidden-import", "app.config",
@@ -53,6 +58,13 @@ Invoke-ProtectedPyInstaller $Py "ToolsServer" $Out $Work @("app", "smart_license
   "--hidden-import", "app.document_tool.extract",
   "--hidden-import", "app.excel_tool",
   "--hidden-import", "app.web_tool",
+  "--hidden-import", "app.doc_index",
+  "--hidden-import", "app.doc_index.pdf",
+  "--hidden-import", "app.doc_index.ocr",
+  "--hidden-import", "app.doc_index.vision",
+  "--hidden-import", "app.doc_index.owui_loader",
+  "--hidden-import", "app.table_tool",
+  "--hidden-import", "app.table_tool.jobs",
   "--hidden-import", "smart_license",
   "--hidden-import", "smart_license.web",
   "--hidden-import", "uvicorn.logging",

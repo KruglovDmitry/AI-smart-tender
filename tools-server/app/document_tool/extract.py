@@ -150,8 +150,8 @@ def extract_file(path: Path) -> dict[str, Any]:
     if ext not in ALLOWED_EXTENSIONS and ext not in TEXT_EXTENSIONS:
         raise ValueError(f"Unsupported file type: {ext}")
 
-    if ext == ".zip":
-        return _extract_zip(path)
+    if ext in ARCHIVE_EXTENSIONS:
+        return _extract_archive(path)
 
     text = _extract_by_ext(path, ext)
     text = _fix(text)
@@ -216,9 +216,11 @@ def _extract_by_ext(path: Path, ext: str) -> str:
         except Exception:
             # fallback: let pandas choose
             xls = pd.ExcelFile(path)
-        for sheet in xls.sheet_names:
-            df = pd.read_excel(xls, sheet_name=sheet)
-            parts.append(f"Sheet: {sheet}\n{df.to_string(index=False)}")
+        # Закрываем файл явно: открытый дескриптор не даёт удалить временную папку распакованного архива.
+        with xls:
+            for sheet in xls.sheet_names:
+                df = pd.read_excel(xls, sheet_name=sheet)
+                parts.append(f"Sheet: {sheet}\n{df.to_string(index=False)}")
         return "\n\n".join(parts)
 
     if ext in {".pptx", ".ppt"}:
@@ -247,53 +249,83 @@ def _extract_by_ext(path: Path, ext: str) -> str:
     return path.read_text(encoding=enc, errors="replace")
 
 
-def _extract_zip(path: Path) -> dict[str, Any]:
-    """Распаковать zip во временный смысл: извлечь текст из вложенных файлов."""
+ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z"}
+MAX_ARCHIVE_DEPTH = 3
+MAX_ARCHIVE_FILES = 200
+
+
+def _zip_name(info: zipfile.ZipInfo) -> str:
+    """Имена в zip без флага UTF-8 пишутся в cp866 (Windows), а zipfile читает их как cp437."""
+    if info.flag_bits & 0x800:
+        return info.filename
+    try:
+        return info.filename.encode("cp437").decode("cp866")
+    except UnicodeError:
+        return info.filename
+
+
+def _unpack(path: Path, dest: Path) -> None:
+    if path.suffix.lower() == ".zip" and zipfile.is_zipfile(path):  # «.zip» бывает переименованным rar — его отдаём tar
+        with zipfile.ZipFile(path) as zf:
+            for info in zf.infolist():
+                name = _zip_name(info)
+                target = (dest / name).resolve()
+                if info.is_dir() or not str(target).startswith(str(dest.resolve())):
+                    continue  # каталоги создаются сами; пути с ../ не пускаем
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(zf.read(info))
+        return
+    # rar и 7z: tar.exe из Windows 10+ (libarchive) читает оба формата без сторонних программ.
+    import shutil
+    import subprocess
+
+    tar = shutil.which("tar", path=r"C:\Windows\System32") or shutil.which("bsdtar") or "tar"
+    p = subprocess.run([tar, "-xf", str(path), "-C", str(dest)], capture_output=True, timeout=300)
+    if p.returncode != 0 and not any(dest.rglob("*")):
+        err = p.stderr.decode("utf-8", "replace") or p.stderr.decode("cp866", "replace")
+        raise ValueError(f"Cannot unpack {path.suffix}: {err.strip()[:200]}")
+
+
+def _extract_archive(path: Path, depth: int = 0) -> dict[str, Any]:
+    """Распаковать zip/rar/7z во временную папку и извлечь текст вложенных файлов, вложенные архивы тоже."""
+    import tempfile
+
     parts: list[str] = []
     files_meta: list[dict[str, Any]] = []
-    with zipfile.ZipFile(path) as zf:
-        for info in zf.infolist():
-            if info.is_dir():
+    with tempfile.TemporaryDirectory(prefix="arc-", ignore_cleanup_errors=True) as tmp:
+        root = Path(tmp)
+        _unpack(path, root)
+        files = sorted(p for p in root.rglob("*") if p.is_file())
+        for f in files[:MAX_ARCHIVE_FILES]:
+            name = str(f.relative_to(root)).replace("\\", "/")
+            if "__MACOSX" in name or f.name.startswith("."):
                 continue
-            name = info.filename
-            # skip macOS junk / hidden
-            if "__MACOSX" in name or Path(name).name.startswith("."):
-                continue
-            ext = Path(name).suffix.lower()
-            if ext not in ALLOWED_EXTENSIONS and ext not in TEXT_EXTENSIONS:
-                files_meta.append(
-                    {"filename": name, "skipped": True, "reason": f"unsupported {ext}"}
-                )
-                continue
-            if ext == ".zip":
-                files_meta.append(
-                    {"filename": name, "skipped": True, "reason": "nested zip"}
-                )
-                continue
+            ext = f.suffix.lower()
             try:
-                raw = zf.read(info)
-                tmp = path.parent / f".__zip_extract_{Path(name).name}"
-                try:
-                    tmp.write_bytes(raw)
-                    extracted = _extract_by_ext(tmp, ext)
-                    extracted = _fix(extracted)
-                    parts.append(f"===== {name} =====\n{extracted}")
-                    files_meta.append(
-                        {"filename": name, "chars": len(extracted), "skipped": False}
-                    )
-                finally:
-                    if tmp.exists():
-                        tmp.unlink()
+                if ext in ARCHIVE_EXTENSIONS:
+                    if depth + 1 >= MAX_ARCHIVE_DEPTH:
+                        files_meta.append({"filename": name, "skipped": True, "reason": "archive nested too deep"})
+                        continue
+                    inner = _extract_archive(f, depth + 1)
+                    extracted = inner["content"]
+                    files_meta.extend({**m, "filename": f"{name}/{m['filename']}"} for m in inner["zip_files"])
+                elif ext not in ALLOWED_EXTENSIONS and ext not in TEXT_EXTENSIONS:
+                    files_meta.append({"filename": name, "skipped": True, "reason": f"unsupported {ext}"})
+                    continue
+                else:
+                    extracted = _fix(_extract_by_ext(f, ext))
+                    files_meta.append({"filename": name, "chars": len(extracted), "skipped": False})
+                parts.append(f"===== {name} =====\n{extracted}")
             except Exception as e:
-                files_meta.append(
-                    {"filename": name, "skipped": True, "reason": str(e)}
-                )
+                files_meta.append({"filename": name, "skipped": True, "reason": str(e)[:200]})
+        if len(files) > MAX_ARCHIVE_FILES:
+            files_meta.append({"filename": "...", "skipped": True, "reason": f"only first {MAX_ARCHIVE_FILES} files"})
 
     content = _fix("\n\n".join(parts))
     return {
         "path": str(path),
         "filename": path.name,
-        "extension": ".zip",
+        "extension": path.suffix.lower(),
         "chars": len(content),
         "content": content,
         "zip_files": files_meta,

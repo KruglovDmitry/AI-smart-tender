@@ -39,4 +39,6 @@ ALLOWED_EXTENSIONS = {
     ".ppt",
     ".rtf",
     ".zip",
+    ".rar",
+    ".7z",
 }

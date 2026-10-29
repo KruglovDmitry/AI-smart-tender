@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook
+from openpyxl.comments import Comment
+from openpyxl.styles import PatternFill
 from openpyxl.utils import column_index_from_string, get_column_letter
 
 from ..config import DATA_ROOT
@@ -21,6 +23,7 @@ from ..excel_tool import export_dest, make_download_url
 
 MAX_QUERY_ROWS = 200
 MAX_FILL_UPDATES = 2000
+MARK_FILL = PatternFill("solid", fgColor="FFF2CC")  # бледно-жёлтый: «проверить руками»
 HEADER_SCAN_ROWS = 15
 
 
@@ -276,6 +279,7 @@ def fill_table(
     """Записать значения в копию .xlsx (или продолжить уже созданную копию в exports/).
 
     updates: [{"row": 5, "values": {"D": "...", "Вид товара": "..."}}] или {"key": "553290240000", ...} при key_column.
+    "mark": "<причина>" в update подсвечивает записанные ячейки и кладёт причину примечанием — что проверить руками.
     """
     if not updates:
         raise ValueError("No updates")
@@ -324,6 +328,8 @@ def fill_table(
         else:
             problems.append({"update": i, "error": "need row or key"})
             continue
+        mark = str(u.get("mark") or "").strip()
+        first_cell = True
         for ref, value in (u.get("values") or {}).items():
             try:
                 c = col_cache.get(ref) or col_cache.setdefault(ref, _resolve_column(grid, hr, ref))
@@ -337,8 +343,13 @@ def fill_table(
                 if r <= hr:
                     problems.append({"update": i, "row": r, "error": "row is in the header area"})
                     continue
-                ws.cell(row=r, column=c, value=value)
+                cell = ws.cell(row=r, column=c, value=value)
                 written += 1
+                if mark:
+                    cell.fill = MARK_FILL
+                    if first_cell:
+                        cell.comment = Comment(mark[:500], "AI Smart Tender")
+            first_cell = False
     wb.save(dest)
     rel = str(dest.relative_to(DATA_ROOT)).replace("\\", "/")
     return {

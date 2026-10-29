@@ -122,9 +122,22 @@ def _digest(
         return card
 
 
-def _doc_context(job: dict[str, Any], doc_path: str, keys: list[str], cache: dict[str, Any], locks: dict) -> str:
-    """Справка для пачки: точное совпадение — фрагментом страницы, серия — сжатой карточкой её страниц."""
+def _series_key(k: str) -> str:
+    """Серия артикула для сверки с образцами: первые 4 знака кода (5532 для 55.32.9.024.0080)."""
     from .. import doc_index
+
+    return doc_index.normalize_code(k)[:4]
+
+
+def _doc_context(
+    job: dict[str, Any], doc_path: str, keys: list[str], cache: dict[str, Any], locks: dict
+) -> tuple[str, dict[str, str]]:
+    """Справка для пачки: точное совпадение — фрагментом страницы, серия — сжатой карточкой её страниц.
+    Вторым значением — артикулы, у серии которых нет ни одного образца: {артикул: серия}."""
+    from .. import doc_index
+
+    example_keys = job["spec"].get("example_keys") or []
+    uncovered: dict[str, str] = {}
 
     # Серия: напечатанный префикс кода (5532 для 55.32.9.024.0000) или страница точного совпадения.
     groups: dict[str, dict[str, Any]] = {}
@@ -143,6 +156,9 @@ def _doc_context(job: dict[str, Any], doc_path: str, keys: list[str], cache: dic
         g = groups.setdefault(series, {"pages": tuple(sorted(x["page"] for x in res["results"][:2])), "keys": []})
         g["keys"].append(k)
         lines.append(f"- {k}: {res.get('match', res['mode'])} match ({res.get('matched', '')}), series card {series}")
+        sk = _series_key(k)
+        if example_keys and not any(e.startswith(sk) for e in example_keys):
+            uncovered[k] = sk
         if res.get("match") == "exact":
             lines.append(f"  excerpt p.{top}: {res['results'][0]['snippet']}")
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -155,10 +171,12 @@ def _doc_context(job: dict[str, Any], doc_path: str, keys: list[str], cache: dic
             continue
         used += len(cards[series])
         parts.append(f"\n=== Series card {series}, pages {list(g['pages'])} ===\n{cards[series]}")
-    return "\n".join(parts)
+    return "\n".join(parts), uncovered
 
 
-def _run_batch(job: dict[str, Any], batch: list[dict[str, Any]], cache: dict[str, Any], locks: dict) -> list[dict[str, Any]]:
+def _run_batch(
+    job: dict[str, Any], batch: list[dict[str, Any]], cache: dict[str, Any], locks: dict
+) -> tuple[list[dict[str, Any]], dict[int, str]]:
     spec = job["spec"]
     outputs = spec["outputs"]
     out_desc = "\n".join(
@@ -173,14 +191,17 @@ def _run_batch(job: dict[str, Any], batch: list[dict[str, Any]], cache: dict[str
             "(decode the technical data yourself, the examples show the format):\n"
             + "\n".join(json.dumps(e, ensure_ascii=False) for e in spec["examples"])
         )
+    no_example: dict[int, str] = {}
     if spec.get("document"):
         keys = [str(r["lookup"]) for r in batch if r.get("lookup") not in (None, "")]
-        user.append(_doc_context(job, spec["document"], keys, cache, locks))
+        context, uncovered = _doc_context(job, spec["document"], keys, cache, locks)
+        user.append(context)
+        no_example = {r["row"]: uncovered[str(r["lookup"])] for r in batch if str(r.get("lookup")) in uncovered}
     user.append("Rows:\n" + "\n".join(json.dumps({"row": r["row"], **r["input"]}, ensure_ascii=False) for r in batch))
     answer = _parse_json(_chat([{"role": "system", "content": SYSTEM}, {"role": "user", "content": "\n\n".join(user)}]))
     rows = answer.get("rows", []) if isinstance(answer, dict) else answer
     wanted = {r["row"] for r in batch}
-    return [r for r in rows if isinstance(r, dict) and r.get("row") in wanted]
+    return [r for r in rows if isinstance(r, dict) and r.get("row") in wanted], no_example
 
 
 def _save_status(job: dict[str, Any]) -> None:
@@ -208,6 +229,8 @@ def start_job(
     skip_filled: bool = True,
     public_base_url: str = "",
 ) -> dict[str, Any]:
+    from .. import doc_index
+
     _llm_config()
     src = resolve_under_data(path)
     grid = _pick_sheet(_load(src), sheet)
@@ -224,7 +247,7 @@ def start_job(
     heads = _headers(grid, hr)
     out_idx = {col: column_index_from_string(col) for col in out_cols}
     explicit = set(example_rows or [])
-    rows, examples = [], []
+    rows, examples, example_keys = [], [], []
     for r in range(max(hr + 1, data_start_row or 0), len(grid.rows) + 1):
         if not any(not _blank(v) for v in grid.rows[r - 1]):
             continue
@@ -239,6 +262,8 @@ def start_job(
         # Строки, которые человек уже заполнил сам, — образцы стиля, а не работа для задания.
         if r in explicit or (filled and not explicit and len(examples) < MAX_EXAMPLES):
             examples.append({"input": item["input"], "output": {col: grid.cell(r, c) for col, c in out_idx.items()}})
+            if not _blank(item["lookup"]):
+                example_keys.append(doc_index.normalize_code(str(item["lookup"])))
             continue
         if filled and skip_filled:
             continue
@@ -268,6 +293,7 @@ def start_job(
         "errors": [],
         "low_confidence": [],
         "unresolved": [],
+        "no_example": [],
         "output": None,
         "download_url": None,
         "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -278,6 +304,7 @@ def start_job(
             "document": document,
             "header_row": hr,
             "examples": examples,
+            "example_keys": example_keys,
         },
         "examples_used": [e["input"] for e in examples],
     }
@@ -298,7 +325,7 @@ def _worker(job: dict[str, Any], batches: list[list[dict[str, Any]]], workers: i
 
     def process(batch: list[dict[str, Any]]) -> None:
         try:
-            answers = _run_batch(job, batch, cache, locks)
+            answers, no_example = _run_batch(job, batch, cache, locks)
         except Exception as e:
             log.warning("job %s batch failed: %s", job["job_id"], e)
             with write_lock:
@@ -311,11 +338,16 @@ def _worker(job: dict[str, Any], batches: list[list[dict[str, Any]]], workers: i
         for a in answers:
             vals = {c: v for c, v in (a.get("values") or {}).items() if c in job["spec"]["outputs"] and not _blank(v)}
             got.add(a["row"])
+            marks = []
             if a.get("confidence") == "low" or len(vals) < len(job["spec"]["outputs"]):
                 bucket = "unresolved" if not vals else "low_confidence"
                 job[bucket].append({"row": a["row"], "note": str(a.get("note", ""))[:200]})
+                marks.append(f"Низкая уверенность: {a.get('note', '')}".strip())
+            if a["row"] in no_example:
+                job["no_example"].append({"row": a["row"], "series": no_example[a["row"]]})
+                marks.append(f"Нет образца для серии {no_example[a['row']]}: проверьте наименование и вид товара")
             if vals:
-                updates.append({"row": a["row"], "values": vals})
+                updates.append({"row": a["row"], "values": vals, **({"mark": "\n".join(marks)} if marks else {})})
         missing = [r["row"] for r in batch if r["row"] not in got]
         with write_lock:
             for r in missing:
@@ -365,16 +397,24 @@ def job_status(job_id: str) -> dict[str, Any]:
             break
     if job is None:
         raise FileNotFoundError(f"Job {job_id} not found")
-    out = {k: v for k, v in job.items() if k not in ("spec", "errors", "low_confidence", "unresolved")}
+    out = {k: v for k, v in job.items() if k not in ("spec", "errors", "low_confidence", "unresolved", "no_example")}
     out["errors_total"] = len(job["errors"])
     out["errors"] = job["errors"][:10]
     out["low_confidence_total"] = len(job["low_confidence"])
     out["low_confidence"] = job["low_confidence"][:20]
     out["unresolved_total"] = len(job["unresolved"])
     out["unresolved"] = job["unresolved"][:20]
+    # Строки, для серии которых человек не дал образца: наименование и категорию модель выбрала сама.
+    series: dict[str, int] = {}
+    for x in job.get("no_example", []):
+        series[x["series"]] = series.get(x["series"], 0) + 1
+    out["no_example_total"] = len(job.get("no_example", []))
+    out["no_example_series"] = series
     out["note"] = (
         "Job is running: tell the user it continues in background and check again later with table_job_status."
         if job["state"] == "running"
-        else "Give the user download_url as a markdown link and summarize unresolved / low-confidence rows."
+        else "Give the user download_url as a markdown link and summarize unresolved / low-confidence rows. "
+        "Rows in no_example_series have no user example of their series: they are highlighted in the file; "
+        "tell the user which series to check, and that one filled example per series fixes it on the next run."
     )
     return out

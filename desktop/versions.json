@@ -1,7 +1,7 @@
 {
-    "product":  "1.2.0",
+    "product":  "1.3.0",
     "open_webui":  "0.12.2",
-    "tools_server":  "1.4.0",
+    "tools_server":  "1.5.0",
     "tender_agent":  "0.1.0",
     "dashboard":  "1.0.0",
     "electron_shell":  "1.1.0"

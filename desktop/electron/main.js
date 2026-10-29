@@ -544,6 +544,25 @@ function openExternalLinks(view) {
   });
 }
 
+// Сохранённый вход Open WebUI, выданный другой базой или со старым ключом сервера, даёт 401 на /api/config,
+// и вместо входа Open WebUI показывает «Необходимо подключение к серверу». Один раз сбрасываем вход и
+// открываем чат заново — появится обычная страница входа.
+function resetStaleLoginOnError(contents, chatUrl) {
+  let done = false;
+  const check = (_event, url) => {
+    if (done || new URL(url).pathname !== "/error") return;
+    done = true;
+    log("chat opened /error: resetting saved Open WebUI login");
+    contents
+      .executeJavaScript("localStorage.removeItem('token'); true")
+      .then(() => contents.session.clearStorageData({ origin: new URL(chatUrl).origin, storages: ["cookies"] }))
+      .then(() => contents.loadURL(chatUrl))
+      .catch((e) => log(`reset login failed: ${e}`));
+  };
+  contents.on("did-navigate", check);
+  contents.on("did-navigate-in-page", check);
+}
+
 function createWindow(chatUrl) {
   mainWindow = new BaseWindow({
     width: 1280,
@@ -566,6 +585,7 @@ function createWindow(chatUrl) {
   toolbarView.webContents.on("did-finish-load", pushState);
   log(`loading ${chatUrl}`);
   views.chat.webContents.loadURL(chatUrl);
+  resetStaleLoginOnError(views.chat.webContents, chatUrl);
   // Дашборд обычно готов раньше чата: тогда сразу грузим его, иначе — заглушку до готовности.
   const dashboard = processServices(servicesManifest).find((s) => s.id === "dashboard");
   if (dashboard && (serviceState.get("dashboard") || {}).state === "ready") {

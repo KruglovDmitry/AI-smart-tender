@@ -40,9 +40,22 @@ function Invoke-ProtectedPyInstaller([string]$Py, [string]$Name, [string]$Out, [
   if ($code -ne 0) { Write-Error "PyInstaller $Name failed: $code"; exit $code }
 }
 
+# Короткий кэш Nuitka: длинный путь Codex AppData ломает MinGW (нет psdk_inc/intrin-impl.h).
+function Ensure-NuitkaToolchain {
+  $cache = "C:\nkit"
+  New-Item -ItemType Directory -Force -Path $cache | Out-Null
+  $env:NUITKA_CACHE_DIR = $cache
+  # Сбрасываем CC, если указывал на битый gcc из кэша Codex.
+  if ($env:CC -and ($env:CC -match "OPENAI|Codex|LOCALC~1")) {
+    Remove-Item Env:CC -ErrorAction SilentlyContinue
+  }
+  Write-Host "Nuitka toolchain: cache $cache (short path)"
+}
+
 # Каждый пакет — в один .pyd рядом с exe (в _internal); файлы данных пакета (не .py) — следом, по тем же путям.
 function Compile-Packages([string]$Py, [string]$DestInternal, [string]$Work, [string[]]$PackageDirs) {
   Install-Nuitka $Py
+  Ensure-NuitkaToolchain
   foreach ($dir in $PackageDirs) {
     $name = Split-Path -Leaf $dir
     $build = Join-Path $Work "nuitka-$name"

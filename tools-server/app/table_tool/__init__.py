@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import re
 import shutil
+import os
+import tempfile
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -316,6 +318,7 @@ def fill_table(
     wb = load_workbook(dest)
     ws = wb[grid.name]
     written, problems = 0, []
+    written_rows: dict[int, set[str]] = {}
     col_cache: dict[str, int] = {}
     for i, u in enumerate(updates):
         if "row" in u and u["row"] is not None:
@@ -345,17 +348,28 @@ def fill_table(
                     continue
                 cell = ws.cell(row=r, column=c, value=value)
                 written += 1
+                written_rows.setdefault(r, set()).add(get_column_letter(c))
                 if mark:
                     cell.fill = MARK_FILL
                     if first_cell:
                         cell.comment = Comment(mark[:500], "AI Smart Tender")
             first_cell = False
-    wb.save(dest)
+    # Replace only after the complete workbook is safely serialized.
+    fd, temporary = tempfile.mkstemp(prefix=".table-", suffix=dest.suffix, dir=dest.parent)
+    os.close(fd)
+    try:
+        wb.save(temporary)
+        wb.close()
+        os.replace(temporary, dest)
+    finally:
+        wb.close()
+        Path(temporary).unlink(missing_ok=True)
     rel = str(dest.relative_to(DATA_ROOT)).replace("\\", "/")
     return {
         "ok": not problems,
         "path": rel,
         "cells_written": written,
+        "written_rows": {str(r): sorted(cols) for r, cols in written_rows.items()},
         "problems": problems[:50],
         "problems_total": len(problems),
         "download_url": make_download_url(rel, public_base_url),

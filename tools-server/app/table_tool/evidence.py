@@ -15,7 +15,10 @@ def normalized(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value)).strip().casefold()
 
 
-def research(document, keys, chat, parse):
+def research(document, keys, chat, parse, mode="strict"):
+    rounds = 1 if mode == "balanced" else MAX_ROUNDS
+    context_limit = 45000 if mode == "balanced" else MAX_CONTEXT
+    page_limit = 10 if mode == "balanced" else MAX_PAGES
     from .. import doc_index
 
     idx = doc_index.get_index(document)
@@ -41,8 +44,8 @@ def research(document, keys, chat, parse):
         for n in numbers[:4]:
             if type(n) is not int or not 1 <= n <= len(idx.pages):
                 continue
-            if n not in pages and len(pages) < MAX_PAGES:
-                remaining = MAX_CONTEXT - sum(len(t) for t in pages.values())
+            if n not in pages and len(pages) < page_limit:
+                remaining = context_limit - sum(len(t) for t in pages.values())
                 if remaining <= 0:
                     break
                 text, _ = idx.text(n, run_ocr=True)
@@ -56,7 +59,7 @@ def research(document, keys, chat, parse):
         result = search(key)
         # Full text, not a lossy series digest. The planner can change the search or read neighbours.
         read([r["page"] for r in result.get("results", [])[:1]])
-    for _ in range(MAX_ROUNDS):
+    for _ in range(rounds):
         prompt = {
             "articles": keys, "search_results": searches,
             "pages": [{"page": p, "text": t} for p, t in pages.items()],
@@ -86,7 +89,7 @@ def research(document, keys, chat, parse):
     return pages, trace
 
 
-def verify(rows, outputs, pages, context, chat, parse):
+def verify(rows, outputs, pages, context, chat, parse, mode="strict"):
     """A quote's presence is checked in code; its relevance is reviewed independently by the model."""
     candidates, issues = [], []
     for row in rows:
@@ -113,6 +116,12 @@ def verify(rows, outputs, pages, context, chat, parse):
         candidates.append({**row, "values": values, "evidence": evidence})
     if not any(r["values"] for r in candidates):
         return candidates, issues
+    fast = [r for r in candidates if mode == "balanced" and r.get("confidence") == "high"]
+    review_candidates = [r for r in candidates if r not in fast and r["values"]]
+    for row in fast:
+        row["verification"] = "quote_only"
+    if not review_candidates:
+        return candidates, issues
     review = parse(chat([
         {"role": "system", "content": (
             "Independently audit proposed spreadsheet cells against the supplied source pages and exact article codes. "
@@ -124,7 +133,7 @@ def verify(rows, outputs, pages, context, chat, parse):
             "Return JSON {cells:[{row:1,column:'D',supported:true|false,reason:'...'}]}. "
             "Approve only when all claims in the cell are supported. Review every proposed cell."
         )},
-        {"role": "user", "content": json.dumps({"context": context, "candidates": candidates,
+        {"role": "user", "content": json.dumps({"context": context, "candidates": review_candidates,
           "pages": [{"page": p, "text": t} for p, t in pages.items()]}, ensure_ascii=False)},
     ]))
     verdicts, reasons = {}, {}
@@ -135,10 +144,18 @@ def verify(rows, outputs, pages, context, chat, parse):
             verdicts[key] = verdicts.get(key, True) and cell.get("supported") is True
             reasons[key] = str(cell.get("reason") or "no explicit approval")[:1000]
     for row in candidates:
+        if row in fast:
+            continue
+        row["verification"] = "model_review"
         for col in list(row["values"]):
             if not verdicts.get((row["row"], col), False):
-                row["values"].pop(col)
-                row["evidence"].pop(col, None)
+                if mode == "strict":
+                    row["values"].pop(col)
+                    row["evidence"].pop(col, None)
+                else:
+                    row["verification"] = "needs_review"
+                    row["confidence"] = "low"
+                    row["note"] = "Source review disputed some values; manual check required"
                 issues.append({"row": row["row"], "column": col,
                                "reason": "independent source review did not approve",
                                "detail": reasons.get((row["row"], col), "No verdict returned")})

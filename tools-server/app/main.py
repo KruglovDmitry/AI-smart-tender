@@ -225,6 +225,7 @@ class JobOutput(BaseModel):
 
 
 class StartTableJobBody(BaseModel):
+    quality_mode: str = Field("balanced", description="balanced: one research round, review uncertain rows and retain disputed sourced values highlighted for manual checking; strict: up to four rounds and reject unapproved values. Quote and dictionary checks always apply.")
     path: str = Field(..., description="Source .xlsx under data root (a copy is filled, the source is untouched).")
     instruction: str = Field(..., description="Task for every row, in plain words.")
     input_columns: list[str] = Field(..., description="Columns the model sees for each row (letters or headers).")
@@ -485,6 +486,7 @@ def api_start_table_job(body: StartTableJobBody, request: Request):
         body.instruction,
         body.input_columns,
         {k: v.model_dump() for k, v in body.outputs.items()},
+        quality_mode=body.quality_mode,
         sheet=body.sheet,
         header_row=body.header_row,
         data_start_row=body.data_start_row,

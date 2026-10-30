@@ -115,7 +115,9 @@ def _run_batch(
     job: dict[str, Any], batch: list[dict[str, Any]], cache: dict[str, Any], locks: dict
 ) -> tuple[list[dict[str, Any]], dict[int, str]]:
     spec = job["spec"]
-    outputs = spec["outputs"]
+    from .classification import system_for, classify
+    classified_outputs = {col: output for col, output in spec["outputs"].items() if system_for(output)}
+    outputs = {col: output for col, output in spec["outputs"].items() if col not in classified_outputs}
     out_desc = "\n".join(
         f'- "{col}" = {o["header"]}: {o.get("description", "")}'
         + (f' Allowed values: {json.dumps(o["allowed"], ensure_ascii=False)}' if o.get("allowed") else "")
@@ -130,7 +132,7 @@ def _run_batch(
         )
     no_example: dict[int, str] = {}
     pages, research_trace = {}, []
-    if spec.get("document"):
+    if spec.get("document") and outputs:
         from .evidence import research
         keys = [str(r["lookup"]) for r in batch if r.get("lookup") not in (None, "")]
         pages, research_trace = research(spec["document"], keys, _chat, _parse_json, mode=spec.get("quality_mode", "strict"))
@@ -140,11 +142,11 @@ def _run_batch(
                     'Use order-code tables to decode the complete article. Do not assign classification codes '
                     'from examples alone. If the document does not substantiate a cell, return null.')
     user.append("Rows:\n" + "\n".join(json.dumps({"row": r["row"], **r["input"]}, ensure_ascii=False) for r in batch))
-    answer = _parse_json(_chat([{"role": "system", "content": SYSTEM}, {"role": "user", "content": "\n\n".join(user)}]))
+    answer = _parse_json(_chat([{"role": "system", "content": SYSTEM}, {"role": "user", "content": "\n\n".join(user)}])) if outputs else {"rows": []}
     rows = answer.get("rows", []) if isinstance(answer, dict) else answer
     wanted = {r["row"] for r in batch}
     rows = [r for r in rows if isinstance(r, dict) and type(r.get("row")) is int and r["row"] in wanted]
-    if spec.get("document"):
+    if spec.get("document") and outputs:
         from .evidence import verify
         rows, issues = verify(rows, outputs, pages, "\n\n".join(user[:2]) + "\nRows: " +
                               json.dumps(batch, ensure_ascii=False), _chat, _parse_json, mode=spec.get("quality_mode", "strict"))
@@ -153,6 +155,12 @@ def _run_batch(
             job.setdefault("research", []).append({"rows": sorted(wanted), "requests": research_trace})
             job.setdefault("evidence", []).extend({"row": r["row"], "cells": r.get("evidence", {}),
                                                     "verification": r.get("verification", "quote_check")} for r in rows)
+    if classified_outputs:
+        rows, classification_audit, classification_issues = classify(
+            batch, rows, classified_outputs, spec.get("examples", []), _chat, _parse_json)
+        with _jobs_lock:
+            job.setdefault("classification", []).extend(classification_audit)
+            job.setdefault("verification_issues", []).extend(classification_issues)
     return rows, no_example
 
 
@@ -278,6 +286,7 @@ def start_job(
         "unresolved": [],
         "no_example": [],
         "verification_issues": [],
+        "classification": [],
         "evidence": [],
         "research": [],
         "output": None,
@@ -411,7 +420,9 @@ def job_status(job_id: str) -> dict[str, Any]:
             break
     if job is None:
         raise FileNotFoundError(f"Job {job_id} not found")
-    out = {k: v for k, v in job.items() if k not in ("spec", "errors", "low_confidence", "unresolved", "no_example", "evidence", "research", "verification_issues")}
+    out = {k: v for k, v in job.items() if k not in ("spec", "errors", "low_confidence", "unresolved", "no_example", "evidence", "research", "verification_issues", "classification")}
+    out["classification_cells"] = len(job.get("classification", []))
+    out["classification"] = job.get("classification", [])[:10]
     out["quote_only_cells"] = sum(len(r["cells"]) for r in job.get("evidence", []) if r.get("verification") == "quote_only")
     out["model_reviewed_cells"] = sum(len(r["cells"]) for r in job.get("evidence", []) if r.get("verification") == "model_review")
     out["needs_review_cells"] = sum(len(r["cells"]) for r in job.get("evidence", []) if r.get("verification") == "needs_review")

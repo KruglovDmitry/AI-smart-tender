@@ -220,6 +220,7 @@ class FillTableBody(BaseModel):
 
 
 class JobOutput(BaseModel):
+    reference: str | None = Field(None, description="Separate classification source: okpd2. Auto-detected for columns named Код ОКПД2/OKPD2; other outputs use the catalog.")
     description: str = Field("", description="What to put into this column and how to decide it.")
     allowed: list[str] | None = Field(None, description="Allowed values (e.g. from the template's reference sheet).")
 

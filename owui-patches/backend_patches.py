@@ -1,4 +1,5 @@
-"""Правки исходников Open WebUI перед сборкой OpenWebUI.exe (код уходит внутрь exe, поэтому только до PyInstaller).
+"""Правки исходников Open WebUI: для desktop — перед сборкой OpenWebUI.exe (код уходит внутрь exe, поэтому только
+до PyInstaller), для Docker — при сборке образа (owui-patches/Dockerfile).
 
 Запуск: python backend_patches.py <site-packages/open_webui>. Повторный запуск ничего не меняет.
 """

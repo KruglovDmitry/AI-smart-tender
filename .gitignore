@@ -30,7 +30,7 @@ Thumbs.db
 dist/
 *.zip
 
-# Desktop build artifacts
+# Desktop build artifacts live in ..\AI-smart-tender-build (desktop/build-paths.ps1); these are leftovers of the old layout
 desktop/.venv/
 desktop/.venv-*/
 desktop/build/
@@ -40,3 +40,7 @@ desktop/vendor/
 desktop/electron/node_modules/
 desktop/electron/release/
 desktop/*.spec
+
+# Quality evaluation of tools-server (venv and results)
+tools-server/eval/.venv/
+tools-server/eval/out/

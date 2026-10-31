@@ -1,30 +1,34 @@
 ﻿# Сборка onedir ToolsServer.exe через PyInstaller.
 $ErrorActionPreference = "Stop"
-$Desktop = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Repo = Split-Path -Parent $Desktop
+. (Join-Path $PSScriptRoot "build-paths.ps1")
 $ToolsSrc = Join-Path $Repo "tools-server"
-$Venv = Join-Path $Desktop ".venv-tools"
+$Venv = Join-Path $VenvRoot "tools"
 $Py = Join-Path $Venv "Scripts\python.exe"
-$Out = Join-Path $Desktop "dist"
-$Work = Join-Path $Desktop "build\tools"
+$Out = $Dist
+$Work = Join-Path $WorkRoot "tools"
 
 Set-Location $Desktop
 
 if (-not (Test-Path $Py)) {
-  Write-Host "Creating desktop/.venv-tools ..."
+  Write-Host "Creating $Venv ..."
   py -3.12 -m venv $Venv
   if ($LASTEXITCODE -ne 0) { python -m venv $Venv }
   & $Py -m pip install --upgrade pip
 }
 # Зависимости ставим при каждой сборке: requirements.txt мог измениться.
-& $Py -m pip install -r (Join-Path $ToolsSrc "requirements.txt") "langchain-community>=0.3" "langchain-core>=0.3" pyinstaller
+# Те же зависимости, что у Docker-образа (tools-server/requirements.txt), плюс сборщик.
+& $Py -m pip install -r (Join-Path $ToolsSrc "requirements.txt") pyinstaller
 if ($LASTEXITCODE -ne 0) { Write-Error "pip install failed"; exit 1 }
 
-$env:DATA_ROOT = Join-Path $Desktop "data-build"
+$env:DATA_ROOT = Join-Path $WorkRoot "data-build"
 New-Item -ItemType Directory -Force -Path $env:DATA_ROOT | Out-Null
 foreach ($sub in @("tenders", "catalogs", "uploads", "exports")) {
   New-Item -ItemType Directory -Force -Path (Join-Path $env:DATA_ROOT $sub) | Out-Null
 }
+
+# Модели OCR скачиваются в пакет rapidocr при первом создании движка; --collect-all rapidocr кладёт их в exe.
+& $Py -c "import sys; sys.path.insert(0, r'$ToolsSrc'); from app.doc_index import ocr; assert ocr.available(), ocr._unavailable"
+if ($LASTEXITCODE -ne 0) { Write-Error "OCR models are not available (rapidocr download failed?)"; exit 1 }
 $env:TOOLS_HOST = "127.0.0.1"
 $env:TOOLS_PORT = "18000"
 
@@ -80,11 +84,6 @@ Invoke-ProtectedPyInstaller $Py "ToolsServer" $Out $Work @("app", "smart_license
   "--hidden-import", "uvicorn.protocols.websockets.auto",
   "--hidden-import", "uvicorn.lifespan",
   "--hidden-import", "uvicorn.lifespan.on",
-  "--hidden-import", "langchain_community",
-  "--hidden-import", "langchain_community.document_loaders",
-  "--hidden-import", "langchain_community.document_loaders.pdf",
-  "--hidden-import", "langchain_community.document_loaders.word_document",
-  "--hidden-import", "langchain_community.document_loaders.html_bs",
   "--exclude-module", "tkinter",
   "--exclude-module", "matplotlib",
   "--exclude-module", "playwright",

@@ -17,7 +17,7 @@
       "logPrefix": "owui",
       "build": {
         "type": "copy",
-        "candidates": ["vendor/OpenWebUI", "../open-webui-freeze/dist/OpenWebUI"]
+        "candidates": ["{buildRoot}/vendor/OpenWebUI", "../../open-webui-freeze/dist/OpenWebUI"]
       }
     },
     {

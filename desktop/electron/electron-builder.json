@@ -1,0 +1,20 @@
+{
+  "appId": "local.aismarttender.desktop",
+  "productName": "start",
+  "copyright": "AI Smart Tender",
+  "electronDist": "node_modules/electron/dist",
+  "files": [
+    "main.js",
+    "preload.js",
+    "toolbar.html",
+    "toolbar.js",
+    "license.html",
+    "license.js",
+    "license-preload.js",
+    "package.json"
+  ],
+  "win": {
+    "target": ["dir"],
+    "signAndEditExecutable": false
+  }
+}

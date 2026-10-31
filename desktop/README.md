@@ -30,9 +30,19 @@ cd desktop
 powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1
 ```
 
-Open WebUI: `desktop/vendor/OpenWebUI/` (или соседний freeze).
+Всё, что создаёт сборка, лежит **вне репозитория** — в соседней папке `..\AI-smart-tender-build`
+(другое место — переменная `AST_BUILD_ROOT`, пути заданы в [`build-paths.ps1`](build-paths.ps1)):
 
-Результат: `electron/release/win-unpacked/start.exe` — копировать **всю** папку.
+| Папка | Что внутри |
+|-------|------------|
+| `vendor\OpenWebUI`, `vendor\models` | замороженный Open WebUI и модель векторов — входные данные сборки, класть вручную |
+| `venvs\tools`, `venvs\agent`, `venvs\dashboard` | Python-окружения сервисов (создаются сами) |
+| `work\` | временные файлы PyInstaller / Nuitka, сгенерированный конфиг electron-builder |
+| `dist\` | exe сервисов, модели, `build-info.json` |
+| `release\win-unpacked\start.exe` | готовая программа — копировать **всю** папку `win-unpacked` |
+| `releases\` | zip для заказчика (`-Zip`) |
+
+`work\` и `release\` можно удалять в любой момент; без `venvs\` и `dist\` следующая сборка будет дольше.
 
 Версии: [`versions.json`](versions.json).
 
@@ -65,9 +75,9 @@ Open WebUI: `desktop/vendor/OpenWebUI/` (или соседний freeze).
 
 ## Сборка: что нужно рядом
 
-- У каждого сервиса свой venv (`desktop/.venv-agent`, `.venv-dashboard`, `.venv-tools`), зависимости ставятся при каждой сборке.
+- У каждого сервиса свой venv (`venvs\agent`, `venvs\dashboard`, `venvs\tools` в папке сборки), зависимости ставятся при каждой сборке.
 - Библиотека зрения `ai_vision` берётся из соседнего репозитория `..\AI-vision` (или путь в `AI_VISION_PATH`) и попадает внутрь `TenderAgent.exe`.
-- Chromium ставится сразу в `dist/TenderAgent/ms-playwright` (только нужная версия).
+- Chromium ставится сразу в `dist\TenderAgent\ms-playwright` папки сборки (только нужная версия).
 
 ## Заметки по tender-agent
 

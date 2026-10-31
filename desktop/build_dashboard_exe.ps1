@@ -1,17 +1,16 @@
 # Сборка onedir Dashboard.exe
 $ErrorActionPreference = "Stop"
-$Desktop = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Repo = Split-Path -Parent $Desktop
+. (Join-Path $PSScriptRoot "build-paths.ps1")
 $DashSrc = Join-Path $Repo "dashboard"
-$Venv = Join-Path $Desktop ".venv-dashboard"
+$Venv = Join-Path $VenvRoot "dashboard"
 $Py = Join-Path $Venv "Scripts\python.exe"
-$Out = Join-Path $Desktop "dist"
-$Work = Join-Path $Desktop "build\dashboard"
+$Out = $Dist
+$Work = Join-Path $WorkRoot "dashboard"
 
 Set-Location $Desktop
 
 if (-not (Test-Path $Py)) {
-  Write-Host "Creating desktop/.venv-dashboard ..."
+  Write-Host "Creating $Venv ..."
   py -3.12 -m venv $Venv
   if ($LASTEXITCODE -ne 0) { python -m venv $Venv }
   & $Py -m pip install --upgrade pip

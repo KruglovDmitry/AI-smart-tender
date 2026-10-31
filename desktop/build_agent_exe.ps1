@@ -1,25 +1,24 @@
 # Сборка onedir TenderAgent.exe + Playwright Chromium
 $ErrorActionPreference = "Stop"
-$Desktop = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Repo = Split-Path -Parent $Desktop
+. (Join-Path $PSScriptRoot "build-paths.ps1")
 $AgentSrc = Join-Path $Repo "tender-agent"
-$Venv = Join-Path $Desktop ".venv-agent"
+$Venv = Join-Path $VenvRoot "agent"
 $Py = Join-Path $Venv "Scripts\python.exe"
-$Out = Join-Path $Desktop "dist"
-$Work = Join-Path $Desktop "build\agent"
+$Out = $Dist
+$Work = Join-Path $WorkRoot "agent"
 $BrowsersDest = Join-Path $Out "TenderAgent\ms-playwright"
 
 Set-Location $Desktop
 
 # Свой venv у каждого сервиса: версии не конфликтуют; зависимости ставятся при каждой сборке.
 if (-not (Test-Path $Py)) {
-  Write-Host "Creating desktop/.venv-agent ..."
+  Write-Host "Creating $Venv ..."
   py -3.12 -m venv $Venv
   if ($LASTEXITCODE -ne 0) { python -m venv $Venv }
   & $Py -m pip install --upgrade pip
 }
 
-Write-Host "Installing tender-agent into desktop/.venv-agent ..."
+Write-Host "Installing tender-agent into $Venv ..."
 # --no-build-isolation: сборка пакета без скачивания setuptools — сборка не падает, если PyPI недоступен,
 # а зависимости уже стоят.
 & $Py -m pip install --no-build-isolation -e $AgentSrc "uvicorn[standard]" pyinstaller

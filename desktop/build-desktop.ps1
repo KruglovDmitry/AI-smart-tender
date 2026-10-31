@@ -7,9 +7,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Desktop = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Repo = Split-Path -Parent $Desktop
-$Dist = Join-Path $Desktop "dist"
+. (Join-Path $PSScriptRoot "build-paths.ps1")
 $VersionsPath = Join-Path $Desktop "versions.json"
 $ServicesPath = Join-Path $Desktop "services.json"
 $Electron = Join-Path $Desktop "electron"
@@ -24,13 +22,30 @@ $servicesDoc = Get-Content $ServicesPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $product = [string]$versions.product
 $enabled = @($servicesDoc.services | Where-Object { $_.enabled -ne $false })
 
+# Docker-вариант должен собираться из тех же версий, что и desktop.
+$compose = Get-Content (Join-Path $Repo "docker-compose.yml") -Raw -Encoding UTF8
+$owuiDockerfile = Get-Content (Join-Path $Repo "owui-patches\Dockerfile") -Raw -Encoding UTF8
+function Find-Version([string]$Text, [string]$Pattern) {
+  if ($Text -match $Pattern) { return $Matches[1] } else { return "?" }
+}
+$versionChecks = @(
+  @("open_webui", (Find-Version $owuiDockerfile "OPEN_WEBUI_VERSION=([\d.]+)"), "owui-patches/Dockerfile"),
+  @("tools_server", (Find-Version $compose "ai-smart-tender-tools:([\d.]+)"), "docker-compose.yml TOOLS_IMAGE"),
+  @("open_webui", (Find-Version $compose "ai-smart-tender-open-webui:([\d.]+)"), "docker-compose.yml OPEN_WEBUI_IMAGE"),
+  @("tender_agent", (Find-Version $compose "ai-smart-tender-agent:([\d.]+)"), "docker-compose.yml TENDER_AGENT_IMAGE"),
+  @("dashboard", (Find-Version $compose "ai-smart-tender-dashboard:([\d.]+)"), "docker-compose.yml DASHBOARD_IMAGE")
+)
+foreach ($c in $versionChecks) {
+  $expected = [string]$versions.($c[0])
+  if ($expected -ne $c[1]) { Write-Warning ("versions.json {0}={1}, but {2} has {3}" -f $c[0], $expected, $c[2], $c[1]) }
+}
+
 Write-Host "=== AI Smart Tender Desktop $product ==="
+Write-Host "Build root: $BuildRoot"
 Write-Host "Enabled services:"
 foreach ($s in $enabled) {
   Write-Host ("  - {0} ({1})" -f $s.id, $s.kind)
 }
-
-New-Item -ItemType Directory -Force -Path $Dist | Out-Null
 
 $gitSha = "unknown"
 try {
@@ -69,13 +84,8 @@ function Build-ProcessService($svc) {
     $src = $OpenWebUISource
     if (-not $src) {
       foreach ($c in @($build.candidates)) {
-        $cand = if ([System.IO.Path]::IsPathRooted($c)) { $c } else { Join-Path $Desktop $c }
-        if (-not (Test-Path $cand)) {
-          $cand = Join-Path $Desktop ($c -replace '/', '\')
-        }
-        if (-not (Test-Path $cand)) {
-          $cand = [System.IO.Path]::GetFullPath((Join-Path $Desktop ($c -replace '/', '\')))
-        }
+        $c = ([string]$c).Replace("{buildRoot}", $BuildRoot) -replace '/', '\'
+        $cand = if ([System.IO.Path]::IsPathRooted($c)) { $c } else { [System.IO.Path]::GetFullPath((Join-Path $Desktop $c)) }
         if ((Test-Path (Join-Path $cand $svc.exe)) -or (Test-Path (Join-Path $cand "OpenWebUI.exe"))) {
           $src = $cand
           break
@@ -83,7 +93,7 @@ function Build-ProcessService($svc) {
       }
     }
     if (-not $src -or -not (Test-Path (Join-Path $src $svc.exe))) {
-      Write-Error "Source for $($svc.id) not found. Put OpenWebUI in desktop/vendor/OpenWebUI or pass -OpenWebUISource"
+      Write-Error "Source for $($svc.id) not found. Put OpenWebUI in $VendorRoot\OpenWebUI or pass -OpenWebUISource"
       exit 1
     }
     $dest = Join-Path $Dist $svc.resourceDir
@@ -91,7 +101,7 @@ function Build-ProcessService($svc) {
     if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
     Copy-Item -Recurse -Force $src $dest
     if ($svc.id -eq "openwebui") {
-      & (Join-Path $Desktop "owui-patches\apply.ps1") -OpenWebUIDir $dest
+      & (Join-Path $Repo "owui-patches\apply.ps1") -OpenWebUIDir $dest
     }
     return
   }
@@ -139,8 +149,8 @@ if (-not $SkipElectron) {
   Write-Host "--- Electron start.exe ---"
   Set-Location $Electron
 
-  $pkgPath = Join-Path $Electron "package.json"
-  # Rebuild extraResources via node (avoid PowerShell JSON quirks)
+  # electron-builder config = electron/electron-builder.json + absolute paths to artifacts in the build root;
+  # package.json is not touched, so the repo stays clean after a build.
   $resJson = @()
   foreach ($svc in $enabled) {
     if ($svc.kind -ne "process") { continue }
@@ -149,13 +159,13 @@ if (-not $SkipElectron) {
       Write-Error "Dist folder missing for $($svc.id): $absFrom"
       exit 1
     }
-    $resJson += @{ from = "../dist/$($svc.resourceDir)"; to = [string]$svc.resourceDir; filter = @("**/*") }
+    $resJson += @{ from = $absFrom; to = [string]$svc.resourceDir; filter = @("**/*") }
   }
-  $resJson += @{ from = "../services.json"; to = "services.json" }
-  # Модель векторов для «Знаний» (main.js ищет её в resources/models): из desktop/vendor/models или из уже
+  $resJson += @{ from = $ServicesPath; to = "services.json" }
+  # Модель векторов для «Знаний» (main.js ищет её в resources/models): из <build root>\vendor\models или из уже
   # настроенной установки в %LOCALAPPDATA%\AISmartTender\models. Без неё остаётся англоязычная модель.
   $modelsDist = Join-Path $Dist "models"
-  foreach ($src in @((Join-Path $Desktop "vendor\models"), (Join-Path $env:LOCALAPPDATA "AISmartTender\models"))) {
+  foreach ($src in @((Join-Path $VendorRoot "models"), (Join-Path $env:LOCALAPPDATA "AISmartTender\models"))) {
     if (Test-Path (Join-Path $src "paraphrase-multilingual-MiniLM-L12-v2\modules.json")) {
       Write-Host "Embedding model: $src"
       if (Test-Path $modelsDist) { Remove-Item -Recurse -Force $modelsDist }
@@ -164,16 +174,17 @@ if (-not $SkipElectron) {
     }
   }
   if (Test-Path $modelsDist) {
-    $resJson += @{ from = "../dist/models"; to = "models"; filter = @("**/*") }
+    $resJson += @{ from = $modelsDist; to = "models"; filter = @("**/*") }
   } else {
     Write-Warning "Embedding model not found: Knowledge will use the English all-MiniLM model"
   }
   # Тексты лицензий сторонних компонентов (Open WebUI требует их в дистрибутиве) — «Справка» открывает отсюда.
-  $resJson += @{ from = "../licenses"; to = "licenses"; filter = @("**/*") }
-  $resFile = Join-Path $Dist "extra-resources.json"
+  $resJson += @{ from = (Join-Path $Desktop "licenses"); to = "licenses"; filter = @("**/*") }
+  $resFile = Join-Path $WorkRoot "extra-resources.json"
   [System.IO.File]::WriteAllText($resFile, (($resJson | ConvertTo-Json -Depth 5) + "`n"), $utf8NoBom)
 
-  $nodeScript = Join-Path $Dist "patch-package-json.js"
+  $ebConfig = Join-Path $WorkRoot "electron-builder.json"
+  $nodeScript = Join-Path $WorkRoot "make-eb-config.js"
   @"
 const fs = require('fs');
 function readJson(p) {
@@ -181,19 +192,17 @@ function readJson(p) {
   if (t.charCodeAt(0) === 0xFEFF) t = t.slice(1);
   return JSON.parse(t);
 }
-// node script.js pkg extra version -> argv[0]=node argv[1]=script argv[2..]
-const pkgPath = process.argv[2];
-const extraPath = process.argv[3];
-const version = process.argv[4];
-const pkg = readJson(pkgPath);
+// node script.js base extra version output target -> argv[2..6]
+const [base, extraPath, version, output, target] = process.argv.slice(2);
+const cfg = readJson(base);
 const extra = readJson(extraPath);
-pkg.version = version;
-pkg.build = pkg.build || {};
-pkg.build.extraResources = Array.isArray(extra) ? extra : [extra];
-fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+cfg.extraResources = Array.isArray(extra) ? extra : [extra];
+cfg.directories = Object.assign({}, cfg.directories, { output });
+cfg.extraMetadata = Object.assign({}, cfg.extraMetadata, { version });
+fs.writeFileSync(target, JSON.stringify(cfg, null, 2) + '\n');
 "@ | Set-Content -Path $nodeScript -Encoding ASCII
 
-  node $nodeScript $pkgPath $resFile $product
+  node $nodeScript (Join-Path $Electron "electron-builder.json") $resFile $product $ReleaseDir $ebConfig
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   $ebCli = Join-Path $Electron "node_modules\electron-builder\cli.js"
@@ -207,10 +216,10 @@ fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
     exit 1
   }
 
-  npm run dist
+  node $ebCli --win dir --config $ebConfig
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-  $unpacked = Join-Path $Electron "release\win-unpacked"
+  $unpacked = Join-Path $ReleaseDir "win-unpacked"
   $exe = Join-Path $unpacked "start.exe"
   if (-not (Test-Path $exe)) { Write-Error "Missing $exe"; exit 1 }
 
@@ -225,7 +234,7 @@ fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
   Write-Host "Toggle services: desktop/services.json (enabled true/false)"
 
   if ($Zip) {
-    $zipPath = Join-Path $Dist "AI-Smart-Tender-Desktop-$product.zip"
+    $zipPath = Join-Path $ReleasesDir "AI-Smart-Tender-Desktop-$product.zip"
     if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
     Compress-Archive -Path (Join-Path $unpacked "*") -DestinationPath $zipPath -CompressionLevel Optimal
     Write-Host "Zip: $zipPath"

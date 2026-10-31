@@ -13,6 +13,23 @@ from datetime import date
 from pathlib import Path
 
 
+def strip_build_blocks(compose: str) -> str:
+    """У заказчика все образы скачиваются с Docker Hub (scripts/push-images.ps1): убираем `build:` и вложенные строки."""
+    out, skip_indent = [], None
+    for line in compose.splitlines(keepends=True):
+        indent = len(line) - len(line.lstrip())
+        if skip_indent is not None:
+            if not line.strip() or indent > skip_indent:
+                continue
+            skip_indent = None
+        m = re.match(r"^(\s*)build:", line)
+        if m:
+            skip_indent = len(m.group(1))
+            continue
+        out.append(line)
+    return "".join(out)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Pack AI Smart Tender customer dist")
     parser.add_argument(
@@ -33,24 +50,10 @@ def main() -> int:
     out.mkdir(parents=True)
 
     compose_src = (root / "docker-compose.yml").read_text(encoding="utf-8")
-    compose_dist = re.sub(
-        r"(?m)^\s*build:\s*\./tools-server\s*\n",
-        "",
-        compose_src,
-    )
-    (out / "docker-compose.yml").write_text(compose_dist, encoding="utf-8")
+    (out / "docker-compose.yml").write_text(strip_build_blocks(compose_src), encoding="utf-8")
 
     for name in (".env.example", "start.bat", "INSTALL.md"):
         shutil.copy2(root / name, out / name)
-
-    # Lightweight local image (not on Hub): include sources for compose build
-    dash_src = root / "dashboard"
-    if dash_src.is_dir():
-        shutil.copytree(
-            dash_src,
-            out / "dashboard",
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"),
-        )
 
     for sub in ("tenders", "catalogs", "uploads", "exports"):
         d = out / "data" / sub

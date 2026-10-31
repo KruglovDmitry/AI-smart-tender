@@ -184,12 +184,16 @@ function ensureDataFolders() {
   fs.mkdirSync(LOG_DIR, { recursive: true });
 }
 
+/** Артефакты сборки для запуска без упаковки (npm start): AST_BUILD_ROOT или соседняя с репозиторием папка. */
+const DEV_BUILD_ROOT =
+  process.env.AST_BUILD_ROOT || path.resolve(__dirname, "..", "..", "..", "AI-smart-tender-build");
+
 function readBuildInfo() {
   const candidates = [];
   if (app.isPackaged) {
     candidates.push(path.join(process.resourcesPath, "build-info.json"));
   }
-  candidates.push(path.join(__dirname, "..", "dist", "build-info.json"));
+  candidates.push(path.join(DEV_BUILD_ROOT, "dist", "build-info.json"));
   for (const p of candidates) {
     try {
       if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, "utf8"));
@@ -206,9 +210,8 @@ function resolveExe(resourceDir, exeName) {
     candidates.push(path.join(process.resourcesPath, resourceDir, exeName));
     candidates.push(path.join(path.dirname(process.execPath), resourceDir, exeName));
   } else {
-    const dist = path.resolve(__dirname, "..", "dist");
-    candidates.push(path.join(dist, resourceDir, exeName));
-    candidates.push(path.join(__dirname, "..", "vendor", resourceDir, exeName));
+    candidates.push(path.join(DEV_BUILD_ROOT, "dist", resourceDir, exeName));
+    candidates.push(path.join(DEV_BUILD_ROOT, "vendor", resourceDir, exeName));
   }
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) return candidate;

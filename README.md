@@ -4,6 +4,21 @@
 
 Установка у клиента: **[INSTALL.md](INSTALL.md)** (`start.bat` или `docker compose up -d`).
 
+## Два варианта поставки
+
+| | Desktop (Windows, один ПК) | Docker (сервер) |
+|---|---|---|
+| Запуск | `start.exe` (Electron) | `docker compose up -d` |
+| Сборка | [`desktop/build-desktop.ps1`](desktop/README.md), артефакты в `..\AI-smart-tender-build` | [`scripts/push-images.ps1`](scripts/push-images.ps1) → Docker Hub, дистрибутив — `scripts/pack_dist.py` |
+| Open WebUI | замороженный 0.12.2 + [`owui-patches`](owui-patches) | образ `owui-patches/Dockerfile`: тот же 0.12.2 и те же правки |
+| База закупок | SQLite | Postgres |
+| Код сервисов | скомпилирован (Nuitka), лицензия | открытый, без лицензии |
+
+Зависимости у вариантов общие: `tools-server/requirements.txt`, `tender-agent/pyproject.toml` (+ `AI-vision`),
+`dashboard/requirements.txt` — их ставят и Dockerfile, и desktop-скрипты сборки. Версии обоих вариантов —
+[`desktop/versions.json`](desktop/versions.json); `build-desktop.ps1` предупреждает, если теги в Docker-файлах отстали.
+Настройки «Знаний» (RAG) одинаковые: в desktop их выставляет `desktop/electron/main.js`, в Docker — `docker-compose.yml`.
+
 ## Что получите
 
 - UI на `http://localhost:3000` (чат-модели через Connections в UI; Ollama не нужна)
@@ -105,20 +120,19 @@ Invoke-RestMethod http://127.0.0.1:8010/search_tenders `
 
 ## Как устроено чтение документов
 
-Извлечение текста повторяет **default engine** Open WebUI ([loaders/main.py](https://github.com/open-webui/open-webui/blob/main/backend/open_webui/retrieval/loaders/main.py)):
+Один разбор для инструментов (`read_document`, `search_document`, `read_pages`) и для «Знаний» Open WebUI
+(внешний загрузчик `PUT /process`):
 
 | Формат | Способ |
 |--------|--------|
-| PDF | PyPDFLoader |
-| DOCX | Docx2txtLoader |
-| TXT/MD/… | TextLoader + encoding detect |
-| CSV | CSVLoader |
-| XLSX | pandas |
-| PPTX | python-pptx |
-| ZIP | распаковка + извлечение вложенных файлов |
-| HTML | BSHTMLLoader |
+| PDF | PyMuPDF постранично; битые шрифты и сканы — OCR (RapidOCR, кириллица); таблицы в Markdown |
+| DOCX, PPTX, HTML, RTF, MSG | MarkItDown (Markdown с заголовками и таблицами) |
+| DOC | antiword/catdoc (Docker) или встроенный OLE-читатель (Windows) |
+| XLSX, XLS, CSV | pandas / openpyxl |
+| ODT | разбор OpenDocument XML |
+| ZIP, RAR, 7Z | распаковка (zipfile; rar/7z — `tar.exe` в Windows, `bsdtar` в Docker) и разбор вложенных файлов |
 
-То есть в контекст модели попадает **извлечённый текст**, как после добавления файла в чат (не отдельный «чужой» RAG).
+Модели OCR кладутся в сборку заранее (в exe и в Docker-образ), интернет для OCR не нужен.
 
 ## Просмотр ссылок
 

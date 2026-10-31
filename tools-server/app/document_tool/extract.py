@@ -7,6 +7,7 @@ PyPDFLoader, Docx2txtLoader, TextLoader, CSV, Excel (pandas fallback), PPTX.
 from __future__ import annotations
 
 import logging
+import re
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -166,25 +167,23 @@ def extract_file(path: Path) -> dict[str, Any]:
 
 def _extract_by_ext(path: Path, ext: str) -> str:
     if ext == ".pdf":
-        from langchain_community.document_loaders import PyPDFLoader
+        from pypdf import PdfReader
 
-        docs = PyPDFLoader(str(path), mode="page").load()
-        return "\n\n".join(d.page_content for d in docs)
+        return "\n\n".join(p.extract_text() or "" for p in PdfReader(str(path)).pages)
 
     if ext == ".docx":
-        from langchain_community.document_loaders import Docx2txtLoader
+        import docx2txt
 
-        docs = Docx2txtLoader(str(path)).load()
-        return "\n\n".join(d.page_content for d in docs)
+        return docx2txt.process(str(path)) or ""
 
     if ext in {".html", ".htm"}:
-        from langchain_community.document_loaders import BSHTMLLoader
+        from bs4 import BeautifulSoup
 
         try:
-            docs = BSHTMLLoader(str(path), open_encoding="utf-8").load()
-        except Exception:
-            docs = BSHTMLLoader(str(path), open_encoding="unicode_escape").load()
-        return "\n\n".join(d.page_content for d in docs)
+            html = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            html = path.read_text(encoding=_detect_encoding(path), errors="replace")
+        return BeautifulSoup(html, "lxml").get_text()
 
     if ext == ".csv":
         enc = _detect_encoding(path)
@@ -247,9 +246,21 @@ def _extract_by_ext(path: Path, ext: str) -> str:
     if ext in {".odt", ".ods", ".odp"}:
         return _extract_opendocument(path)
 
+    if ext == ".rtf":
+        return _extract_rtf(path)
+
     # text-like
     enc = _detect_encoding(path)
     return path.read_text(encoding=enc, errors="replace")
+
+
+def _extract_rtf(path: Path) -> str:
+    """RTF 7-битный: кириллица идёт escape-последовательностями \\'xx в кодовой странице из \\ansicpgNNNN."""
+    from striprtf.striprtf import rtf_to_text
+
+    raw = path.read_bytes().decode("latin-1")
+    m = re.search(r"\\ansicpg(\d+)", raw[:4096])
+    return rtf_to_text(raw, encoding=f"cp{m.group(1)}" if m else "cp1251", errors="replace")
 
 
 def _extract_opendocument(path: Path) -> str:

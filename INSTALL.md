@@ -10,12 +10,11 @@
 - `.env.example`
 - `start.bat`
 - `data/`
-- `dashboard/` (локальная сборка дашборда ТЕНАГ)
 - `prompts/tender-agent-system.txt`
 - `INSTALL.md`
 
-Исходники `tools-server` не нужны — образ берётся с Docker Hub
-(`dim4098/ai-smart-tender-tools`). Дашборд собирается из папки `dashboard/`.
+Исходники не нужны — все образы берутся с Docker Hub: `dim4098/ai-smart-tender-open-webui`, `-tools`, `-agent`,
+`-dashboard` (теги — версии из `desktop/versions.json`) и `postgres:16-alpine`.
 
 ## 2. Настроить `.env`
 
@@ -36,13 +35,8 @@ TENDERS_HOST_PATH=C:/Users/Name/Documents/Tenders
 
 Остальные данные (exports, uploads, state) по умолчанию в `./data`.
 
-Образ tools-server:
-
-```env
-TOOLS_IMAGE=dim4098/ai-smart-tender-tools:1.3.0
-```
-
-(замените на ваш Docker Hub после `docker push`)
+Образы по умолчанию заданы в `docker-compose.yml`; переопределить (другой Docker Hub, другая версия) —
+`OPEN_WEBUI_IMAGE`, `TOOLS_IMAGE`, `TENDER_AGENT_IMAGE`, `DASHBOARD_IMAGE` в `.env`.
 
 ## 3. Запуск
 
@@ -50,7 +44,11 @@ TOOLS_IMAGE=dim4098/ai-smart-tender-tools:1.3.0
 docker compose up -d
 ```
 
-Первый раз скачает образы (Open WebUI + tools-server с Playwright — несколько ГБ).
+Первый раз скачает образы (~14 ГБ: Open WebUI с моделью векторов ~8 ГБ, tender-agent с Chromium ~3.6 ГБ).
+
+«Знания» Open WebUI сразу настроены как в desktop-версии: файлы разбирает tools-server (OCR, таблицы, архивы),
+многоязычная модель векторов, гибридный поиск. Эти настройки применяются при **первом** запуске (пустой том
+`open-webui-data`); на уже работающей установке их меняют в Админка → Настройки → Документы.
 
 Открыть:
 - чат Open WebUI: http://localhost:3000
@@ -89,14 +87,15 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 Результат: `dist/ai-smart-tender/` и zip рядом. Отдайте заказчику zip (без `.env`).
 
-## Сборка и push образа на Docker Hub
+## Сборка и push образов на Docker Hub
 
 ```powershell
 docker login
-.\scripts\push-tools-image.ps1
+.\scripts\push-images.ps1            # все четыре образа, теги из desktop/versions.json
+.\scripts\push-images.ps1 -NoPush    # только собрать
 ```
 
-В клиентском `.env`: `TOOLS_IMAGE=dim4098/ai-smart-tender-tools:1.3.0`.
+Для образа tender-agent рядом с репозиторием нужен `..\AI-vision` (или путь в `AI_VISION_PATH`).
 
 ## Остановка
 

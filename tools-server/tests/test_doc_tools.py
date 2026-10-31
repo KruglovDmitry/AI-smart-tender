@@ -68,6 +68,15 @@ def test_read_pages_and_info(client):
     assert c.post("/read_pages", json={"path": "catalogs/cat.pdf", "pages": "9"}).status_code == 400
 
 
+def test_owui_loader_rtf_text_not_markup(client):
+    c, root = client
+    word = "Техническое задание".encode("cp1251")
+    rtf = r"{\rtf1\ansi\ansicpg1251{\fonttbl{\f0 Times New Roman;}}\f0 " + "".join(f"\\'{b:02x}" for b in word) + r"\par}"
+    r = c.put("/process", content=rtf.encode("ascii"), headers={"X-Filename": "tz.rtf"})
+    text = r.json()[0]["page_content"]
+    assert "Техническое задание" in text and "\\rtf1" not in text
+
+
 def _template(path):
     wb = Workbook()
     ws = wb.active

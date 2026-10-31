@@ -99,7 +99,7 @@ class DocIndex:
 
 
 # Эти форматы MarkItDown переводит в Markdown с заголовками и таблицами; остальное — прежним extract_file.
-MARKITDOWN_EXTENSIONS = {".docx", ".pptx", ".html", ".htm", ".msg", ".epub", ".xml", ".rtf"}
+MARKITDOWN_EXTENSIONS = {".docx", ".pptx", ".html", ".htm", ".msg", ".epub", ".xml"}
 
 
 def _split_pseudo_pages(text: str) -> list[str]:

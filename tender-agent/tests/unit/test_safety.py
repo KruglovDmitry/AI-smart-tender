@@ -81,6 +81,55 @@ def test_write_unique_keeps_different_files_with_same_name(tmp_path):
     assert sorted(p.read_bytes() for p in tmp_path.iterdir()) == [b"one", b"two"]
 
 
+def test_write_unique_dedups_same_bytes_under_different_names(tmp_path):
+    from tender_agent.browser.downloads import write_unique
+
+    first = write_unique(tmp_path, "Общие сведения.docx", b"%PDF-1.4 same")
+    again = write_unique(tmp_path, "Общие сведения_2.docx", b"%PDF-1.4 same")
+    assert again == first
+    assert list(tmp_path.iterdir()) == [first]
+
+
+def test_ensure_extension_from_magic_and_content_type():
+    from tender_agent.browser.downloads import ensure_extension
+
+    pdf = b"%PDF-1.7\n..."
+    assert ensure_extension("I. Общие сведения (товар)", pdf) == "I. Общие сведения (товар).pdf"
+    assert ensure_extension("spec.pdf", pdf) == "spec.pdf"
+    assert ensure_extension("file", b"xxx", "application/pdf") == "file.pdf"
+    docx = b"PK\x03\x04" + b"\x00" * 30
+    # без central directory zipfile упадёт → .zip; с word/ — .docx, проверяем только что суффикс появляется
+    assert ensure_extension("без расширения", docx).endswith((".zip", ".docx"))
+
+
+def test_sniff_old_office_by_utf16_stream_names():
+    from tender_agent.browser.downloads import sniff_extension
+
+    ole = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 64
+    assert sniff_extension(ole + "Workbook".encode("utf-16-le")) == ".xls"
+    assert sniff_extension(ole + "WordDocument".encode("utf-16-le")) == ".doc"
+    assert sniff_extension(ole + "PowerPoint Document".encode("utf-16-le")) == ".ppt"
+    assert sniff_extension(ole) == ""
+
+
+def test_browser_download_is_kept(tmp_path):
+    import asyncio
+
+    from tender_agent.browser.downloads import _store_download
+
+    class FakeDownload:
+        suggested_filename = "Проект контракта"
+
+        async def save_as(self, path):
+            with open(path, "wb") as f:
+                f.write(b"%PDF-1.4 contract")
+
+    first = asyncio.run(_store_download(FakeDownload(), tmp_path))
+    again = asyncio.run(_store_download(FakeDownload(), tmp_path))
+    assert first == again and first.name == "Проект контракта.pdf" and first.exists()
+    assert [p.name for p in tmp_path.iterdir()] == ["Проект контракта.pdf"]
+
+
 def test_filename_from_encoded_url_and_long_names_keep_extension(tmp_path):
     from tender_agent.browser.downloads import _filename
 

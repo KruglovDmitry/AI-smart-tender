@@ -37,11 +37,16 @@ def _codes_line(text: str) -> str:
 
 
 def process_upload(data: bytes, filename: str, content_type: str | None = None) -> list[dict[str, Any]]:
+    from ..document_tool.sniff import detect_extension, ensure_extension
+
     name = unquote(filename or "document")
-    suffix = Path(name).suffix.lower() or ".bin"
+    # Имя с площадки часто без расширения («I. Общие сведения») или с ложным — тип берём из байтов / Content-Type.
+    resolved = ensure_extension(name, data, content_type)
     with tempfile.TemporaryDirectory(prefix="owui-") as tmp:
-        path = Path(tmp) / f"upload{suffix}"
-        path.write_bytes(data)
+        raw = Path(tmp) / "upload.bin"
+        raw.write_bytes(data)
+        suffix = detect_extension(raw, resolved) or ".bin"
+        path = raw if suffix == ".bin" else raw.rename(raw.with_suffix(suffix))
         try:
             pages, backend = _build_pages(path)
         except Exception as e:

@@ -147,22 +147,40 @@ def extract_file(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise FileNotFoundError(f"Not a file: {path}")
 
-    ext = path.suffix.lower()
+    from .sniff import detect_extension
+
+    # Файл без расширения или с ложным расширением — тип по содержимому.
+    ext = detect_extension(path)
     if ext not in ALLOWED_EXTENSIONS and ext not in TEXT_EXTENSIONS:
-        raise ValueError(f"Unsupported file type: {ext}")
+        raise ValueError(f"Unsupported file type: {ext or '(none)'}")
 
     if ext in ARCHIVE_EXTENSIONS:
         return _extract_archive(path)
 
-    text = _extract_by_ext(path, ext)
-    text = _fix(text)
-    return {
-        "path": str(path),
-        "filename": path.name,
-        "extension": ext,
-        "chars": len(text),
-        "content": text,
-    }
+    # Для разбора по расширению нужен путь с правильным суффиксом (MarkItDown, zip-форматы).
+    work = path
+    tmp: Path | None = None
+    if path.suffix.lower() != ext:
+        import tempfile
+
+        tmp = Path(tempfile.mkdtemp(prefix="extract-")) / f"file{ext}"
+        tmp.write_bytes(path.read_bytes())
+        work = tmp
+    try:
+        text = _extract_by_ext(work, ext)
+        text = _fix(text)
+        return {
+            "path": str(path),
+            "filename": path.name,
+            "extension": ext,
+            "chars": len(text),
+            "content": text,
+        }
+    finally:
+        if tmp is not None:
+            import shutil
+
+            shutil.rmtree(tmp.parent, ignore_errors=True)
 
 
 def _extract_by_ext(path: Path, ext: str) -> str:
@@ -319,7 +337,7 @@ def _zip_name(info: zipfile.ZipInfo) -> str:
 
 
 def _unpack(path: Path, dest: Path) -> None:
-    if path.suffix.lower() == ".zip" and zipfile.is_zipfile(path):  # «.zip» бывает переименованным rar — его отдаём tar
+    if zipfile.is_zipfile(path):  # по содержимому: «.zip» бывает переименованным rar, «.docx» — zip-архивом
         with zipfile.ZipFile(path) as zf:
             for info in zf.infolist():
                 name = _zip_name(info)

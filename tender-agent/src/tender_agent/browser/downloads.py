@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import re
+import tempfile
 from email.header import decode_header, make_header
 from pathlib import Path
 from urllib.parse import unquote, urljoin, urlparse
@@ -14,6 +15,46 @@ from ..tenders.models import Observation
 from .dom_tools import element_by_ref
 from .navigation import validate_navigation_url
 from .runtime import BrowserRuntime
+
+# Расширения, которым можно доверять в имени файла (не «I. Общие сведения…»).
+_KNOWN_EXT = {
+    ".pdf",
+    ".docx",
+    ".doc",
+    ".xlsx",
+    ".xls",
+    ".pptx",
+    ".ppt",
+    ".odt",
+    ".ods",
+    ".odp",
+    ".rtf",
+    ".zip",
+    ".rar",
+    ".7z",
+    ".txt",
+    ".csv",
+    ".json",
+    ".xml",
+    ".html",
+    ".htm",
+}
+_CONTENT_TYPE_EXT = {
+    "application/pdf": ".pdf",
+    "application/msword": ".doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.ms-excel": ".xls",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.ms-powerpoint": ".ppt",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+    "application/rtf": ".rtf",
+    "text/rtf": ".rtf",
+    "application/zip": ".zip",
+    "application/x-rar-compressed": ".rar",
+    "application/vnd.rar": ".rar",
+    "application/x-7z-compressed": ".7z",
+    "application/vnd.oasis.opendocument.text": ".odt",
+}
 
 _FETCH_JS = """async (url) => {
   const response = await fetch(url);
@@ -46,15 +87,90 @@ def safe_destination(root: Path, name: str) -> Path:
     return dest
 
 
+def known_suffix(name: str) -> str:
+    suffix = Path(name or "").suffix.lower()
+    return suffix if suffix in _KNOWN_EXT else ""
+
+
+def sniff_extension(body: bytes, content_type: str = "") -> str:
+    """Расширение по magic bytes / Content-Type, иначе ''."""
+    if not body:
+        return ""
+    head = body[:8]
+    if head.startswith(b"%PDF"):
+        return ".pdf"
+    if head.startswith(b"{\\rt") or head.lstrip().startswith(b"{\\rt"):
+        return ".rtf"
+    if head.startswith(b"Rar!"):
+        return ".rar"
+    if head.startswith(b"7z\xbc\xaf"):
+        return ".7z"
+    if head.startswith(b"PK\x03\x04"):
+        import io
+        import zipfile
+
+        try:
+            names = zipfile.ZipFile(io.BytesIO(body)).namelist()
+        except Exception:
+            return ".zip"
+        if any(n.startswith("word/") for n in names):
+            return ".docx"
+        if any(n.startswith("xl/") for n in names):
+            return ".xlsx"
+        if any(n.startswith("ppt/") for n in names):
+            return ".pptx"
+        if "content.xml" in names:
+            return ".odt"
+        return ".zip"
+    if head.startswith(b"\xd0\xcf\x11\xe0"):
+        # Имена потоков в каталоге OLE записаны в UTF-16LE.
+        # «Book» (Excel 5) — последним: такое слово может встретиться и в тексте документа.
+        for stream, ext in (("WordDocument", ".doc"), ("PowerPoint Document", ".ppt"), ("Workbook", ".xls"),
+                            ("Book", ".xls")):
+            if stream.encode("utf-16-le") in body:
+                return ext
+        return ""
+    mime = (content_type or "").split(";", 1)[0].strip().lower()
+    return _CONTENT_TYPE_EXT.get(mime, "")
+
+
+def _false_suffix(name: str) -> str:
+    """Короткий суффикс вроде `.bin`/`.tmp`, но не из известных; «I. Общие…» не трогаем."""
+    suffix = Path(name or "").suffix
+    body = suffix[1:] if suffix.startswith(".") else ""
+    if not body or len(body) > 8 or " " in body or not body.replace("_", "").isalnum():
+        return ""
+    return "" if f".{body.lower()}" in _KNOWN_EXT else suffix
+
+
+def ensure_extension(name: str, body: bytes, content_type: str = "") -> str:
+    """Дописать расширение, если имя с площадки без него (ЕИС filestore, подпись элемента)."""
+    cleaned = (name or "file").strip() or "file"
+    if known_suffix(cleaned):
+        return cleaned
+    sniffed = sniff_extension(body, content_type)
+    if not sniffed:
+        return cleaned
+    false = _false_suffix(cleaned)
+    stem = cleaned[: -len(false)] if false else cleaned
+    stem = stem or cleaned
+    if stem.lower().endswith(sniffed):
+        return stem
+    return f"{stem}{sniffed}"
+
+
 def write_unique(root: Path, name: str, body: bytes) -> Path:
     """Записывает файл, не затирая другой с тем же именем: у закупки бывает несколько разных «НМЦК».
-    Тот же файл (повторный прогон) не дублируется — возвращается уже лежащий."""
+    Тот же файл (повторный прогон или другое имя при тех же байтах) не дублируется."""
+    root.mkdir(parents=True, exist_ok=True)
+    size = len(body)
+    for existing in root.iterdir():
+        if existing.is_file() and existing.stat().st_size == size and existing.read_bytes() == body:
+            return existing
     dest = safe_destination(root, name)
     stem, suffix = dest.stem, dest.suffix
     number = 1
     while dest.exists():
-        if dest.is_file() and dest.read_bytes() == body:
-            return dest
         number += 1
         dest = safe_destination(root, f"{stem}_{number}{suffix}")
     dest.write_bytes(body)
@@ -71,7 +187,7 @@ def verify_download(path: Path, root: Path, max_bytes: int) -> tuple[bool, str]:
         return False, "Файл пустой."
     if size > max_bytes:
         return False, "Файл больше разрешённого размера."
-    if path.suffix.lower() == ".pdf":
+    if known_suffix(path.name) == ".pdf" or path.suffix.lower() == ".pdf":
         head = path.read_bytes()[:5]
         if not head.startswith(b"%PDF-"):
             return False, "Содержимое не похоже на PDF."
@@ -161,7 +277,8 @@ async def _save_from_url(
         return _failed(source, tender_url, "По ссылке страница, а не файл.")
     if len(body) > settings.max_download_bytes:
         return _failed(source, tender_url, "Файл больше разрешённого размера.")
-    target = write_unique(runtime.downloads_dir, _filename(header, final), body)
+    name = ensure_extension(_filename(header, final), body, headers.get("content-type", ""))
+    target = write_unique(runtime.downloads_dir, name, body)
     passed, detail = verify_download(target, runtime.downloads_dir, settings.max_download_bytes)
     if not passed:
         target.unlink(missing_ok=True)
@@ -232,6 +349,16 @@ async def _click_neighbour_icons(page, locator, wait_download) -> bool:
         return False
     finally:
         await page.evaluate("() => document.querySelectorAll('[data-ta-icon]').forEach(x => x.removeAttribute('data-ta-icon'))")
+
+
+async def _store_download(download, downloads_dir: Path) -> Path:
+    # Временный файл не в папке закупки: write_unique ищет там файл с теми же байтами и вернул бы его самого.
+    with tempfile.TemporaryDirectory(prefix="tender-dl-") as tmp:
+        partial = Path(tmp) / "partial"
+        await download.save_as(str(partial))
+        body = partial.read_bytes()
+    name = ensure_extension(fix_mojibake(download.suggested_filename or "file"), body)
+    return write_unique(downloads_dir, name, body)
 
 
 async def download_file(
@@ -318,14 +445,7 @@ async def download_file(
                 await button.click(timeout=8_000)
                 if not await wait_download(dialog_page, 15):
                     return _failed(source, tender_url, "После «Скачать» загрузка не началась.")
-        download = downloads[0]
-        partial = safe_destination(runtime.downloads_dir, f".partial-{id(download)}")
-        await download.save_as(str(partial))
-        try:
-            target = write_unique(runtime.downloads_dir, fix_mojibake(download.suggested_filename or "file"),
-                                  partial.read_bytes())
-        finally:
-            partial.unlink(missing_ok=True)
+        target = await _store_download(downloads[0], runtime.downloads_dir)
     except PlaywrightTimeout as exc:
         return _failed(source, tender_url, f"Браузер не начал загрузку: {str(exc).splitlines()[0][:200]}")
     except Exception as exc:

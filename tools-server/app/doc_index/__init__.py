@@ -122,22 +122,38 @@ def _split_pseudo_pages(text: str) -> list[str]:
 
 
 def _build_pages(path: Path) -> tuple[list[dict[str, Any]], str]:
-    ext = path.suffix.lower()
-    if ext == ".pdf":
-        return pdf.extract_pages(path), pdf.BACKEND
-    text, backend = "", ""
-    if ext in MARKITDOWN_EXTENSIONS:
-        try:
-            from markitdown import MarkItDown
+    from ..document_tool.sniff import detect_extension
 
-            text, backend = MarkItDown(enable_plugins=False).convert(str(path)).text_content or "", "markitdown"
-        except Exception as e:
-            log.warning("MarkItDown failed for %s: %s; falling back", path.name, e)
-    if not backend:
-        from ..document_tool.extract import extract_file
+    ext = detect_extension(path)
+    work = path
+    tmp_dir = None
+    if path.suffix.lower() != ext and ext in (MARKITDOWN_EXTENSIONS | {".pdf"}):
+        import tempfile
 
-        text, backend = extract_file(path)["content"], "extract_file"
-    return [pdf.page_record(c, images=0) for c in _split_pseudo_pages(text)], backend
+        tmp_dir = Path(tempfile.mkdtemp(prefix="pages-"))
+        work = tmp_dir / f"file{ext}"
+        work.write_bytes(path.read_bytes())
+    try:
+        if ext == ".pdf":
+            return pdf.extract_pages(work), pdf.BACKEND
+        text, backend = "", ""
+        if ext in MARKITDOWN_EXTENSIONS:
+            try:
+                from markitdown import MarkItDown
+
+                text, backend = MarkItDown(enable_plugins=False).convert(str(work)).text_content or "", "markitdown"
+            except Exception as e:
+                log.warning("MarkItDown failed for %s: %s; falling back", path.name, e)
+        if not backend:
+            from ..document_tool.extract import extract_file
+
+            text, backend = extract_file(path)["content"], "extract_file"
+        return [pdf.page_record(c, images=0) for c in _split_pseudo_pages(text)], backend
+    finally:
+        if tmp_dir is not None:
+            import shutil
+
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def get_index(path_str: str) -> DocIndex:

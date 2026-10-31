@@ -371,6 +371,8 @@ function ragSettings(manifest) {
     ["rag.chunk_size", 1000, 2500, "CHUNK_SIZE"],
     ["rag.chunk_overlap", 100, 200, "CHUNK_OVERLAP"],
     ["rag.top_k", 3, 5, "RAG_TOP_K"],
+    // Гибридный поиск отдаёт в чат top_k_reranker фрагментов (заводской дефолт 3), а не top_k.
+    ["rag.top_k_reranker", 3, 5, "RAG_TOP_K_RERANKER"],
   ];
   // Без файлов модели Open WebUI не поднимет поиск, поэтому переключаем, только если папка модели есть.
   const modelDir = embeddingModelDir();

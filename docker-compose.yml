@@ -32,6 +32,8 @@ services:
       - CHUNK_SIZE=${CHUNK_SIZE:-2500}
       - CHUNK_OVERLAP=${CHUNK_OVERLAP:-200}
       - RAG_TOP_K=${RAG_TOP_K:-5}
+      # Сколько фрагментов уходит в чат при гибридном поиске (дефолт OWUI — 3, не RAG_TOP_K).
+      - RAG_TOP_K_RERANKER=${RAG_TOP_K_RERANKER:-5}
       - RAG_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL:-/app/models/paraphrase-multilingual-MiniLM-L12-v2}
     volumes:
       - open-webui-data:/app/backend/data

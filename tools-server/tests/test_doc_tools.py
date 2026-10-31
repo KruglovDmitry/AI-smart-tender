@@ -77,6 +77,47 @@ def test_owui_loader_rtf_text_not_markup(client):
     assert "Техническое задание" in text and "\\rtf1" not in text
 
 
+def test_owui_loader_extensionless_pdf(client):
+    """Имя без расширения (как с ЕИС) — тип по содержимому."""
+    import pymupdf
+
+    c, _root = client
+    buf = __import__("io").BytesIO()
+    doc = pymupdf.open()
+    doc.new_page().insert_text((50, 72), "Delivery term 30 days", fontname="helv")
+    doc.save(buf)
+    doc.close()
+    r = c.put(
+        "/process",
+        content=buf.getvalue(),
+        headers={"X-Filename": "I. Obschie svedeniya (tovar)"},
+    )
+    assert r.status_code == 200
+    text = r.json()[0]["page_content"]
+    assert "Delivery" in text or "30" in text
+
+
+def test_extract_file_sniffs_extensionless_pdf(tmp_path, monkeypatch):
+    import importlib
+
+    import pymupdf
+
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path))
+    from app import config
+
+    importlib.reload(config)
+    import app.document_tool.extract as ex
+
+    importlib.reload(ex)
+    path = tmp_path / "I. Obschie svedeniya"
+    doc = pymupdf.open()
+    doc.new_page().insert_text((50, 72), "hello pdf", fontname="helv")
+    doc.save(path)
+    doc.close()
+    out = ex.extract_file(path)
+    assert out["extension"] == ".pdf" and "hello" in out["content"]
+
+
 def _template(path):
     wb = Workbook()
     ws = wb.active

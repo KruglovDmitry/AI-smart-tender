@@ -23,7 +23,7 @@ from ..document_tool.pdf import ocr, read as pdf
 
 log = logging.getLogger(__name__)
 
-INDEX_VERSION = 5
+INDEX_VERSION = 6
 INDEX_ROOT = DATA_ROOT / ".index"
 # Не-PDF документы режем на условные страницы такого размера, чтобы поиск и чтение работали одинаково.
 PSEUDO_PAGE_CHARS = 4000
@@ -68,7 +68,8 @@ class DocIndex:
 
     @property
     def page_unit(self) -> str:
-        return "pdf_page" if self.is_pdf else "logical_part"
+        if self.is_pdf: return 'pdf_page'
+        return self.pages[0].get('unit', 'logical_part') if self.pages else 'logical_part'
 
     def page(self, n: int) -> dict[str, Any]:
         if not 1 <= n <= len(self.pages):
@@ -135,7 +136,7 @@ class DocIndex:
 
 
 # Эти форматы MarkItDown переводит в Markdown с заголовками и таблицами; остальное — прежним extract_file.
-MARKITDOWN_EXTENSIONS = { ".pptx", ".html", ".htm", ".msg", ".epub", ".xml"}
+MARKITDOWN_EXTENSIONS = {'.msg', '.epub'}
 
 
 def _split_pseudo_pages(text: str) -> list[str]:
@@ -157,7 +158,7 @@ def _split_pseudo_pages(text: str) -> list[str]:
     return pages or [""]
 
 
-def _build_pages(path: Path) -> tuple[list[dict[str, Any]], str]:
+def _build_pages(path: Path, *, archive_manifest: bool = True, markup_source: bool = True) -> tuple[list[dict[str, Any]], str]:
     from ..document_tool.sniff import detect_extension
 
     ext = detect_extension(path)
@@ -175,8 +176,30 @@ def _build_pages(path: Path) -> tuple[list[dict[str, Any]], str]:
         if ext == ".docx":
             from ..document_tool.docx.read import extract_parts
             return extract_parts(work), "docx-ooxml"
+        if ext in {'.pptx', '.ppt'}:
+            from ..document_tool.presentations.read import extract_parts
+            return extract_parts(work), 'python-pptx'
+        from ..document_tool.raster import IMAGE_EXTENSIONS
+        if ext in IMAGE_EXTENSIONS:
+            from ..document_tool.images.read import extract_parts
+            return extract_parts(work), 'pillow-metadata'
+        from ..document_tool.text.read import TEXT_EXTENSIONS, extract_parts
+        if ext in TEXT_EXTENSIONS and (markup_source or ext not in {'.html', '.htm', '.xml'}):
+            return extract_parts(work), 'text-lines'
+        from ..document_tool.archives.read import ARCHIVE_EXTENSIONS
+        if ext in ARCHIVE_EXTENSIONS:
+            if archive_manifest:
+                from ..document_tool.archives.read import extract_parts
+                return extract_parts(work), 'archive-manifest'
+            from ..document_tool.archives.read import extract_archive
+            extracted = extract_archive(work)
+            records = [pdf.page_record(c, images=0) for c in _split_pseudo_pages(extracted['content'])]
+            if extracted['truncated']:
+                for record in records:
+                    record['warnings'] = ['archive_contents_incomplete: some members skipped or truncated']
+            return records, 'archive-contents'
         text, backend = "", ""
-        if ext in MARKITDOWN_EXTENSIONS:
+        if ext in MARKITDOWN_EXTENSIONS or (not markup_source and ext in {'.html', '.htm', '.xml'}):
             try:
                 from markitdown import MarkItDown
 
@@ -187,7 +210,11 @@ def _build_pages(path: Path) -> tuple[list[dict[str, Any]], str]:
             from ..document_tool.extract import extract_file
 
             text, backend = extract_file(path)["content"], "extract_file"
-        return [pdf.page_record(c, images=0) for c in _split_pseudo_pages(text)], backend
+        records = [pdf.page_record(c, images=0) for c in _split_pseudo_pages(text)]
+        if ext in {'.doc', '.rtf', '.odt', '.ods', '.odp'}:
+            for record in records:
+                record['warnings'] = ['text_only_legacy_extraction: layout, fields and embedded images are not fully represented']
+        return records, backend
     finally:
         if tmp_dir is not None:
             import shutil
@@ -272,7 +299,7 @@ def document_info(path: str, page_from: int = 1, page_to: int = 0) -> dict[str, 
             row["images"] = p["images"]
         if src != "text":
             row["source"] = src
-        if idx.is_docx:
+        if not idx.is_pdf:
             row["blocks"] = len(p.get("blocks", []))
             row["image_ids"] = [r["id"] for r in p.get("image_refs", [])][:10]
         rows.append(row)
@@ -286,7 +313,7 @@ def document_info(path: str, page_from: int = 1, page_to: int = 0) -> dict[str, 
         "outline": rows,
         "page_unit": idx.page_unit,
         **({"skill_hint": "Load document_skill(file_type=pdf) once for PDF reading instructions."} if idx.is_pdf else {"skill_hint": "Load document_skill(file_type=docx) once for DOCX reading/creation instructions."} if idx.is_docx else {}),
-        "note": "Use search_document to find pages, then read_pages for their text and tables.",
+        "note": "Use search_document then read_pages/read_file. Check page_unit: logical parts, slides, frames and archive manifests are different units.",
     }
 
 
@@ -420,6 +447,7 @@ def search_document(path: str, query: str, max_results: int = 10, mode: str = "a
     return {
         "path": idx.rel,
         "query": q,
+        "page_unit": idx.page_unit,
         **res,
         **({"ocr_pending_pages": pending} if pending else {}),
         "note": (
@@ -477,4 +505,4 @@ def read_pages(
             break
         used += size
         out.append(item)
-    return {"path": idx.rel, "page_count": len(idx.pages), "pages": out, "truncated": truncated}
+    return {"path": idx.rel, "page_count": len(idx.pages), "page_unit": idx.page_unit, "pages": out, "truncated": truncated}

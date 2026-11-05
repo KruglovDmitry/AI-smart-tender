@@ -4,7 +4,7 @@ from pathlib import Path
 
 def document_skill(file_type: str) -> dict:
     # Реестр фиксирован: параметр никогда не превращается в произвольный путь.
-    if file_type not in {"pdf", "spreadsheets", "docx"}:
-        raise ValueError("Supported file_type: pdf, spreadsheets, docx")
+    if file_type not in {"pdf", "spreadsheets", "docx", "presentations", "images", "text", "archives", "legacy"}:
+        raise ValueError("Supported file_type: pdf, spreadsheets, docx, presentations, images, text, archives, legacy")
     instructions = (Path(__file__).parent / file_type / "SKILL.md").read_text(encoding="utf-8")
     return {"file_type": file_type, "scope": "tools-server", "instructions": instructions}

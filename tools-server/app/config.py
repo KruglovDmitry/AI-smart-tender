@@ -22,7 +22,8 @@ DEFAULT_MAX_CHARS = int(os.getenv("DEFAULT_MAX_CHARS", "120000"))
 DEFAULT_MAX_FILES = int(os.getenv("DEFAULT_MAX_FILES", "30"))
 FETCH_TIMEOUT_SEC = float(os.getenv("FETCH_TIMEOUT_SEC", "30"))
 
-ALLOWED_EXTENSIONS = {
+ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.webp', '.gif',
+    '.log', '.ini', '.yml', '.yaml', '.toml', '.py', '.js', '.ts', '.css', '.sql', '.rst',
     ".pdf",
     ".docx",
     ".doc",

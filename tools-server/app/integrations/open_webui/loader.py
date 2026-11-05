@@ -51,7 +51,7 @@ def process_upload(data: bytes, filename: str, content_type: str | None = None, 
         suffix = detect_extension(raw, resolved) or ".bin"
         path = raw if suffix == ".bin" else raw.rename(raw.with_suffix(suffix))
         try:
-            pages, backend = _build_pages(path)
+            pages, backend = _build_pages(path, archive_manifest=False, markup_source=False)
         except Exception as e:
             # Свой разбор упал (битый файл, ошибка библиотеки) — отдаём текст прежним простым способом.
             # Неподдерживаемый формат пробрасываем: Open WebUI тогда разберёт файл сам.
@@ -83,7 +83,9 @@ def process_upload(data: bytes, filename: str, content_type: str | None = None, 
             if is_pdf:
                 meta.update(page=n - 1, page_label=str(n))  # как у PyPDFLoader: page с нуля, page_label с единицы
             else:
-                meta.update(part=n, page_unit="logical_part")
+                meta.update(part=n, page_unit=index.page_unit)
             docs.append({"page_content": text + _codes_line(text), "metadata": meta})
     log.info("OWUI loader: %s -> %d pages (%s)", name, len(docs), backend)
-    return docs or [{"page_content": "", "metadata": {"name": name, "source": name}}]
+    return docs or [{"page_content": "", "metadata": {"name": name, "source": name,
+        "page_unit": index.page_unit, "total_parts": len(pages),
+        "warnings": "No extracted text. Images have not been transcribed; upload policy does not run image vision/OCR."}}]

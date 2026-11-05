@@ -21,9 +21,13 @@ def _read_indexed(path: str, mode: str = "auto", pages: str | None = None,
     if mode not in {"auto", "full", "index"} or visual_mode not in {"off", "auto", "required"}:
         raise ValueError("Invalid reading or visual mode")
     if not 1 <= max_pages <= 10 or not 1 <= max_chars <= 120000 or not 0 <= max_visual_pages <= 10:
-        raise ValueError("Invalid PDF reading budget")
+        raise ValueError("Invalid document reading budget")
     idx = get_index(path)
-    if (expected_format == 'pdf' and not idx.is_pdf) or (expected_format == 'docx' and not idx.is_docx):
+    from ..document_tool.raster import IMAGE_EXTENSIONS
+    from ..document_tool.text.read import TEXT_EXTENSIONS
+    accepted = {'pdf': {'.pdf'}, 'docx': {'.docx'}, 'presentation': {'.pptx', '.ppt'},
+                'image': IMAGE_EXTENSIONS, 'text': TEXT_EXTENSIONS}
+    if expected_format != 'any' and idx.meta['file_type'] not in accepted.get(expected_format, set()):
         raise ValueError(f"Expected {expected_format.upper()} document")
     count = len(idx.pages)
     if not 1 <= start_page <= count or text_offset < 0:
@@ -87,6 +91,14 @@ def _read_indexed(path: str, mode: str = "auto", pages: str | None = None,
                     if idx.is_docx:
                         from ..document_tool.docx.vision import view_part
                         viewer = view_part
+                    elif idx.page_unit == 'slide':
+                        from ..document_tool.presentations.vision import view_part
+                        viewer = view_part
+                    elif idx.page_unit == 'image_frame':
+                        from ..document_tool.images.vision import view_frame
+                        viewer = view_frame
+                    elif not idx.is_pdf:
+                        raise ValueError('This format has no visual adapter; use its format skill')
                     result = viewer(path, n,
                         'Опиши структуру и извлеки данные схем, изображений и сложных таблиц. '
                         'Сохрани заголовки, единицы и связи строк с колонками; укажи неразборчивое.',
@@ -99,7 +111,7 @@ def _read_indexed(path: str, mode: str = "auto", pages: str | None = None,
                         item['warnings'].append('visual_answer_truncated: use view_page for this page')
                     remaining -= len(item['visual']['answer'])
                 except Exception as exc:
-                    item['warnings'].append(f"visual_unavailable: {type(exc).__name__}; configure TOOLS_VL_* and retry view_page")
+                    item['warnings'].append(f"visual_unavailable: {type(exc).__name__}: {str(exc)[:200]}; retry with the format-specific viewer")
             else:
                 item['warnings'].append('visual_budget_exhausted: use view_page for this page')
         item['complete'] = not partial and not item['warnings']
@@ -140,6 +152,10 @@ def read_docx(path: str, mode="auto", parts=None, start_part=1, text_offset=0,
     result = _read_indexed(path, mode=mode, pages=parts, start_page=start_part, text_offset=text_offset,
         max_pages=max_parts, max_chars=max_chars, visual_mode=visual_mode,
         max_visual_pages=max_visual_parts, expected_format="docx")
+    return _rename_parts(result, 'Logical parts are not physical DOCX pages. Use image IDs for embedded pictures; render for physical page viewing.')
+
+
+def _rename_parts(result, note=None):
     # Keep logical parts unambiguously separate from rendered physical pages.
     if isinstance(result.get("pages"), list):
         result["parts"] = result.pop("pages")
@@ -152,7 +168,15 @@ def read_docx(path: str, mode="auto", parts=None, start_part=1, text_offset=0,
     for row in result.get("outline", []): row["part"] = row.pop("page")
     if result.get("next_cursor"):
         result["next_cursor"]["start_part"] = result["next_cursor"].pop("start_page")
-    result["page_unit"] = "logical_part"
-    result["note"] = "Logical parts are not physical DOCX pages. Use image IDs for embedded pictures; render for physical page viewing."
+    if note: result['note'] = note
     if "continuation" in result: result["continuation"] = result["continuation"].replace("pages", "parts")
     return result
+
+
+def read_file(path, mode='auto', parts=None, start_part=1, text_offset=0,
+              max_parts=8, max_chars=40000, visual_mode='off', max_visual_parts=2,
+              expected_format='any'):
+    result = _read_indexed(path, mode=mode, pages=parts, start_page=start_part, text_offset=text_offset,
+        max_pages=max_parts, max_chars=max_chars, visual_mode=visual_mode,
+        max_visual_pages=max_visual_parts, expected_format=expected_format)
+    return _rename_parts(result)

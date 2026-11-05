@@ -194,6 +194,42 @@ class ReadDocxBody(BaseModel):
     max_visual_parts: int = Field(2, ge=0, le=10)
 
 
+
+class ReadFileBody(ReadDocxBody):
+    path: str = Field(..., description='File under server DATA_ROOT, not a chat attachment.')
+    parts: str | None = Field(None, description='Selected logical parts, slides or frames: 2,5-7. Check page_unit in response.')
+    visual_mode: Literal['off', 'auto', 'required'] = 'off'
+
+
+class ViewImageBody(BaseModel):
+    path: str = Field(..., description='Raster image under server DATA_ROOT.')
+    frame: int = Field(1, ge=1, description='1-based TIFF/GIF/image frame.')
+    question: str = ''
+    detail: Literal['auto', 'low', 'high'] = 'auto'
+    bbox: list[int] | None = Field(None, min_length=4, max_length=4, description='Crop [left,top,right,bottom], in pixels after EXIF orientation.')
+
+
+class ViewSlideBody(BaseModel):
+    path: str
+    slide: int = Field(1, ge=1)
+    question: str = ''
+    detail: Literal['auto', 'low', 'high'] = 'auto'
+    bbox: list[float] | None = Field(None, min_length=4, max_length=4, description='Crop in rendered PDF points; not EMU.')
+
+
+class ViewPresentationImageBody(BaseModel):
+    path: str
+    slide: int = Field(1, ge=1)
+    image_id: str = Field(..., description='Image ID from read_presentation layout.')
+    question: str = ''
+    detail: Literal['auto', 'low', 'high'] = 'auto'
+
+
+class OpenArchiveMemberBody(BaseModel):
+    path: str
+    member: str = Field(..., description='Exact unique member name from list_archive. Does not execute files.')
+
+
 class DocxBlock(BaseModel):
     kind: Literal["paragraph", "heading", "bullet", "numbered", "table", "image", "page_break"] = "paragraph"
     text: str = ""
@@ -500,15 +536,84 @@ def api_view_docx_page(body: ViewPageBody):
     return _http_errors(view_page, body.path, body.page, body.question, body.bbox, body.detail)
 
 
+
+@app.post('/read_file', summary='Read supported files with one bounded index and continuation',
+    description='Auto returns small content or a large-file index. For exhaustive reading use mode=full and next_cursor. Check page_unit: PDF pages, DOCX/text parts, slides, image frames or archive manifest parts. Vision is off by default. Use table tools for spreadsheets.')
+def api_read_file(body: ReadFileBody):
+    from .document_index.reading import read_file
+    return _http_errors(read_file, **body.model_dump())
+
+
+@app.post('/read_text', summary='Read text, source code, JSON, XML and HTML without executing it',
+    description='Preserves decoded whitespace and source text, with character offsets and line ranges. Large files use the shared index and continuation. HTML/XML remain source markup; scripts, imports, links and includes are not executed.')
+def api_read_text(body: ReadFileBody):
+    from .document_index.reading import read_file
+    return _http_errors(read_file, **body.model_dump(), expected_format='text')
+
+
+@app.post('/read_presentation', summary='Read presentation slides, tables, notes and image references',
+    description='PPTX is native. Legacy PPT requires LibreOffice. parts/start_part address slides, page_unit=slide. Shape order is XML order; group coordinates are local EMU. Vision is optional; use view_slide for full layout or view_presentation_image for one embedded picture.')
+def api_read_presentation(body: ReadFileBody):
+    from .document_index.reading import read_file
+    return _http_errors(read_file, **body.model_dump(), expected_format='presentation')
+
+
+@app.post('/read_image', summary='Read raster frame metadata with optional visual interpretation',
+    description='PNG/JPEG/TIFF/BMP/WebP/GIF. Parts are frames. Vision is off by default; set visual_mode=auto/required or call view_image. Metadata alone is not transcribed image content. No implicit OCR or model calls during uploads.')
+def api_read_image(body: ReadFileBody):
+    from .document_index.reading import read_file
+    return _http_errors(read_file, **body.model_dump(), expected_format='image')
+
+
+@app.post('/view_image', summary='Inspect a raster frame or crop with the configured Qwen-VL model')
+def api_view_image(body: ViewImageBody):
+    from .document_tool.images.vision import view_frame
+    return _http_errors(view_frame, **body.model_dump())
+
+
+@app.post('/ocr_image', summary='Run local OCR on one raster frame; no cloud vision call')
+def api_ocr_image(body: ViewImageBody):
+    from .document_tool.images.vision import ocr_frame
+    if body.bbox is not None:
+        raise HTTPException(status_code=400, detail='ocr_image processes a full frame. Use view_image for crops.')
+    return _http_errors(ocr_frame, body.path, body.frame)
+
+
+@app.post('/view_slide', summary='Inspect a full rendered presentation slide; requires LibreOffice')
+def api_view_slide(body: ViewSlideBody):
+    from .document_tool.presentations.vision import view_slide
+    return _http_errors(view_slide, **body.model_dump())
+
+
+@app.post('/view_presentation_image', summary='Inspect an embedded slide picture without a renderer')
+def api_view_presentation_image(body: ViewPresentationImageBody):
+    from .document_tool.presentations.vision import view_image
+    return _http_errors(view_image, **body.model_dump())
+
+
+@app.get('/list_archive', summary='List ZIP/RAR/7z members without reading all documents',
+    description='Paginated manifest. Flags encrypted, oversized, unsafe and linked entries. RAR extraction needs an unrar/bsdtar backend. Nested archives are not expanded automatically.')
+def api_list_archive(path: str, offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=200)):
+    from .document_tool.archives.read import list_archive
+    return _http_errors(list_archive, path, offset, limit)
+
+
+@app.post('/open_archive_member', summary='Open one archive member as a separate server file',
+    description='Returns a safe content-addressed path under DATA_ROOT for format tools. Does not execute files or change the source archive. Rejects links, traversal paths, encrypted entries and excessive sizes.')
+def api_open_archive_member(body: OpenArchiveMemberBody):
+    from .document_tool.archives.read import open_member
+    return _http_errors(open_member, **body.model_dump())
+
+
 @app.get(
     "/document_skill",
     summary="Load instructions for a document format",
     description=(
-        "Call once for file_type=pdf, spreadsheets or docx to load server-tool reading/editing instructions. "
+        "Call once for file_type=pdf, spreadsheets, docx, presentations, images, text, archives or legacy to load format instructions. "
         "Chat attachments stay with Open WebUI's existing processing; do not re-read them automatically."
     ),
 )
-def api_document_skill(file_type: Literal["pdf", "spreadsheets", "docx"] = Query("pdf")):
+def api_document_skill(file_type: Literal["pdf", "spreadsheets", "docx", "presentations", "images", "text", "archives", "legacy"] = Query("pdf")):
     from .document_tool.skills import document_skill
 
     return _http_errors(document_skill, file_type)

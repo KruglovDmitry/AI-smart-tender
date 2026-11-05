@@ -42,7 +42,7 @@ def list_directory(path: str = "", recursive: bool = True) -> dict[str, Any]:
     entries: list[dict[str, Any]] = []
     iterator = root.rglob("*") if recursive else root.iterdir()
     for p in sorted(iterator):
-        if p.name.startswith(".") or p.name.startswith(".__"):
+        if any(part.startswith('.') for part in p.relative_to(root).parts):
             continue
         rel = str(p.relative_to(DATA_ROOT)).replace("\\", "/")
         if p.is_dir():
@@ -83,17 +83,17 @@ def read_document(path: str, max_chars: int) -> dict[str, Any]:
     ext = detect_extension(file_path)
     from .. import document_index
 
-    if ext in {".pdf", ".docx"} or ext in document_index.MARKITDOWN_EXTENSIONS:
+    if ext in {".pdf", ".docx", '.pptx', '.ppt'} or ext in document_index.MARKITDOWN_EXTENSIONS or ext in TEXT_EXTENSIONS:
         # Тот же разбор, что у постраничного индекса: OCR сканов и битых шрифтов, таблицы DOCX в Markdown.
         # pypdf на скачанных тендерах отдавал пустыми 21 PDF из 95.
         idx = document_index.get_index(rel)
         pages = [idx.text(n, run_ocr=True)[0] for n in range(1, len(idx.pages) + 1)]
-        text = "\n\n".join(f"[стр. {n}]\n{t}" for n, t in enumerate(pages, 1)) if ext == ".pdf" else "\n\n".join(pages)
+        text = "\n\n".join(f"[стр. {n}]\n{t}" for n, t in enumerate(pages, 1)) if ext == ".pdf" else ("".join(pages) if ext in TEXT_EXTENSIONS else "\n\n".join(pages))
         result = {"path": str(file_path), "filename": file_path.name, "extension": ext, "pages": len(pages), "chars": len(text), "content": text}
     else:
         result = extract_file(file_path)
     content = result["content"]
-    truncated = False
+    truncated = bool(result.get('truncated', False))
     if max_chars > 0 and len(content) > max_chars:
         content = content[:max_chars] + "\n\n[... truncated: use search_document / read_pages for the rest ...]"
         truncated = True
@@ -117,7 +117,7 @@ def read_folder_documents(
     files: list[Path] = []
     iterator = root.rglob("*") if recursive else root.iterdir()
     for p in sorted(iterator):
-        if not p.is_file() or p.name.startswith("."):
+        if not p.is_file() or any(part.startswith('.') for part in p.relative_to(root).parts):
             continue
         ext = p.suffix.lower()
         if ext in ALLOWED_EXTENSIONS or ext in TEXT_EXTENSIONS:

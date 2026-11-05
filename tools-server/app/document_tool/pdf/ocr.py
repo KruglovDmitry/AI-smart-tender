@@ -52,6 +52,13 @@ def page_text(path: Path, n: int) -> str:
     if engine is None:
         raise RuntimeError(f"OCR unavailable: {_unavailable}")
     png = pdf.render_png(path, n, dpi=OCR_DPI)
+    return image_text(png)
+
+
+def image_text(png: bytes) -> str:
+    engine = _get_engine()
+    if engine is None:
+        raise RuntimeError(f"OCR unavailable: {_unavailable}")
     res = engine(png)
     if not res or res.txts is None:
         return ""

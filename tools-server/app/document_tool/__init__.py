@@ -165,7 +165,7 @@ def read_folder_documents(
 
 def _outline(rel: str) -> dict[str, Any]:
     if rel.lower().endswith((".xlsx", ".xls", ".csv")):
-        from ..table_tool import describe_table
+        from .spreadsheets.operations import describe_table
 
         d = describe_table(rel)
         return {"path": rel, "sheets": [{"sheet": s["sheet"], "rows": s["data_rows"], "columns": [c["header"] or c["column"] for c in s["columns"]][:30]} for s in d["details"]]}

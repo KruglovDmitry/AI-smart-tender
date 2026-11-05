@@ -27,10 +27,12 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from . import config
-from . import document_index, table_tool
-from .table_tool import jobs as table_jobs
+from . import document_index
+from .document_tool.spreadsheets import operations as table_operations
+from .document_tool.spreadsheets import jobs as table_jobs
 from .document_tool import list_directory, read_document, read_folder_documents
-from .excel_tool import resolve_export_file, write_excel
+from .document_tool.spreadsheets.export import resolve_export_file
+from .document_tool.spreadsheets.create import write_excel
 from .web_tool import fetch_page
 
 _handler = logging.StreamHandler(sys.stdout)
@@ -192,7 +194,7 @@ class ViewPageBody(BaseModel):
 
 
 class DescribeTableBody(BaseModel):
-    path: str = Field(..., description="Relative path under data root to .xlsx/.xls/.csv.")
+    path: str = Field(..., description="Relative path under data root to .xlsx/.xlsm/.xls/.csv/.tsv.")
     sheet: str | None = Field(None, description="Sheet name; empty = all sheets.")
     header_row: int | None = Field(None, description="Header row number if auto-detection is wrong.")
 
@@ -204,7 +206,8 @@ class TableFilter(BaseModel):
 
 
 class QueryTableBody(BaseModel):
-    path: str = Field(..., description="Relative path under data root to .xlsx/.xls/.csv.")
+    read_mode: Literal["values", "formulas", "both"] = "values"
+    path: str = Field(..., description="Relative path under data root to .xlsx/.xlsm/.xls/.csv/.tsv.")
     sheet: str | None = Field(None, description="Sheet name; empty = first sheet.")
     header_row: int | None = Field(None, description="Header row number; empty = auto.")
     data_start_row: int | None = Field(None, description="First data row when service rows follow the header.")
@@ -216,12 +219,15 @@ class QueryTableBody(BaseModel):
 
 
 class TableUpdate(BaseModel):
+    mark: str | None = Field(None, description="Optional review note for edited cells.")
     row: int | None = Field(None, description="Sheet row number to write.")
     key: str | None = Field(None, description="Value of key_column identifying the row(s), instead of row.")
     values: dict[str, Any] = Field(..., description="{column letter or header: value}")
 
 
 class FillTableBody(BaseModel):
+    overwrite_existing: bool = Field(False, description="Explicitly allow editing/clearing populated cells; empty cells only by default.")
+    replace_formulas: bool = Field(False, description="Explicitly allow replacing formulas, also requires overwrite_existing=true.")
     path: str = Field(
         ...,
         description="Source .xlsx under data root; or a file under exports/ returned earlier to keep filling it.",
@@ -422,11 +428,11 @@ def api_read_pdf(body: ReadPdfBody):
     "/document_skill",
     summary="Load instructions for a document format",
     description=(
-        "Call once before working with a PDF through server tools. Returns the PDF reading skill. "
+        "Call once for file_type=pdf or spreadsheets to load server-tool reading/editing instructions. "
         "Chat attachments stay with Open WebUI's existing processing; do not re-read them automatically."
     ),
 )
-def api_document_skill(file_type: Literal["pdf"] = Query("pdf")):
+def api_document_skill(file_type: Literal["pdf", "spreadsheets"] = Query("pdf")):
     from .document_tool.skills import document_skill
 
     return _http_errors(document_skill, file_type)
@@ -471,17 +477,17 @@ def api_view_page(body: ViewPageBody):
     ),
 )
 def api_describe_table(body: DescribeTableBody):
-    return _http_errors(table_tool.describe_table, body.path, body.sheet, body.header_row)
+    return _http_errors(table_operations.describe_table, body.path, body.sheet, body.header_row)
 
 
 @app.post(
     "/query_table",
     summary="Get spreadsheet rows by filter",
-    description="Rows matching filters with paging (max 200 per call), or distinct value counts of a column.",
+    description="Rows matching filters with paging (max 200 per call), formula metadata and read_mode=values|formulas|both, or distinct counts.",
 )
 def api_query_table(body: QueryTableBody):
     return _http_errors(
-        table_tool.query_table,
+        table_operations.query_table,
         body.path,
         body.sheet,
         body.header_row,
@@ -491,6 +497,7 @@ def api_query_table(body: QueryTableBody):
         body.offset,
         body.limit,
         body.distinct,
+        body.read_mode,
     )
 
 
@@ -500,12 +507,13 @@ def api_query_table(body: QueryTableBody):
     description=(
         "Fill cells of an existing .xlsx (template) keeping its formatting and other sheets. The first call "
         "makes a copy under exports/; pass the returned path to keep filling. Rows by number or by key_column. "
-        "Returns download_url for the user."
+        "Existing values and formulas are protected by default; use explicit editing flags to replace them. "
+        "Saved XLSX is reopened and verified before publication. Returns download_url for the user."
     ),
 )
 def api_fill_table(body: FillTableBody, request: Request):
     return _http_errors(
-        table_tool.fill_table,
+        table_operations.fill_table,
         body.path,
         [u.model_dump() for u in body.updates],
         body.sheet,
@@ -514,6 +522,8 @@ def api_fill_table(body: FillTableBody, request: Request):
         body.allowed_values,
         None,
         _public_base(request),
+        body.overwrite_existing,
+        body.replace_formulas,
     )
 
 

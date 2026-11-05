@@ -17,7 +17,7 @@ def system_for(output):
 
 @lru_cache(maxsize=1)
 def snapshot():
-    return json.loads((Path(__file__).resolve().parent.parent / 'reference_data/okpd2.json').read_text(encoding='utf-8'))
+    return json.loads((Path(__file__).resolve().parents[2] / 'reference_data/okpd2.json').read_text(encoding='utf-8'))
 
 
 def terms(text):

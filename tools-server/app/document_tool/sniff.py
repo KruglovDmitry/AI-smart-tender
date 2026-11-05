@@ -12,6 +12,7 @@ KNOWN_EXTENSIONS = {
     ".docx",
     ".doc",
     ".xlsx",
+    ".xlsm",
     ".xls",
     ".pptx",
     ".ppt",
@@ -25,6 +26,7 @@ KNOWN_EXTENSIONS = {
     ".txt",
     ".md",
     ".csv",
+    ".tsv",
     ".json",
     ".xml",
     ".html",
@@ -57,7 +59,7 @@ def known_suffix(name: str) -> str:
 
 # Форматы, где содержимое однозначно определяет тип: при расхождении с расширением верим содержимому
 # («Скачать все документы.docx», который на деле zip; .doc, который на деле docx).
-CONTENT_TYPED = {".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".odt", ".ods", ".odp", ".rtf",
+CONTENT_TYPED = {".pdf", ".docx", ".doc", ".xlsx", ".xlsm", ".xls", ".pptx", ".ppt", ".odt", ".ods", ".odp", ".rtf",
                  ".zip", ".rar", ".7z"}
 
 
@@ -143,7 +145,7 @@ def _sniff_zip(f: BinaryIO) -> str:
         if any(n.startswith("word/") for n in names):
             return ".docx"
         if any(n.startswith("xl/") for n in names):
-            return ".xlsx"
+            return ".xlsm" if "xl/vbaProject.bin" in names else ".xlsx"
         if any(n.startswith("ppt/") for n in names):
             return ".pptx"
         if "content.xml" in names:

@@ -26,9 +26,9 @@ from typing import Any
 import httpx
 from openpyxl.utils import column_index_from_string
 
-from ..config import DATA_ROOT
-from ..document_tool import resolve_under_data
-from . import _load, _pick_sheet, _resolve_column, _col_label, _blank, _headers, fill_table, _match
+from ...config import DATA_ROOT
+from .. import resolve_under_data
+from .operations import _load, _pick_sheet, _resolve_column, _col_label, _blank, _headers, fill_table, _match
 
 log = logging.getLogger(__name__)
 
@@ -196,7 +196,7 @@ def start_job(
     public_base_url: str = "",
     quality_mode: str = "balanced",
 ) -> dict[str, Any]:
-    from .. import document_index
+    from ... import document_index
 
     if quality_mode not in {"balanced", "strict"}:
         raise ValueError("quality_mode must be balanced or strict")
@@ -235,8 +235,9 @@ def start_job(
     out_idx = {col: column_index_from_string(col) for col in out_cols}
     explicit = set(example_rows or [])
     rows, examples, example_keys = [], [], []
+    preserved_cells = {}
     for r in range(max(hr + 1, data_start_row or 0), len(grid.rows) + 1):
-        if not any(not _blank(v) for v in grid.rows[r - 1]):
+        if not grid.row_has_data(r):
             continue
         if not all(_match(grid.cell(r, c), op, t) for c, op, t in conds):
             continue
@@ -245,9 +246,12 @@ def start_job(
             "input": {(heads[c - 1] or _col_label(grid, hr, c)): grid.cell(r, c) for c in in_cols},
             "lookup": grid.cell(r, look) if look else None,
         }
-        filled = all(not _blank(grid.cell(r, c)) for c in out_idx.values())
+        filled = all(grid.occupied(r, c) for c in out_idx.values())
+        example_ready = all(not _blank(grid.cell(r,c)) for c in out_idx.values())
+        preserved_cells[str(r)] = [col for col,c in out_idx.items()
+            if (r,c) in grid.formulas or (skip_filled and grid.occupied(r,c))]
         # Строки, которые человек уже заполнил сам, — образцы стиля, а не работа для задания.
-        if r in explicit or (filled and not explicit and len(examples) < MAX_EXAMPLES):
+        if r in explicit or (filled and example_ready and not explicit and len(examples) < MAX_EXAMPLES):
             examples.append({"input": item["input"], "output": {col: grid.cell(r, c) for col, c in out_idx.items()}})
             if not _blank(item["lookup"]):
                 example_keys.append(document_index.normalize_code(str(item["lookup"])))
@@ -295,6 +299,8 @@ def start_job(
         "status_file": f"exports/{day}/jobs/{job_id}.json",
         "spec": {
             "quality_mode": quality_mode,
+            "preserved_cells": preserved_cells,
+            "overwrite_existing": not skip_filled,
             "instruction": instruction,
             "outputs": out_cols,
             "document": document,
@@ -305,7 +311,7 @@ def start_job(
         "examples_used": [e["input"] for e in examples],
     }
     # A new job always owns a new file, including when its input is an earlier export.
-    from ..excel_tool import make_download_url
+    from .export import make_download_url
     output = DATA_ROOT / "exports" / day / "jobs" / job_id / src.name
     output.parent.mkdir(parents=True, exist_ok=False)
     shutil.copy2(src, output)
@@ -348,10 +354,10 @@ def _worker(job: dict[str, Any], batches: list[list[dict[str, Any]]], workers: i
         for a in answers:
             if a["row"] in got:
                 continue
-            vals = {c: v for c, v in (a.get("values") or {}).items() if c in job["spec"]["outputs"] and not _blank(v)}
+            vals = {c: v for c, v in (a.get("values") or {}).items() if c in job["spec"]["outputs"] and c not in job["spec"].get("preserved_cells", {}).get(str(a["row"]), []) and not _blank(v)}
             got.add(a["row"])
             marks = []
-            if a.get("confidence") == "low" or len(vals) < len(job["spec"]["outputs"]):
+            if a.get("confidence") == "low" or len(vals) + len(job["spec"].get("preserved_cells", {}).get(str(a["row"]), [])) < len(job["spec"]["outputs"]):
                 bucket = "unresolved" if not vals else "low_confidence"
                 job[bucket].append({"row": a["row"], "note": str(a.get("note", ""))[:200]})
                 marks.append(f"Низкая уверенность: {a.get('note', '')}".strip())
@@ -377,13 +383,14 @@ def _worker(job: dict[str, Any], batches: list[list[dict[str, Any]]], workers: i
         res = fill_table(
             job["output"] or job["source"], list(pending), sheet=job["sheet"],
             header_row=job["spec"]["header_row"], allowed_values=allowed, public_base_url=base_url,
+            overwrite_existing=job["spec"].get("overwrite_existing", False),
         )
         job["output"], job["download_url"] = res["path"], res["download_url"]
         required = set(job["spec"]["outputs"])
         written = res["written_rows"]
         job["rows_written"] += len(written)
         job["cells_written"] += res["cells_written"]
-        job["rows_filled"] += sum(required.issubset(cols) for cols in written.values())
+        job["rows_filled"] += sum(required.issubset(set(cols) | set(job["spec"].get("preserved_cells", {}).get(str(row), []))) for row,cols in written.items())
         pending.clear()
         for p in res["problems"]:
             job["errors"].append({"rows": [p.get("row")], "error": f"{p.get('column', '')}: {p.get('error')} {p.get('value', '')}"})

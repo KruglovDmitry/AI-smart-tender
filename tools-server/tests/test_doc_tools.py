@@ -15,12 +15,13 @@ def client(tmp_path, monkeypatch):
 
     importlib.reload(config)
     import app.document_tool as dt
-    import app.excel_tool as et
+    import app.document_tool.spreadsheets.create as et
+    import app.document_tool.spreadsheets.export as ex
     import app.document_index as di
-    import app.table_tool as tt
+    import app.document_tool.spreadsheets.operations as tt
     import app.main as main
 
-    for m in (dt, et, di, tt, main):
+    for m in (dt, ex, et, di, tt, main):
         importlib.reload(m)
     from fastapi.testclient import TestClient
 

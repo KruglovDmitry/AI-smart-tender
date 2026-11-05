@@ -19,7 +19,7 @@ def research(document, keys, chat, parse, mode="strict"):
     rounds = 1 if mode == "balanced" else MAX_ROUNDS
     context_limit = 45000 if mode == "balanced" else MAX_CONTEXT
     page_limit = 10 if mode == "balanced" else MAX_PAGES
-    from .. import document_index
+    from ... import document_index
 
     idx = document_index.get_index(document)
     searches, pages, trace = [], {}, []

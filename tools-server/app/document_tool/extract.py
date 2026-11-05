@@ -203,42 +203,10 @@ def _extract_by_ext(path: Path, ext: str) -> str:
             html = path.read_text(encoding=_detect_encoding(path), errors="replace")
         return BeautifulSoup(html, "lxml").get_text()
 
-    if ext == ".csv":
-        enc = _detect_encoding(path)
-        import pandas as pd
+    if ext in {".xlsx", ".xlsm", ".xls", ".csv", ".tsv"}:
+        from .spreadsheets.read import extract_text
 
-        # Как при «простом» чтении таблицы: сохранить строки целиком
-        for sep in (";", ",", "\t"):
-            try:
-                df = pd.read_csv(path, encoding=enc, sep=sep)
-                if df.shape[1] > 1:
-                    break
-            except Exception:
-                continue
-        else:
-            df = pd.read_csv(path, encoding=enc, sep=None, engine="python")
-        summary = (
-            f"Table: {len(df) + 1} rows incl. header; {len(df)} data rows; "
-            f"{len(df.columns)} columns: {', '.join(map(str, df.columns))}."
-        )
-        return f"{summary}\n\n{df.to_string(index=False)}"
-
-    if ext in {".xlsx", ".xls"}:
-        import pandas as pd
-
-        parts: list[str] = []
-        engine = "xlrd" if ext == ".xls" else "openpyxl"
-        try:
-            xls = pd.ExcelFile(path, engine=engine)
-        except Exception:
-            # fallback: let pandas choose
-            xls = pd.ExcelFile(path)
-        # Закрываем файл явно: открытый дескриптор не даёт удалить временную папку распакованного архива.
-        with xls:
-            for sheet in xls.sheet_names:
-                df = pd.read_excel(xls, sheet_name=sheet)
-                parts.append(f"Sheet: {sheet}\n{df.to_string(index=False)}")
-        return "\n\n".join(parts)
+        return extract_text(path)
 
     if ext in {".pptx", ".ppt"}:
         try:

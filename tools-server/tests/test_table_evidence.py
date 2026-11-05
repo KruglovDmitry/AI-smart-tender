@@ -1,7 +1,7 @@
 import json
 import pytest
 
-from app.table_tool.evidence import verify, research
+from app.document_tool.spreadsheets.evidence import verify, research
 
 
 def test_invalid_quote_or_dictionary_value_never_reaches_review():
@@ -44,7 +44,7 @@ def test_research_can_escape_accessory_page(monkeypatch):
 
 
 def test_batch_persists_approved_evidence_and_drops_unapproved_cell(monkeypatch):
-    from app.table_tool import jobs, evidence
+    from app.document_tool.spreadsheets import jobs, evidence
     monkeypatch.setattr(evidence, 'research', lambda *a, **kw: ({1: 'Product supply 5V DC'}, [{'tool': 'read', 'pages': [1]}]))
     responses = iter([
         json.dumps({'rows': [{'row': 5, 'values': {'D': '5V DC', 'F': 'made-up-code'},
@@ -72,7 +72,7 @@ def test_balanced_high_confidence_avoids_review_but_checks_quotes():
 
 
 def test_usage_counts_actual_api_tokens(monkeypatch):
-    from app.table_tool import jobs
+    from app.document_tool.spreadsheets import jobs
     monkeypatch.setattr(jobs, '_llm_config', lambda: ('https://example.invalid', 'key', 'model'))
     class Response:
         status_code = 200
@@ -96,7 +96,7 @@ def test_usage_counts_actual_api_tokens(monkeypatch):
     ('balanced', 'https://other.example', False),
 ])
 def test_thinking_override_is_scoped(monkeypatch, mode, base, disabled):
-    from app.table_tool import jobs
+    from app.document_tool.spreadsheets import jobs
     monkeypatch.setattr(jobs, '_llm_config', lambda: (base, 'key', 'deepseek-flash'))
     sent = {}
     class Response:

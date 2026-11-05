@@ -1,35 +1,19 @@
-"""Write Excel workbooks under DATA_ROOT/exports for user download."""
-
+"""Create XLSX workbooks and save them through the common verified writer."""
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
-from urllib.parse import quote
-
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
-from ..config import DATA_ROOT
-from ..document_tool import resolve_under_data
+from ...config import DATA_ROOT
+from .export import export_dest, make_download_url
 
-_SAFE_NAME_RE = re.compile(r"[^\w.\-а-яА-ЯёЁ]+", re.UNICODE)
 _SHEET_BAD = re.compile(r"[\[\]\*\/\\\?\:]")
 MAX_SHEETS = 20
 MAX_ROWS_PER_SHEET = 5000
 MAX_COLS = 64
-
-
-def _safe_filename(name: str) -> str:
-    raw = (name or "").strip().replace("\\", "/").split("/")[-1]
-    if not raw:
-        raw = "export.xlsx"
-    stem = Path(raw).stem or "export"
-    stem = _SAFE_NAME_RE.sub("_", stem).strip("._")[:80] or "export"
-    return f"{stem}.xlsx"
-
 
 def _safe_sheet_name(name: str, used: set[str]) -> str:
     base = _SHEET_BAD.sub("", (name or "").strip())[:31] or "Sheet"
@@ -49,23 +33,6 @@ def _cell_value(v: Any) -> Any:
     if isinstance(v, (bool, int, float)):
         return v
     return str(v)
-
-
-def export_dest(filename: str) -> Path:
-    """Свободное имя файла в exports/YYYY-MM-DD/."""
-    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    out_dir = DATA_ROOT / "exports" / day
-    out_dir.mkdir(parents=True, exist_ok=True)
-    dest = out_dir / _safe_filename(filename)
-    if dest.exists():
-        ts = datetime.now(timezone.utc).strftime("%H%M%S")
-        dest = out_dir / f"{dest.stem}_{ts}.xlsx"
-    return dest
-
-
-def make_download_url(rel: str, public_base_url: str = "") -> str:
-    base = (public_base_url or "").rstrip("/")
-    return f"{base}/download_file?path={quote(rel)}"
 
 
 def write_excel(
@@ -142,12 +109,17 @@ def write_excel(
         # no sheets written somehow
         raise ValueError("No sheets written")
 
-    wb.save(dest)
+    from .write import save_verified
+    try:
+        verification = save_verified(wb, dest)
+    finally:
+        wb.close()
     rel = str(dest.relative_to(DATA_ROOT)).replace("\\", "/")
     download_url = make_download_url(rel, public_base_url)
 
     return {
         "ok": True,
+        "verification": verification,
         "path": rel,
         "filename": dest.name,
         "size_bytes": dest.stat().st_size,
@@ -158,17 +130,3 @@ def write_excel(
             "[скачать Excel](url) so they can open it in the browser."
         ),
     }
-
-
-def resolve_export_file(relative_path: str) -> Path:
-    """Resolve path under DATA_ROOT; must be a file inside exports/."""
-    path = resolve_under_data(relative_path)
-    if not path.exists() or not path.is_file():
-        raise FileNotFoundError(f"File not found: {relative_path}")
-    try:
-        path.relative_to((DATA_ROOT / "exports").resolve())
-    except ValueError as e:
-        raise PermissionError("Only files under exports/ can be downloaded") from e
-    if path.suffix.lower() not in {".xlsx", ".xls", ".csv"}:
-        raise PermissionError("Only spreadsheet files can be downloaded")
-    return path

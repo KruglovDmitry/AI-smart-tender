@@ -4,14 +4,15 @@ import threading
 import pytest
 from openpyxl import Workbook, load_workbook
 
-from app import table_tool as tables
-from app.table_tool import jobs
-from app import document_tool, excel_tool
+from app.document_tool.spreadsheets import operations as tables
+from app.document_tool.spreadsheets import jobs
+from app import document_tool
+from app.document_tool.spreadsheets import create, export
 
 
 @pytest.fixture
 def setup_job(tmp_path, monkeypatch):
-    for module in (tables, jobs, document_tool, excel_tool):
+    for module in (tables, jobs, document_tool, create, export):
         monkeypatch.setattr(module, 'DATA_ROOT', tmp_path)
     monkeypatch.setattr(jobs, '_jobs', {})
     monkeypatch.setattr(jobs, '_llm_config', lambda: ('url', 'key', 'model'))
@@ -95,3 +96,16 @@ def test_atomic_save_preserves_previous_file_on_failure(setup_job, monkeypatch):
         tables.fill_table('exports/input.xlsx', [{'row': 2, 'values': {'B': 'new'}}], header_row=1)
     assert src.read_bytes() == before
     assert not list(src.parent.glob('.table-*'))
+
+
+@pytest.mark.parametrize('existing',['human','=1+1'])
+def test_mixed_row_keeps_existing_outputs_and_counts_completion(setup_job,monkeypatch,existing):
+    root,src=setup_job
+    wb=load_workbook(src);wb.active['B2']=existing;wb.save(src);wb.close()
+    monkeypatch.setattr(jobs,'_run_batch',lambda j,batch,*a:(
+        [{'row':batch[0]['row'],'values':{'B':'generated','C':'valid'},'confidence':'high'}],{}))
+    out=start()
+    assert out['state']=='done' and out['rows_filled']==2
+    result=load_workbook(root/out['output'])
+    assert result.active['B2'].value==existing and result.active['C2'].value=='valid'
+    assert result.active['B3'].value=='generated';result.close()

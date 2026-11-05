@@ -8,9 +8,6 @@ from __future__ import annotations
 
 import re
 import shutil
-import os
-import tempfile
-from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,78 +16,18 @@ from openpyxl.comments import Comment
 from openpyxl.styles import PatternFill
 from openpyxl.utils import column_index_from_string, get_column_letter
 
-from ..config import DATA_ROOT
-from ..document_tool import resolve_under_data
-from ..excel_tool import export_dest, make_download_url
+from ...config import DATA_ROOT
+from .. import resolve_under_data
+from .export import export_dest, make_download_url
 
 MAX_QUERY_ROWS = 200
 MAX_FILL_UPDATES = 2000
 MARK_FILL = PatternFill("solid", fgColor="FFF2CC")  # бледно-жёлтый: «проверить руками»
-HEADER_SCAN_ROWS = 15
 
 
-def _val(v: Any) -> Any:
-    if isinstance(v, (datetime, date)):
-        return v.isoformat()
-    if isinstance(v, float) and v.is_integer():
-        return int(v)
-    return v
-
-
-def _blank(v: Any) -> bool:
-    return v is None or (isinstance(v, str) and not v.strip())
-
-
-class Sheet:
-    """Лист как сетка значений (строки с 1), загруженная один раз."""
-
-    def __init__(self, name: str, rows: list[list[Any]]):
-        self.name = name
-        self.rows = rows
-        self.width = max((len(r) for r in rows), default=0)
-
-    def cell(self, r: int, c: int) -> Any:
-        row = self.rows[r - 1] if 0 < r <= len(self.rows) else []
-        return row[c - 1] if 0 < c <= len(row) else None
-
-    def detect_header(self) -> int:
-        """Первая строка, где заполнено больше половины колонок, и в основном текстом."""
-        best, best_score = 1, -1.0
-        for r in range(1, min(len(self.rows), HEADER_SCAN_ROWS) + 1):
-            vals = [v for v in self.rows[r - 1] if not _blank(v)]
-            if not vals:
-                continue
-            texts = sum(isinstance(v, str) and not re.fullmatch(r"[\d\s.,-]+", v) for v in vals)
-            score = len(vals) / max(1, self.width) + texts / len(vals)
-            if score > best_score + 0.25:
-                best, best_score = r, score
-        return best
-
-
-def _load(path: Path) -> dict[str, Sheet]:
-    ext = path.suffix.lower()
-    if ext in {".xlsx", ".xlsm"}:
-        wb = load_workbook(path, read_only=True, data_only=True)
-        try:
-            return {ws.title: Sheet(ws.title, [list(map(_val, r)) for r in ws.iter_rows(values_only=True)]) for ws in wb.worksheets}
-        finally:
-            wb.close()
-    import pandas as pd
-
-    if ext == ".csv":
-        from ..document_tool.extract import _detect_encoding
-
-        df = pd.read_csv(path, header=None, sep=None, engine="python", encoding=_detect_encoding(path), dtype=object)
-        frames = {"csv": df}
-    elif ext == ".xls":
-        frames = pd.read_excel(path, sheet_name=None, header=None, dtype=object, engine="xlrd")
-    else:
-        raise ValueError(f"Not a table file: {ext} (use .xlsx, .xls, .csv)")
-    out = {}
-    for name, df in frames.items():
-        rows = [[None if (isinstance(v, float) and v != v) else _val(v) for v in r] for r in df.itertuples(index=False)]
-        out[str(name)] = Sheet(str(name), rows)
-    return out
+# One reader shared with plain file extraction and the upload loader.
+from .read import Sheet, load as _load, value as _val, blank as _blank
+from .write import save_verified
 
 
 def _pick_sheet(sheets: dict[str, Sheet], sheet: str | None) -> Sheet:
@@ -150,7 +87,7 @@ def describe_table(path: str, sheet: str | None = None, header_row: int | None =
             if not vals and not heads[c - 1]:
                 continue
             distinct = list(dict.fromkeys(map(str, vals)))
-            col = {"column": get_column_letter(c), "header": heads[c - 1], "filled": len(vals)}
+            col = {"column": get_column_letter(c), "header": heads[c - 1], "filled": len(vals) + sum(_blank(sh.cell(r,c)) for r,fc in sh.formulas if fc == c)}
             if 0 < len(distinct) <= 12:
                 col["values"] = distinct
             else:
@@ -167,6 +104,9 @@ def describe_table(path: str, sheet: str | None = None, header_row: int | None =
                 "rows_below_header_first": [
                     {"row": hr + i, "values": [_val(v) for v in r[:30]]} for i, r in enumerate(data[: min(sample_rows, 10)], 1)
                 ],
+                "formula_cells": len(sh.formulas),
+                "formula_cache_missing": sum(_blank(sh.rows[r-1][c-1]) for r,c in sh.formulas),
+                "warnings": sh.warnings,
                 "data_rows": len(data),
                 "columns": cols,
             }
@@ -226,9 +166,10 @@ def query_table(
     offset: int = 0,
     limit: int = 50,
     distinct: str | None = None,
+    read_mode: str = "values",
 ) -> dict[str, Any]:
     file_path = resolve_under_data(path)
-    sh = _pick_sheet(_load(file_path), sheet)
+    sh = _pick_sheet(_load(file_path, read_mode), sheet)
     hr = header_row or sh.detect_header()
     conds = []
     for f in filters or []:
@@ -238,7 +179,7 @@ def query_table(
         conds.append((_resolve_column(sh, hr, f["column"]), op, f.get("value")))
     matched = [
         r for r in range(max(hr + 1, data_start_row or 0), len(sh.rows) + 1)
-        if any(not _blank(v) for v in sh.rows[r - 1]) and all(_match(sh.cell(r, c), op, t) for c, op, t in conds)
+        if sh.row_has_data(r) and all(_match(sh.formulas.get((r,c), sh.cell(r,c)) if op in {"empty", "not_empty"} else sh.cell(r,c), op, t) for c, op, t in conds)
     ]
     if distinct:
         c = _resolve_column(sh, hr, distinct)
@@ -249,6 +190,7 @@ def query_table(
         top = sorted(counts.items(), key=lambda kv: -kv[1])
         return {
             "sheet": sh.name, "column": _col_label(sh, hr, c), "matched_rows": len(matched),
+            "read_mode": read_mode, "warnings": sh.warnings,
             "distinct": len(top), "values": [{"value": k, "count": n} for k, n in top[:MAX_QUERY_ROWS]],
         }
     cols = [_resolve_column(sh, hr, c) for c in columns] if columns else [
@@ -258,6 +200,13 @@ def query_table(
     page = matched[offset : offset + limit]
     return {
         "sheet": sh.name,
+        "read_mode": read_mode,
+        "warnings": sh.warnings,
+        "formula_cells": [{"cell": f"{get_column_letter(c)}{r}", "cache_missing": _blank(sh.rows[r-1][c-1]),
+                           **({"formula":sh.formulas[r,c],"saved_value":sh.rows[r-1][c-1]} if read_mode!='values' else {})}
+                          for r in page for c in cols if (r,c) in sh.formulas],
+        "raw_numeric_cells": [{"cell": f"{get_column_letter(c)}{r}", "raw_value": sh.raw[r,c]}
+                              for r in page for c in cols if (r,c) in sh.raw],
         "header_row": hr,
         "columns": [_col_label(sh, hr, c) for c in cols],
         "matched_rows": len(matched),
@@ -277,6 +226,8 @@ def fill_table(
     allowed_values: dict[str, list[str]] | None = None,
     output: str | None = None,
     public_base_url: str = "",
+    overwrite_existing: bool = False,
+    replace_formulas: bool = False,
 ) -> dict[str, Any]:
     """Записать значения в копию .xlsx (или продолжить уже созданную копию в exports/).
 
@@ -288,12 +239,16 @@ def fill_table(
     if len(updates) > MAX_FILL_UPDATES:
         raise ValueError(f"Too many updates in one call (max {MAX_FILL_UPDATES})")
     src = resolve_under_data(path)
-    if src.suffix.lower() not in {".xlsx", ".xlsm"}:
-        raise ValueError("fill_table writes .xlsx/.xlsm only; convert .xls/.csv first")
+    from ..sniff import detect_extension
+    if src.suffix.lower() == ".xlsm" or detect_extension(src) == ".xlsm":
+        raise ValueError("XLSM editing is disabled to preserve VBA; use an XLSX copy without macros")
+    if detect_extension(src) != ".xlsx":
+        raise ValueError("fill_table writes XLSX only; convert XLS/CSV first")
     exports = (DATA_ROOT / "exports").resolve()
     if output:
         dest = resolve_under_data(output)
         dest.relative_to(exports)  # писать можно только в exports/
+        if dest.suffix.lower() != '.xlsx': raise ValueError('Output must be XLSX')
         if not dest.exists():
             shutil.copy2(src, dest)
     elif src.resolve().is_relative_to(exports):
@@ -315,6 +270,8 @@ def fill_table(
     for col, vals in (allowed_values or {}).items():
         allowed[_resolve_column(grid, hr, col)] = {str(v).strip().lower() for v in vals}
 
+    if dest.suffix.lower() != '.xlsx' or detect_extension(dest) != '.xlsx':
+        raise ValueError('Output must be a non-macro XLSX')
     wb = load_workbook(dest)
     ws = wb[grid.name]
     written, problems = 0, []
@@ -346,7 +303,21 @@ def fill_table(
                 if r <= hr:
                     problems.append({"update": i, "row": r, "error": "row is in the header area"})
                     continue
-                cell = ws.cell(row=r, column=c, value=value)
+                if r > 1048576 or not 1 <= c <= 16384:
+                    problems.append({'update':i,'row':r,'column':ref,'error':'cell outside Excel bounds'})
+                    continue
+                cell = ws.cell(row=r, column=c)
+                from openpyxl.cell.cell import MergedCell
+                if isinstance(cell, MergedCell):
+                    problems.append({'update':i,'row':r,'column':ref,'error':'merged cell; write the top-left anchor'})
+                    continue
+                if cell.data_type == 'f' and not replace_formulas:
+                    problems.append({'update':i,'row':r,'column':ref,'error':'formula protected; set replace_formulas=true explicitly'})
+                    continue
+                if not _blank(cell.value) and not overwrite_existing:
+                    problems.append({'update':i,'row':r,'column':ref,'error':'existing value protected; set overwrite_existing=true explicitly'})
+                    continue
+                cell.value = value
                 written += 1
                 written_rows.setdefault(r, set()).add(get_column_letter(c))
                 if mark:
@@ -354,19 +325,14 @@ def fill_table(
                     if first_cell:
                         cell.comment = Comment(mark[:500], "AI Smart Tender")
             first_cell = False
-    # Replace only after the complete workbook is safely serialized.
-    fd, temporary = tempfile.mkstemp(prefix=".table-", suffix=dest.suffix, dir=dest.parent)
-    os.close(fd)
     try:
-        wb.save(temporary)
-        wb.close()
-        os.replace(temporary, dest)
+        verification = save_verified(wb, dest) if written else {"reopened": False, "saved": False, "warnings": ["no_cells_written"]}
     finally:
         wb.close()
-        Path(temporary).unlink(missing_ok=True)
     rel = str(dest.relative_to(DATA_ROOT)).replace("\\", "/")
     return {
         "ok": not problems,
+        "verification": verification,
         "path": rel,
         "cells_written": written,
         "written_rows": {str(r): sorted(cols) for r, cols in written_rows.items()},

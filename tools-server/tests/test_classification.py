@@ -1,6 +1,6 @@
 import json
 
-from app.table_tool import classification as c, jobs
+from app.document_tool.spreadsheets import classification as c, jobs
 
 
 def test_official_snapshot_has_specific_relay_types_and_preserves_provenance():

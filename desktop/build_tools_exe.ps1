@@ -27,7 +27,7 @@ foreach ($sub in @("tenders", "catalogs", "uploads", "exports")) {
 }
 
 # Модели OCR скачиваются в пакет rapidocr при первом создании движка; --collect-all rapidocr кладёт их в exe.
-& $Py -c "import sys; sys.path.insert(0, r'$ToolsSrc'); from app.doc_index import ocr; assert ocr.available(), ocr._unavailable"
+& $Py -c "import sys; sys.path.insert(0, r'$ToolsSrc'); from app.document_tool.pdf import ocr; assert ocr.available(), ocr._unavailable"
 if ($LASTEXITCODE -ne 0) { Write-Error "OCR models are not available (rapidocr download failed?)"; exit 1 }
 $env:TOOLS_HOST = "127.0.0.1"
 $env:TOOLS_PORT = "18000"
@@ -41,6 +41,7 @@ Invoke-ProtectedPyInstaller $Py "ToolsServer" $Out $Work @("app", "smart_license
   "--console",
   "--paths", $ToolsSrc,
   "--add-data", ((Join-Path $ToolsSrc "app\reference_data") + ";app\reference_data"),
+  "--add-data", ((Join-Path $ToolsSrc "app\document_tool\pdf\SKILL.md") + ";app\document_tool\pdf"),
   "--paths", $Licensing,
   "--collect-all", "uvicorn",
   "--collect-all", "starlette",
@@ -61,13 +62,20 @@ Invoke-ProtectedPyInstaller $Py "ToolsServer" $Out $Work @("app", "smart_license
   "--hidden-import", "app.config",
   "--hidden-import", "app.document_tool",
   "--hidden-import", "app.document_tool.extract",
+  "--hidden-import", "app.document_tool.skills",
+  "--hidden-import", "app.document_tool.pdf",
+  "--hidden-import", "app.document_tool.pdf.read",
+  "--hidden-import", "app.document_tool.pdf.ocr",
+  "--hidden-import", "app.document_tool.pdf.vision",
+  "--hidden-import", "app.document_tool.pdf.workflow",
+  "--hidden-import", "app.document_tool.pdf.reader",
   "--hidden-import", "app.excel_tool",
   "--hidden-import", "app.web_tool",
-  "--hidden-import", "app.doc_index",
-  "--hidden-import", "app.doc_index.pdf",
-  "--hidden-import", "app.doc_index.ocr",
-  "--hidden-import", "app.doc_index.vision",
-  "--hidden-import", "app.doc_index.owui_loader",
+  "--hidden-import", "app.document_index",
+  "--hidden-import", "app.document_index.reading",
+  "--hidden-import", "app.integrations",
+  "--hidden-import", "app.integrations.open_webui",
+  "--hidden-import", "app.integrations.open_webui.loader",
   "--hidden-import", "app.table_tool",
   "--hidden-import", "app.table_tool.jobs",
   "--hidden-import", "app.table_tool.evidence",

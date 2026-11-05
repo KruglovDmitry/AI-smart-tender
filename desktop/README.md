@@ -65,6 +65,22 @@ powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1 -Installer
 
 Версии: [`versions.json`](versions.json).
 
+## Пересборка после правок
+
+Скрипт установщика ([`installer/setup.iss`](installer/setup.iss)) менять не нужно: он копирует уже собранные папки. После правок в коде сервиса пересобирают exe и заново пакуют setup.
+
+Только tools-server:
+
+```powershell
+cd desktop
+powershell -ExecutionPolicy Bypass -File .\build_tools_exe.ps1
+powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1 -SkipServices -Installer
+```
+
+Для агента или дашборда — `build_agent_exe.ps1` / `build_dashboard_exe.ps1`, затем тот же `-SkipServices -Installer`. Без `-SkipServices` пересоберутся все сервисы, это дольше.
+
+Новый файл заказчику: `..\AI-smart-tender-build\releases\AI-Smart-Tender-Setup-<версия>.exe`. Ставится поверх предыдущей версии, данные в `%LOCALAPPDATA%\AISmartTender` не затираются.
+
 ## Окно
 
 При запуске сразу открывается окно загрузки со статусом каждого сервиса. Главное окно — когда готов Open WebUI;

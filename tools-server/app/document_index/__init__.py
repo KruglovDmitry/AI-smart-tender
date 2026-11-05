@@ -10,6 +10,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import tempfile
 import re
 import threading
 from pathlib import Path
@@ -17,11 +19,11 @@ from typing import Any
 
 from ..config import DATA_ROOT
 from ..document_tool import resolve_under_data
-from . import ocr, pdf
+from ..document_tool.pdf import ocr, read as pdf
 
 log = logging.getLogger(__name__)
 
-INDEX_VERSION = 2
+INDEX_VERSION = 4
 INDEX_ROOT = DATA_ROOT / ".index"
 # Не-PDF документы режем на условные страницы такого размера, чтобы поиск и чтение работали одинаково.
 PSEUDO_PAGE_CHARS = 4000
@@ -45,54 +47,73 @@ def _cache_dir(rel: str) -> Path:
 
 
 class DocIndex:
-    def __init__(self, path: Path, cache: Path, meta: dict[str, Any], pages: list[dict[str, Any]]):
+    def __init__(self, path: Path, cache: Path, meta: dict[str, Any], pages: list[dict[str, Any]], rel: str | None = None):
         self.path = path
-        self.rel = _rel(path)
+        self.rel = rel if rel is not None else _rel(path)
         self.cache = cache
         self.meta = meta
         self.pages = pages
+        self._pdf_reader = None
+        if self.is_pdf:
+            from ..document_tool.pdf.reader import PdfReader
+            self._pdf_reader = PdfReader(path, pages, self.cached)
 
     @property
     def is_pdf(self) -> bool:
-        return self.path.suffix.lower() == ".pdf"
+        return self.meta.get("file_type", self.path.suffix.lower()) == ".pdf"
 
     def page(self, n: int) -> dict[str, Any]:
         if not 1 <= n <= len(self.pages):
             raise ValueError(f"Page {n} out of range 1..{len(self.pages)}")
         return self.pages[n - 1]
 
+    def cached(self, category: str, page: int, producer=None, *, accept=None, cache_if=None):
+        """One atomic page cache for all adapters. Categories are internal, not API input."""
+        self.page(page)
+        f = self.cache / category / f"{page}.json"
+        with _lock_for(str(f)):
+            if f.exists():
+                try:
+                    value = json.loads(f.read_text(encoding="utf-8"))
+                    if accept is None or accept(value):
+                        return value
+                except (ValueError, OSError):
+                    pass  # rebuild an interrupted or corrupt cache entry
+            if producer is None:
+                return None
+            value = producer()
+            if cache_if is None or cache_if(value):
+                f.parent.mkdir(parents=True, exist_ok=True)
+                fd, tmp = tempfile.mkstemp(dir=f.parent, suffix=".json")
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                        json.dump(value, stream, ensure_ascii=False)
+                    os.replace(tmp, f)
+                finally:
+                    Path(tmp).unlink(missing_ok=True)
+            return value
+
     def needs_ocr(self, n: int) -> bool:
-        p = self.page(n)
-        return self.is_pdf and (p["broken"] or (p["empty"] and p["images"] > 0))
+        return bool(self._pdf_reader and self._pdf_reader.needs_ocr(n))
 
     def ocr_file(self, n: int) -> Path:
-        return self.cache / "ocr" / f"{n}.txt"
+        return self.cache / "ocr" / f"{n}.json"
 
     def text(self, n: int, run_ocr: bool = True) -> tuple[str, str]:
-        """Текст страницы и его источник: text | ocr | ocr_pending (битая страница, OCR ещё не сделан)."""
-        p = self.page(n)
-        if not self.needs_ocr(n):
-            return p["text"], "text"
-        f = self.ocr_file(n)
-        if f.exists():
-            return f.read_text(encoding="utf-8"), "ocr"
-        if not run_ocr:
-            return ("" if p["broken"] else p["text"]), "ocr_pending"
-        text = ocr.page_text(self.path, n)
-        f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(text, encoding="utf-8")
-        return text, "ocr"
+        if self._pdf_reader:
+            return self._pdf_reader.text(n, run_ocr)
+        return self.page(n)["text"], "text"
+
+    def read_page(self, n: int, *, run_ocr: bool = True, include_tables: bool = True,
+                  include_structure: bool = True, tables_on_ocr: bool = True) -> dict:
+        if self._pdf_reader:
+            return self._pdf_reader.page(n, run_ocr=run_ocr, include_tables=include_tables,
+                include_structure=include_structure, tables_on_ocr=tables_on_ocr)
+        text, source = self.text(n, run_ocr)
+        return {"page": n, "text": text, "source": source, "tables": [], "structure": {}, "warnings": []}
 
     def tables(self, n: int) -> list[str]:
-        if not self.is_pdf:
-            return []
-        f = self.cache / "tables" / f"{n}.json"
-        if f.exists():
-            return json.loads(f.read_text(encoding="utf-8"))
-        md = pdf.page_tables(self.path, n)
-        f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(json.dumps(md, ensure_ascii=False), encoding="utf-8")
-        return md
+        return self.read_page(n, run_ocr=False, include_structure=False)["tables"]
 
     def ocr_pending(self) -> list[int]:
         return [i for i in range(1, len(self.pages) + 1) if self.needs_ocr(i) and not self.ocr_file(i).exists()]
@@ -163,7 +184,10 @@ def get_index(path_str: str) -> DocIndex:
     rel = _rel(path)
     cache = _cache_dir(rel)
     st = path.stat()
-    stamp = {"version": INDEX_VERSION, "path": rel, "size": st.st_size, "mtime": int(st.st_mtime)}
+    from ..document_tool.sniff import detect_extension
+
+    stamp = {"version": INDEX_VERSION, "path": rel, "size": st.st_size, "mtime": st.st_mtime_ns,
+             "file_type": detect_extension(path)}
     with _lock_for(rel):
         meta_f, pages_f = cache / "meta.json", cache / "pages.json"
         if meta_f.exists() and pages_f.exists():
@@ -239,6 +263,7 @@ def document_info(path: str, page_from: int = 1, page_to: int = 0) -> dict[str, 
         "image_only_pages": [i for i, p in enumerate(idx.pages, 1) if p["empty"] and p["images"]],
         "ocr_pending": len(idx.ocr_pending()),
         "outline": rows,
+        **({"skill_hint": "Load document_skill(file_type=pdf) once for PDF reading instructions."} if idx.is_pdf else {}),
         "note": "Use search_document to find pages, then read_pages for their text and tables.",
     }
 
@@ -415,12 +440,12 @@ def read_pages(
         raise ValueError(f"Too many pages ({len(nums)}); request at most {max_pages} per call")
     out, used, truncated = [], 0, False
     for n in nums:
-        text, src = idx.text(n, run_ocr=True)
-        item: dict[str, Any] = {"page": n, "source": src, "text": text}
-        if include_tables and src == "text":
-            tables = idx.tables(n)
-            if tables:
-                item["tables"] = tables
+        page = idx.read_page(n, include_tables=include_tables, include_structure=False, tables_on_ocr=False)
+        item: dict[str, Any] = {"page": n, "source": page["source"], "text": page["text"]}
+        if page["tables"]:
+            item["tables"] = page["tables"]
+        if page["warnings"]:
+            item["warnings"] = page["warnings"]
         size = len(item["text"]) + sum(len(t) for t in item.get("tables", []))
         if used + size > max_chars:
             item["text"] = item["text"][: max(0, max_chars - used)] + "\n[... truncated ...]"

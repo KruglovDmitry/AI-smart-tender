@@ -196,7 +196,7 @@ def start_job(
     public_base_url: str = "",
     quality_mode: str = "balanced",
 ) -> dict[str, Any]:
-    from .. import doc_index
+    from .. import document_index
 
     if quality_mode not in {"balanced", "strict"}:
         raise ValueError("quality_mode must be balanced or strict")
@@ -250,7 +250,7 @@ def start_job(
         if r in explicit or (filled and not explicit and len(examples) < MAX_EXAMPLES):
             examples.append({"input": item["input"], "output": {col: grid.cell(r, c) for col, c in out_idx.items()}})
             if not _blank(item["lookup"]):
-                example_keys.append(doc_index.normalize_code(str(item["lookup"])))
+                example_keys.append(document_index.normalize_code(str(item["lookup"])))
             continue
         if filled and skip_filled:
             continue

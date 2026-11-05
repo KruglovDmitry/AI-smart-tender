@@ -17,7 +17,7 @@ SKIP_EXT = {".json", ".gitkeep", ".log", ".png", ".jpg", ".sqlite3"}
 
 def scan_one(path_str: str) -> dict:
     import extractors
-    from app.doc_index import pdf
+    from app.document_tool.pdf import read as pdf
 
     path = Path(path_str)
     real = sniff(path)

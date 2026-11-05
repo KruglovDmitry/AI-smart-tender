@@ -19,9 +19,9 @@ def research(document, keys, chat, parse, mode="strict"):
     rounds = 1 if mode == "balanced" else MAX_ROUNDS
     context_limit = 45000 if mode == "balanced" else MAX_CONTEXT
     page_limit = 10 if mode == "balanced" else MAX_PAGES
-    from .. import doc_index
+    from .. import document_index
 
-    idx = doc_index.get_index(document)
+    idx = document_index.get_index(document)
     searches, pages, trace = [], {}, []
     used = 0
 
@@ -30,7 +30,7 @@ def research(document, keys, chat, parse, mode="strict"):
         if used >= MAX_REQUESTS:
             return {"error": "research request limit"}
         used += 1
-        result = doc_index.search_document(document, str(query)[:200], max_results=8, mode=mode)
+        result = document_index.search_document(document, str(query)[:200], max_results=8, mode=mode)
         searches.append(result)
         trace.append({"tool": "search", "query": query, "mode": mode})
         return result

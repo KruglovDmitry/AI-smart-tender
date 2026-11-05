@@ -31,13 +31,13 @@ def test_approved_value_keeps_source_quote():
 
 
 def test_research_can_escape_accessory_page(monkeypatch):
-    from app import doc_index
+    from app import document_index
     class Index:
         pages = [1, 2]
         def text(self, n, **kwargs):
             return ['Accessory socket compatible with X123', 'Product X123 order code: 5V DC'][n-1], 'text'
-    monkeypatch.setattr(doc_index, 'get_index', lambda _: Index())
-    monkeypatch.setattr(doc_index, 'search_document', lambda *a, **k: {'results': [{'page': 1}]})
+    monkeypatch.setattr(document_index, 'get_index', lambda _: Index())
+    monkeypatch.setattr(document_index, 'search_document', lambda *a, **k: {'results': [{'page': 1}]})
     answers = iter(['{"requests":[{"tool":"read","pages":[2]}]}', '{"requests":[],"ready":true}'])
     pages, trace = research('catalog.pdf', ['X123'], lambda _: next(answers), json.loads)
     assert '5V DC' in pages[2] and trace[-1]['pages'] == [2]

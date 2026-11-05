@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx
 
-from . import get_index, pdf
+from . import read as pdf
 
 VL_TIMEOUT_SEC = float(os.getenv("TOOLS_VL_TIMEOUT_SEC", "120"))
 VL_DPI = int(os.getenv("TOOLS_VL_DPI", "150"))
@@ -36,18 +36,28 @@ def _vl_config() -> tuple[str, str, str]:
     return base.rstrip("/"), key, model
 
 
-def view_page(path: str, page: int, question: str) -> dict[str, Any]:
+def view_page(path: str, page: int, question: str, bbox: list[float] | None = None, detail: str = "auto") -> dict[str, Any]:
+    from ...document_index import get_index
+
     idx = get_index(path)
     if not idx.is_pdf:
         raise ValueError("view_page works for PDF files only")
     idx.page(page)
     q = (question or "").strip() or "Опиши, что изображено на странице, со всеми подписями и значениями."
-    f = idx.cache / "view" / f"{page}_{hashlib.sha1(q.encode('utf-8')).hexdigest()[:12]}.txt"
-    if f.exists():
-        return {"path": idx.rel, "page": page, "question": q, "answer": f.read_text(encoding="utf-8"), "cached": True}
-    text, _ = idx.text(page, run_ocr=False)
-    png = pdf.render_png(idx.path, page, dpi=VL_DPI)
+    if detail not in {"auto", "low", "high"}:
+        raise ValueError("detail must be auto, low or high")
+    dpi = {"auto": VL_DPI, "low": 100, "high": 250}[detail]
     base, key, model = _vl_config()
+    import json
+    identity = json.dumps([q, bbox, detail, dpi, base, model, PROMPT], ensure_ascii=False)
+    f = idx.cache / "view" / f"{page}_{hashlib.sha256(identity.encode()).hexdigest()[:20]}.txt"
+    if f.exists():
+        return {"path": idx.rel, "page": page, "bbox": bbox, "detail": detail,
+                "question": q, "answer": f.read_text(encoding="utf-8"), "model": model, "cached": True}
+    text, _ = idx.text(page, run_ocr=False)
+    png = pdf.render_png(idx.path, page, dpi=dpi, bbox=bbox)
+    if bbox is not None:
+        q = "Изображение — выделенная область страницы; отвечай только по ней. " + q
     body = {
         "model": model,
         "messages": [
@@ -60,6 +70,7 @@ def view_page(path: str, page: int, question: str) -> dict[str, Any]:
             }
         ],
         "temperature": 0,
+        "max_tokens": 4096,
     }
     r = httpx.post(
         f"{base}/chat/completions",
@@ -68,7 +79,9 @@ def view_page(path: str, page: int, question: str) -> dict[str, Any]:
         timeout=httpx.Timeout(VL_TIMEOUT_SEC, connect=10),
     )
     r.raise_for_status()
-    answer = r.json()["choices"][0]["message"]["content"].strip()
+    answer = (r.json()["choices"][0]["message"].get("content") or "").strip()
+    if not answer:
+        raise RuntimeError("Vision returned an empty answer")
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text(answer, encoding="utf-8")
-    return {"path": idx.rel, "page": page, "question": q, "answer": answer, "model": model, "cached": False}
+    return {"path": idx.rel, "page": page, "bbox": bbox, "detail": detail, "question": q, "answer": answer, "model": model, "cached": False, "usage": r.json().get("usage", {})}

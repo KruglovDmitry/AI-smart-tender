@@ -185,9 +185,9 @@ def extract_file(path: Path) -> dict[str, Any]:
 
 def _extract_by_ext(path: Path, ext: str) -> str:
     if ext == ".pdf":
-        from pypdf import PdfReader
+        from .pdf.read import extract_text
 
-        return "\n\n".join(p.extract_text() or "" for p in PdfReader(str(path)).pages)
+        return extract_text(path)
 
     if ext == ".docx":
         import docx2txt

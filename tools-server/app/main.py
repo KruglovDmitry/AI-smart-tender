@@ -19,7 +19,7 @@ def _force_utf8_stdio() -> None:
 
 _force_utf8_stdio()
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,7 +27,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from . import config
-from . import doc_index, table_tool
+from . import document_index, table_tool
 from .table_tool import jobs as table_jobs
 from .document_tool import list_directory, read_document, read_folder_documents
 from .excel_tool import resolve_export_file, write_excel
@@ -166,8 +166,24 @@ class ReadPagesBody(BaseModel):
     max_chars: int = Field(60000, description="Max characters in the response.")
 
 
+class ReadPdfBody(BaseModel):
+    path: str = Field(..., description="PDF available under server DATA_ROOT; not a chat attachment.")
+    mode: Literal["auto", "full", "index"] = "auto"
+    pages: str | None = Field(None, description="Optional selected pages, e.g. 3,8-10. Otherwise use start_page.")
+    start_page: int = Field(1, ge=1)
+    text_offset: int = Field(0, ge=0, description="Resume offset from next_cursor; keep all other options unchanged.")
+    max_pages: int = Field(8, ge=1, le=10)
+    max_chars: int = Field(40000, ge=1, le=120000)
+    include_tables: bool = True
+    include_layout: bool = True
+    visual_mode: Literal["off", "auto", "required"] = "auto"
+    max_visual_pages: int = Field(2, ge=0, le=10, description="Maximum vision attempts per call; 0 disables attempts.")
+
+
 class ViewPageBody(BaseModel):
     path: str = Field(..., description="Relative path under data root to a PDF.")
+    bbox: list[float] | None = Field(None, min_length=4, max_length=4, description="Optional [x0,y0,x1,y1] in PDF points from read_pdf layout, inside page bounds.")
+    detail: Literal["auto", "low", "high"] = "auto"
     page: int = Field(..., description="Page number.")
     question: str = Field(
         "",
@@ -360,7 +376,7 @@ def api_read_folder(body: ReadFolderBody):
     ),
 )
 def api_document_info(body: DocumentInfoBody):
-    return _http_errors(doc_index.document_info, body.path, body.page_from, body.page_to)
+    return _http_errors(document_index.document_info, body.path, body.page_from, body.page_to)
 
 
 @app.post(
@@ -373,7 +389,7 @@ def api_document_info(body: DocumentInfoBody):
     ),
 )
 def api_search_document(body: SearchDocumentBody):
-    return _http_errors(doc_index.search_document, body.path, body.query, body.max_results, body.mode)
+    return _http_errors(document_index.search_document, body.path, body.query, body.max_results, body.mode)
 
 
 @app.post(
@@ -382,7 +398,38 @@ def api_search_document(body: SearchDocumentBody):
     description="Text and tables (Markdown) of chosen pages; broken-font or scanned pages are OCR-ed.",
 )
 def api_read_pages(body: ReadPagesBody):
-    return _http_errors(doc_index.read_pages, body.path, body.pages, body.include_tables, body.max_chars)
+    return _http_errors(document_index.read_pages, body.path, body.pages, body.include_tables, body.max_chars)
+
+
+@app.post(
+    "/read_pdf",
+    summary="Read a small PDF or navigate a large PDF with layout and optional vision",
+    description=(
+        "Use for server PDFs. Auto reads small documents or returns a bounded index for large ones. "
+        "For exhaustive reading use mode=full and follow next_cursor with unchanged options. "
+        "Returns page coverage, text/table content, layout coordinates and warnings. "
+        "visual_mode=auto calls the configured Qwen-VL-compatible endpoint on visual/scanned pages, within max_visual_pages. "
+        "Off disables vision. Use view_page for a specific page or layout bbox."
+    ),
+)
+def api_read_pdf(body: ReadPdfBody):
+    from .document_index.reading import read_pdf
+
+    return _http_errors(read_pdf, **body.model_dump())
+
+
+@app.get(
+    "/document_skill",
+    summary="Load instructions for a document format",
+    description=(
+        "Call once before working with a PDF through server tools. Returns the PDF reading skill. "
+        "Chat attachments stay with Open WebUI's existing processing; do not re-read them automatically."
+    ),
+)
+def api_document_skill(file_type: Literal["pdf"] = Query("pdf")):
+    from .document_tool.skills import document_skill
+
+    return _http_errors(document_skill, file_type)
 
 
 @app.put("/process", include_in_schema=False)
@@ -390,7 +437,7 @@ async def api_owui_process(request: Request):
     """Внешний загрузчик документов для «Знаний» Open WebUI. Не инструмент модели, поэтому скрыт из схемы."""
     from starlette.concurrency import run_in_threadpool
 
-    from .doc_index.owui_loader import process_upload
+    from .integrations.open_webui.loader import process_upload
 
     data = await request.body()
     if not data:
@@ -409,9 +456,9 @@ async def api_owui_process(request: Request):
     ),
 )
 def api_view_page(body: ViewPageBody):
-    from .doc_index import vision
+    from .document_tool.pdf import vision
 
-    return _http_errors(vision.view_page, body.path, body.page, body.question)
+    return _http_errors(vision.view_page, body.path, body.page, body.question, body.bbox, body.detail)
 
 
 @app.post(

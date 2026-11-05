@@ -80,12 +80,12 @@ def read_document(path: str, max_chars: int) -> dict[str, Any]:
 
     rel = str(file_path.relative_to(DATA_ROOT)).replace("\\", "/")
     ext = file_path.suffix.lower()
-    from .. import doc_index
+    from .. import document_index
 
-    if ext == ".pdf" or ext in doc_index.MARKITDOWN_EXTENSIONS:
+    if ext == ".pdf" or ext in document_index.MARKITDOWN_EXTENSIONS:
         # Тот же разбор, что у постраничного индекса: OCR сканов и битых шрифтов, таблицы DOCX в Markdown.
         # pypdf на скачанных тендерах отдавал пустыми 21 PDF из 95.
-        idx = doc_index.get_index(rel)
+        idx = document_index.get_index(rel)
         pages = [idx.text(n, run_ocr=True)[0] for n in range(1, len(idx.pages) + 1)]
         text = "\n\n".join(f"[стр. {n}]\n{t}" for n, t in enumerate(pages, 1)) if ext == ".pdf" else "\n\n".join(pages)
         result = {"path": str(file_path), "filename": file_path.name, "extension": ext, "pages": len(pages), "chars": len(text), "content": text}
@@ -169,8 +169,8 @@ def _outline(rel: str) -> dict[str, Any]:
 
         d = describe_table(rel)
         return {"path": rel, "sheets": [{"sheet": s["sheet"], "rows": s["data_rows"], "columns": [c["header"] or c["column"] for c in s["columns"]][:30]} for s in d["details"]]}
-    from .. import doc_index
+    from .. import document_index
 
-    info = doc_index.document_info(rel)
+    info = document_index.document_info(rel)
     titles = [f"{o['page']}: {o['title']}" for o in info["outline"] if o["title"]]
     return {"path": rel, "pages": info["pages"], "chars": info["chars"], "outline": titles[:40]}

@@ -10,7 +10,7 @@ import os
 import threading
 from pathlib import Path
 
-from . import pdf
+from . import read as pdf
 
 log = logging.getLogger(__name__)
 

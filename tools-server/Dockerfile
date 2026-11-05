@@ -14,7 +14,7 @@ COPY app ./app
 
 # Модели OCR (rapidocr, кириллица) скачиваются при первом создании движка — делаем это при сборке,
 # чтобы OCR работал и на сервере без интернета.
-RUN DATA_ROOT=/tmp/ocr-warmup python -c "from app.doc_index import ocr; assert ocr.available(), ocr._unavailable" \
+RUN DATA_ROOT=/tmp/ocr-warmup python -c "from app.document_tool.pdf import ocr; assert ocr.available(), ocr._unavailable" \
     && rm -rf /tmp/ocr-warmup
 
 ENV DATA_ROOT=/data

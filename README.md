@@ -19,6 +19,8 @@
 [`desktop/versions.json`](desktop/versions.json); `build-desktop.ps1` предупреждает, если теги в Docker-файлах отстали.
 Настройки «Знаний» (RAG) одинаковые: в desktop их выставляет `desktop/electron/main.js`, в Docker — `docker-compose.yml`.
 
+Desktop-установщик после правок в `tools-server` / `tender-agent` / `dashboard` не правят: пересобирают exe сервиса и `desktop/build-desktop.ps1 -SkipServices -Installer`. Подробнее: [desktop/README.md](desktop/README.md#пересборка-после-правок).
+
 ## Что получите
 
 - UI на `http://localhost:3000` (чат-модели через Connections в UI; Ollama не нужна)

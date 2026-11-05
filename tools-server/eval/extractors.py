@@ -15,17 +15,10 @@ import common  # noqa: F401  (sys.path, DATA_ROOT)
 
 
 def ours(path: Path, ocr: bool = True, tables: bool = True, name: str | None = None) -> list[dict]:
-    from app.doc_index import ocr as ocr_mod, owui_loader, pdf as pdf_mod
+    from app.integrations.open_webui import loader as owui_loader
 
-    saved = ocr_mod.available, pdf_mod.page_tables
-    if not ocr:
-        ocr_mod.available = lambda: False
-    if not tables:
-        pdf_mod.page_tables = lambda p, n: []
-    try:
-        docs = owui_loader.process_upload(path.read_bytes(), name or path.name)
-    finally:
-        ocr_mod.available, pdf_mod.page_tables = saved
+    docs = owui_loader.process_upload(path.read_bytes(), name or path.name,
+                                     use_ocr=ocr, include_tables=tables)
     return [{"text": d["page_content"], "meta": d["metadata"]} for d in docs if d["page_content"].strip()]
 
 

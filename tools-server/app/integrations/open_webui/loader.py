@@ -15,7 +15,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
 
-from . import _build_pages, ocr, pdf
+from ...document_index import _build_pages
+from ...document_tool.pdf import ocr, read as pdf
+import hashlib
 
 log = logging.getLogger(__name__)
 
@@ -36,8 +38,9 @@ def _codes_line(text: str) -> str:
     return ("\n\nКоды без разделителей: " + " ".join(codes[:200])) if codes else ""
 
 
-def process_upload(data: bytes, filename: str, content_type: str | None = None) -> list[dict[str, Any]]:
-    from ..document_tool.sniff import detect_extension, ensure_extension
+def process_upload(data: bytes, filename: str, content_type: str | None = None, *, use_ocr: bool = True, include_tables: bool = True) -> list[dict[str, Any]]:
+    from ...document_index import DocIndex, INDEX_ROOT, INDEX_VERSION
+    from ...document_tool.sniff import detect_extension, ensure_extension
 
     name = unquote(filename or "document")
     # Имя с площадки часто без расширения («I. Общие сведения») или с ложным — тип берём из байтов / Content-Type.
@@ -53,30 +56,30 @@ def process_upload(data: bytes, filename: str, content_type: str | None = None) 
             # Свой разбор упал (битый файл, ошибка библиотеки) — отдаём текст прежним простым способом.
             # Неподдерживаемый формат пробрасываем: Open WebUI тогда разберёт файл сам.
             log.warning("OWUI loader: page parsing failed for %s (%s), falling back to extract_file", name, e)
-            from ..document_tool.extract import extract_file
+            from ...document_tool.extract import extract_file
 
             pages = [pdf.page_record(extract_file(path)["content"], images=0)]
             backend = "extract_file"
         is_pdf = suffix == ".pdf" and backend != "extract_file"
+        digest = hashlib.sha256(data).hexdigest()
+        index = DocIndex(path, INDEX_ROOT / f"uploads-v{INDEX_VERSION}" / digest,
+                         {"file_type": ".pdf" if is_pdf else "", "backend": backend},
+                         pages, rel=f"uploads/{digest}")
         docs = []
         for n, p in enumerate(pages, 1):
-            text, source = p["text"], "text"
-            if is_pdf and (p["broken"] or (p["empty"] and p["images"])) and ocr.available():
-                try:
-                    text, source = ocr.page_text(path, n), "ocr"
-                except Exception as e:
-                    log.warning("OCR failed for %s p.%d: %s", name, n, e)
-                    text = "" if p["broken"] else text
-            if is_pdf and len(pages) <= TABLES_MAX_PAGES and source == "text":
-                try:
-                    tables = pdf.page_tables(path, n)
-                except Exception:
-                    tables = []
-                if tables:
-                    text += "\n\n" + "\n\n".join(tables)
+            # Upload policy stays text/OCR only; no Qwen-VL or automatic full-reader calls.
+            run_ocr = use_ocr and index.needs_ocr(n) and ocr.available()
+            page = index.read_page(n, run_ocr=run_ocr, include_structure=False,
+                include_tables=include_tables and is_pdf and len(pages) <= TABLES_MAX_PAGES,
+                tables_on_ocr=False)
+            text, source = page["text"], page["source"]
+            if page["tables"]:
+                text += "\n\n" + "\n\n".join(page["tables"])
             if not text.strip():
                 continue
             meta = {"name": name, "source": name, "total_pages": len(pages), "extraction": f"{backend}/{source}"}
+            if page["warnings"]:
+                meta["warnings"] = "; ".join(page["warnings"])
             if is_pdf:
                 meta.update(page=n - 1, page_label=str(n))  # как у PyPDFLoader: page с нуля, page_label с единицы
             else:

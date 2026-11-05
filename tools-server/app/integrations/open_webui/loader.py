@@ -63,7 +63,7 @@ def process_upload(data: bytes, filename: str, content_type: str | None = None, 
         is_pdf = suffix == ".pdf" and backend != "extract_file"
         digest = hashlib.sha256(data).hexdigest()
         index = DocIndex(path, INDEX_ROOT / f"uploads-v{INDEX_VERSION}" / digest,
-                         {"file_type": ".pdf" if is_pdf else "", "backend": backend},
+                         {"file_type": suffix if backend != "extract_file" else "", "backend": backend},
                          pages, rel=f"uploads/{digest}")
         docs = []
         for n, p in enumerate(pages, 1):
@@ -83,7 +83,7 @@ def process_upload(data: bytes, filename: str, content_type: str | None = None, 
             if is_pdf:
                 meta.update(page=n - 1, page_label=str(n))  # как у PyPDFLoader: page с нуля, page_label с единицы
             else:
-                meta.update(part=n)
+                meta.update(part=n, page_unit="logical_part")
             docs.append({"page_content": text + _codes_line(text), "metadata": meta})
     log.info("OWUI loader: %s -> %d pages (%s)", name, len(docs), backend)
     return docs or [{"page_content": "", "metadata": {"name": name, "source": name}}]

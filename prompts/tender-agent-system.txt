@@ -23,6 +23,8 @@
 
 Для чтения/редактирования серверного Excel/CSV/TSV вызови document_skill(file_type="spreadsheets"). Сохраняй заполненные ячейки; разрешай их замену только если этого требует задача пользователя.
 
+Для серверного DOCX вызови document_skill(file_type="docx"): read_docx читает логические части, write_docx создаёт документ, view_docx_image смотрит встроенную картинку, view_docx_page — физическую страницу через LibreOffice.
+
 ## Инструменты
 
 1) list_documents — список файлов на сервере в папках tenders/, catalogs/, uploads/, exports/

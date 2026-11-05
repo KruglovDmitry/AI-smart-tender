@@ -4,7 +4,7 @@
 
 `document_tool/spreadsheets/read.py` — один читатель для describe_table/query_table, простого read_document, архива и внешнего загрузчика Open WebUI. CSV/TSV читаются стандартным csv с сохранением строк; Excel — openpyxl, старый XLS — pandas/xlrd. `Sheet` содержит значения, формулы и исходные числа для простых нулевых форматов. Дополнительных зависимостей не установлено.
 
-`document_tool/spreadsheets/write.py` — сохранение и проверка XLSX для fill_table и write_excel. В этой же папке operations.py отвечает за адресацию строк, фильтры, словари и редактирование; create.py создаёт книгу; export.py задаёт пути и ссылки на скачивание; jobs.py выполняет фоновые задания, evidence.py проверяет источники, classification.py подбирает коды. Старые отдельные пакеты удалены; второй реализации нет. SKILL.md доступен через document_skill(file_type="spreadsheets") и включён в ресурсы desktop-сборки; шаблон системного промпта обновлён. Существующую модель в интерфейсе нужно обновить отдельно.
+`document_tool/spreadsheets/write.py` — сохранение и проверка XLSX для fill_table и write_excel. В этой же папке operations.py отвечает за адресацию строк, фильтры, словари и редактирование; create.py создаёт книгу; export.py предоставляет пути и ссылки на скачивание через общий document_tool/artifacts.py; jobs.py выполняет фоновые задания, evidence.py проверяет источники, classification.py подбирает коды. Старые отдельные пакеты удалены; второй реализации нет. SKILL.md доступен через document_skill(file_type="spreadsheets") и включён в ресурсы desktop-сборки; шаблон системного промпта обновлён. Существующую модель в интерфейсе нужно обновить отдельно.
 
 ## Чтение
 

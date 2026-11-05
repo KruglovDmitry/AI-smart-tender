@@ -23,7 +23,7 @@ from ..document_tool.pdf import ocr, read as pdf
 
 log = logging.getLogger(__name__)
 
-INDEX_VERSION = 4
+INDEX_VERSION = 5
 INDEX_ROOT = DATA_ROOT / ".index"
 # Не-PDF документы режем на условные страницы такого размера, чтобы поиск и чтение работали одинаково.
 PSEUDO_PAGE_CHARS = 4000
@@ -61,6 +61,14 @@ class DocIndex:
     @property
     def is_pdf(self) -> bool:
         return self.meta.get("file_type", self.path.suffix.lower()) == ".pdf"
+
+    @property
+    def is_docx(self) -> bool:
+        return self.meta.get("file_type", self.path.suffix.lower()) == ".docx"
+
+    @property
+    def page_unit(self) -> str:
+        return "pdf_page" if self.is_pdf else "logical_part"
 
     def page(self, n: int) -> dict[str, Any]:
         if not 1 <= n <= len(self.pages):
@@ -110,7 +118,14 @@ class DocIndex:
             return self._pdf_reader.page(n, run_ocr=run_ocr, include_tables=include_tables,
                 include_structure=include_structure, tables_on_ocr=tables_on_ocr)
         text, source = self.text(n, run_ocr)
-        return {"page": n, "text": text, "source": source, "tables": [], "structure": {}, "warnings": []}
+        record = self.page(n)
+        structure = {}
+        if include_structure:
+            structure = {"unit": self.page_unit, "blocks": record.get("blocks", []),
+                         "images": record.get("image_refs", []), "tables": [],
+                         "visual_recommended": bool(record.get("image_refs")) or any("visual_review" in w or "rendered_page_review" in w for w in record.get("warnings", []))}
+        return {"page": n, "text": text, "source": source, "tables": [], "structure": structure,
+                "warnings": record.get("warnings", [])}
 
     def tables(self, n: int) -> list[str]:
         return self.read_page(n, run_ocr=False, include_structure=False)["tables"]
@@ -120,7 +135,7 @@ class DocIndex:
 
 
 # Эти форматы MarkItDown переводит в Markdown с заголовками и таблицами; остальное — прежним extract_file.
-MARKITDOWN_EXTENSIONS = {".docx", ".pptx", ".html", ".htm", ".msg", ".epub", ".xml"}
+MARKITDOWN_EXTENSIONS = { ".pptx", ".html", ".htm", ".msg", ".epub", ".xml"}
 
 
 def _split_pseudo_pages(text: str) -> list[str]:
@@ -157,6 +172,9 @@ def _build_pages(path: Path) -> tuple[list[dict[str, Any]], str]:
     try:
         if ext == ".pdf":
             return pdf.extract_pages(work), pdf.BACKEND
+        if ext == ".docx":
+            from ..document_tool.docx.read import extract_parts
+            return extract_parts(work), "docx-ooxml"
         text, backend = "", ""
         if ext in MARKITDOWN_EXTENSIONS:
             try:
@@ -254,6 +272,9 @@ def document_info(path: str, page_from: int = 1, page_to: int = 0) -> dict[str, 
             row["images"] = p["images"]
         if src != "text":
             row["source"] = src
+        if idx.is_docx:
+            row["blocks"] = len(p.get("blocks", []))
+            row["image_ids"] = [r["id"] for r in p.get("image_refs", [])][:10]
         rows.append(row)
     return {
         "path": idx.rel,
@@ -263,7 +284,8 @@ def document_info(path: str, page_from: int = 1, page_to: int = 0) -> dict[str, 
         "image_only_pages": [i for i, p in enumerate(idx.pages, 1) if p["empty"] and p["images"]],
         "ocr_pending": len(idx.ocr_pending()),
         "outline": rows,
-        **({"skill_hint": "Load document_skill(file_type=pdf) once for PDF reading instructions."} if idx.is_pdf else {}),
+        "page_unit": idx.page_unit,
+        **({"skill_hint": "Load document_skill(file_type=pdf) once for PDF reading instructions."} if idx.is_pdf else {"skill_hint": "Load document_skill(file_type=docx) once for DOCX reading/creation instructions."} if idx.is_docx else {}),
         "note": "Use search_document to find pages, then read_pages for their text and tables.",
     }
 

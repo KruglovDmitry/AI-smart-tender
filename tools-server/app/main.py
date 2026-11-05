@@ -31,7 +31,7 @@ from . import document_index
 from .document_tool.spreadsheets import operations as table_operations
 from .document_tool.spreadsheets import jobs as table_jobs
 from .document_tool import list_directory, read_document, read_folder_documents
-from .document_tool.spreadsheets.export import resolve_export_file
+from .document_tool.artifacts import resolve_export_file
 from .document_tool.spreadsheets.create import write_excel
 from .web_tool import fetch_page
 
@@ -180,6 +180,43 @@ class ReadPdfBody(BaseModel):
     include_layout: bool = True
     visual_mode: Literal["off", "auto", "required"] = "auto"
     max_visual_pages: int = Field(2, ge=0, le=10, description="Maximum vision attempts per call; 0 disables attempts.")
+
+
+class ReadDocxBody(BaseModel):
+    path: str = Field(..., description="DOCX under server DATA_ROOT; not a chat attachment.")
+    mode: Literal["auto", "full", "index"] = "auto"
+    parts: str | None = Field(None, description="Logical parts, e.g. 2,5-7; not physical pages.")
+    start_part: int = Field(1, ge=1)
+    text_offset: int = Field(0, ge=0)
+    max_parts: int = Field(8, ge=1, le=10)
+    max_chars: int = Field(40000, ge=1, le=120000)
+    visual_mode: Literal["off", "auto", "required"] = "auto"
+    max_visual_parts: int = Field(2, ge=0, le=10)
+
+
+class DocxBlock(BaseModel):
+    kind: Literal["paragraph", "heading", "bullet", "numbered", "table", "image", "page_break"] = "paragraph"
+    text: str = ""
+    level: int = Field(1, ge=1, le=9)
+    bold: bool = False
+    italic: bool = False
+    rows: list[list[str | int | float | None]] = Field(default_factory=list)
+    header: bool = True
+    image_path: str | None = None
+    width_inches: float = Field(5, ge=0.1, le=6.5)
+
+
+class WriteDocxBody(BaseModel):
+    filename: str = "document.docx"
+    title: str = ""
+    blocks: list[DocxBlock] = Field(..., min_length=1, max_length=10000)
+
+
+class ViewDocxImageBody(BaseModel):
+    path: str
+    image_id: str = Field(..., description="Image ID returned by read_docx/document_info.")
+    question: str = ""
+    detail: Literal["auto", "low", "high"] = "auto"
 
 
 class ViewPageBody(BaseModel):
@@ -424,15 +461,54 @@ def api_read_pdf(body: ReadPdfBody):
     return _http_errors(read_pdf, **body.model_dump())
 
 
+@app.post("/read_docx", summary="Read DOCX structure, logical parts and embedded images",
+    description="Auto reads small DOCX or returns an index for large documents. Use mode=full and next_cursor for exhaustive reading. Logical parts are not physical pages; use view_docx_page for rendered pages.")
+def api_read_docx(body: ReadDocxBody):
+    from .document_index.reading import read_docx
+    return _http_errors(read_docx, **body.model_dump())
+
+
+@app.post("/write_docx", summary="Create and save a new Word document",
+    description="Create headings, paragraphs, lists, tables, images and page breaks. Saves a verified DOCX copy under exports and returns a download link. Does not modify an existing document.")
+def api_write_docx(body: WriteDocxBody, request: Request):
+    from .document_tool.docx.create import create_docx
+    return _http_errors(create_docx, body.filename, [b.model_dump() for b in body.blocks], body.title, _public_base(request))
+
+
+@app.get("/list_docx_images", summary="List embedded DOCX images with paging; no vision calls")
+def api_list_docx_images(path: str, offset: int = Query(0, ge=0), limit: int = Query(25, ge=1, le=50)):
+    from .document_tool.docx.vision import list_images
+    return _http_errors(list_images, path, offset, limit)
+
+
+@app.post("/view_docx_image", summary="Inspect a DOCX embedded image with the vision model")
+def api_view_docx_image(body: ViewDocxImageBody):
+    from .document_tool.docx.vision import view_image
+    return _http_errors(view_image, body.path, body.image_id, body.question, body.detail)
+
+
+@app.post("/render_docx", summary="Render DOCX to PDF and discover physical page count; requires LibreOffice")
+def api_render_docx(body: DocumentInfoBody):
+    from .document_tool.docx.render import render_document
+    return _http_errors(render_document, body.path)
+
+
+@app.post("/view_docx_page", summary="Inspect a rendered physical DOCX page",
+    description="Requires LibreOffice. Renders a copy to PDF and uses the common PDF viewer. Physical page number differs from logical part number.")
+def api_view_docx_page(body: ViewPageBody):
+    from .document_tool.docx.vision import view_page
+    return _http_errors(view_page, body.path, body.page, body.question, body.bbox, body.detail)
+
+
 @app.get(
     "/document_skill",
     summary="Load instructions for a document format",
     description=(
-        "Call once for file_type=pdf or spreadsheets to load server-tool reading/editing instructions. "
+        "Call once for file_type=pdf, spreadsheets or docx to load server-tool reading/editing instructions. "
         "Chat attachments stay with Open WebUI's existing processing; do not re-read them automatically."
     ),
 )
-def api_document_skill(file_type: Literal["pdf", "spreadsheets"] = Query("pdf")):
+def api_document_skill(file_type: Literal["pdf", "spreadsheets", "docx"] = Query("pdf")):
     from .document_tool.skills import document_skill
 
     return _http_errors(document_skill, file_type)
@@ -619,7 +695,7 @@ def api_write_excel(body: WriteExcelBody, request: Request):
 
 @app.get(
     "/download_file",
-    summary="Download an exported spreadsheet",
+    summary="Download an exported document",
     description="Browser download for files under exports/. Not for the model to call.",
     include_in_schema=False,
 )
@@ -638,7 +714,9 @@ def api_download_file(
     return FileResponse(
         path=file_path,
         filename=file_path.name,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        media_type={".docx":"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    ".pdf":"application/pdf", ".csv":"text/csv", ".xls":"application/vnd.ms-excel"}.get(
+                        file_path.suffix.lower(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
         content_disposition_type="attachment",
     )
 

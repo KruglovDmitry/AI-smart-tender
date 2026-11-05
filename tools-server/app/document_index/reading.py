@@ -1,4 +1,4 @@
-"""Bounded PDF reading for tool callers; no changes to chat upload processing."""
+"""Shared bounded navigation for indexed PDF pages and DOCX logical parts."""
 from __future__ import annotations
 
 import json
@@ -11,11 +11,11 @@ SMALL_MAX_CHARS = 40000
 LAYOUT_BUDGET = 6000
 
 
-def read_pdf(path: str, mode: str = "auto", pages: str | None = None,
+def _read_indexed(path: str, mode: str = "auto", pages: str | None = None,
              start_page: int = 1, text_offset: int = 0, max_pages: int = 8,
              max_chars: int = 40000, include_tables: bool = True,
              include_layout: bool = True, visual_mode: str = "auto",
-             max_visual_pages: int = 2) -> dict[str, Any]:
+             max_visual_pages: int = 2, expected_format: str = "pdf") -> dict[str, Any]:
     from . import get_index, document_info, parse_pages
 
     if mode not in {"auto", "full", "index"} or visual_mode not in {"off", "auto", "required"}:
@@ -23,8 +23,8 @@ def read_pdf(path: str, mode: str = "auto", pages: str | None = None,
     if not 1 <= max_pages <= 10 or not 1 <= max_chars <= 120000 or not 0 <= max_visual_pages <= 10:
         raise ValueError("Invalid PDF reading budget")
     idx = get_index(path)
-    if not idx.is_pdf:
-        raise ValueError("read_pdf requires a PDF; use the native reader for other formats")
+    if (expected_format == 'pdf' and not idx.is_pdf) or (expected_format == 'docx' and not idx.is_docx):
+        raise ValueError(f"Expected {expected_format.upper()} document")
     count = len(idx.pages)
     if not 1 <= start_page <= count or text_offset < 0:
         raise ValueError("Invalid cursor")
@@ -83,10 +83,15 @@ def read_pdf(path: str, mode: str = "auto", pages: str | None = None,
             elif visual_calls < max_visual_pages:
                 visual_calls += 1
                 try:
-                    result = vision.view_page(path, n,
+                    viewer = vision.view_page
+                    if idx.is_docx:
+                        from ..document_tool.docx.vision import view_part
+                        viewer = view_part
+                    result = viewer(path, n,
                         'Опиши структуру и извлеки данные схем, изображений и сложных таблиц. '
                         'Сохрани заголовки, единицы и связи строк с колонками; укажи неразборчивое.',
                         detail='auto')
+                    item["warnings"].extend(result.get("warnings", []))
                     answer = result['answer']
                     item['visual'] = {k: v for k, v in result.items() if k != 'answer'}
                     item['visual']['answer'] = answer[:remaining]
@@ -112,7 +117,7 @@ def read_pdf(path: str, mode: str = "auto", pages: str | None = None,
     if next_cursor and returned and next_cursor['start_page'] == returned[-1]:
         unread = [returned[-1]] + unread
     scope_done = next_cursor is None
-    return {"path": idx.rel, "mode": "read", "page_count": count, "pages": output,
+    return {"path": idx.rel, "mode": "read", "page_unit": idx.page_unit, "page_count": count, "pages": output,
             "pages_read": returned, "pages_complete": completed, "pages_needing_review": failed,
             "requested_scope_complete": scope_done and not failed,
             "content_complete": scope_done and not failed and returned == list(range(1, count + 1)) and text_offset == 0,
@@ -123,3 +128,31 @@ def read_pdf(path: str, mode: str = "auto", pages: str | None = None,
             "visual_attempts": visual_calls,
             "budgets": {"content_chars": max_chars, "layout_chars": LAYOUT_BUDGET},
             "warnings": warnings}
+
+
+
+def read_pdf(path: str, *args, **kwargs):
+    return _read_indexed(path, *args, expected_format="pdf", **kwargs)
+
+
+def read_docx(path: str, mode="auto", parts=None, start_part=1, text_offset=0,
+              max_parts=8, max_chars=40000, visual_mode="auto", max_visual_parts=2):
+    result = _read_indexed(path, mode=mode, pages=parts, start_page=start_part, text_offset=text_offset,
+        max_pages=max_parts, max_chars=max_chars, visual_mode=visual_mode,
+        max_visual_pages=max_visual_parts, expected_format="docx")
+    # Keep logical parts unambiguously separate from rendered physical pages.
+    if isinstance(result.get("pages"), list):
+        result["parts"] = result.pop("pages")
+        for part in result["parts"]: part["part"] = part.pop("page")
+    elif isinstance(result.get("pages"), int): result["part_count"] = result.pop("pages")
+    for old,new in [("page_count","part_count"),("pages_read","parts_read"),("pages_complete","parts_complete"),
+                    ("pages_needing_review","parts_needing_review"),("remaining_pages","remaining_parts"),
+                    ("remaining_page_count","remaining_part_count"),("next_outline_page","next_outline_part")]:
+        if old in result: result[new] = result.pop(old)
+    for row in result.get("outline", []): row["part"] = row.pop("page")
+    if result.get("next_cursor"):
+        result["next_cursor"]["start_part"] = result["next_cursor"].pop("start_page")
+    result["page_unit"] = "logical_part"
+    result["note"] = "Logical parts are not physical DOCX pages. Use image IDs for embedded pictures; render for physical page viewing."
+    if "continuation" in result: result["continuation"] = result["continuation"].replace("pages", "parts")
+    return result

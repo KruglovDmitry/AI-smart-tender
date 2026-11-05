@@ -190,9 +190,9 @@ def _extract_by_ext(path: Path, ext: str) -> str:
         return extract_text(path)
 
     if ext == ".docx":
-        import docx2txt
+        from .docx.read import extract_text
 
-        return docx2txt.process(str(path)) or ""
+        return extract_text(path)
 
     if ext in {".html", ".htm"}:
         from bs4 import BeautifulSoup

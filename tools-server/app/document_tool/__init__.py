@@ -79,10 +79,11 @@ def read_document(path: str, max_chars: int) -> dict[str, Any]:
         raise IsADirectoryError(f"Expected file, got directory: {path}")
 
     rel = str(file_path.relative_to(DATA_ROOT)).replace("\\", "/")
-    ext = file_path.suffix.lower()
+    from .sniff import detect_extension
+    ext = detect_extension(file_path)
     from .. import document_index
 
-    if ext == ".pdf" or ext in document_index.MARKITDOWN_EXTENSIONS:
+    if ext in {".pdf", ".docx"} or ext in document_index.MARKITDOWN_EXTENSIONS:
         # Тот же разбор, что у постраничного индекса: OCR сканов и битых шрифтов, таблицы DOCX в Markdown.
         # pypdf на скачанных тендерах отдавал пустыми 21 PDF из 95.
         idx = document_index.get_index(rel)

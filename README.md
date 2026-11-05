@@ -8,8 +8,8 @@
 
 | | Desktop (Windows, один ПК) | Docker (сервер) |
 |---|---|---|
-| Запуск | `start.exe` (Electron) | `docker compose up -d` |
-| Сборка | [`desktop/build-desktop.ps1`](desktop/README.md), артефакты в `..\AI-smart-tender-build` | [`scripts/push-images.ps1`](scripts/push-images.ps1) → Docker Hub, дистрибутив — `scripts/pack_dist.py` |
+| Запуск | `start.exe` (Electron) или setup.exe | `docker compose up -d` |
+| Сборка | [`desktop/build-desktop.ps1`](desktop/README.md) (`-Zip`, `-Installer`), артефакты в `..\AI-smart-tender-build` | [`scripts/push-images.ps1`](scripts/push-images.ps1) → Docker Hub, дистрибутив — `scripts/pack_dist.py` |
 | Open WebUI | замороженный 0.12.2 + [`owui-patches`](owui-patches) | образ `owui-patches/Dockerfile`: тот же 0.12.2 и те же правки |
 | База закупок | SQLite | Postgres |
 | Код сервисов | скомпилирован (Nuitka), лицензия | открытый, без лицензии |

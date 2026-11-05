@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'">
+<title>AI Smart Tender</title>
+<style>
+  :root { color-scheme: light dark; }
+  html, body { margin: 0; height: 100%; font: 14px "Segoe UI", system-ui, sans-serif; background: #f4f4f2; color: #2b2b2b; }
+  @media (prefers-color-scheme: dark) { html, body { background: #1f1f1f; color: #e6e6e6; } }
+  body { display: flex; flex-direction: column; box-sizing: border-box; padding: 28px 32px 24px; user-select: none; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 6px; }
+  .lead { opacity: .72; margin: 0 0 18px; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(127,127,127,.35); border-top-color: #2f6fdb; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: -2px; margin-right: 8px; }
+  .spinner.off { display: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  ul { list-style: none; margin: 0; padding: 0; flex: 1; }
+  li { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #999; flex-shrink: 0; }
+  .dot.ready { background: #22a35a; } .dot.starting { background: #e0a400; } .dot.failed { background: #d23c3c; }
+  .name { flex: 1; }
+  .state { opacity: .7; font-size: 13px; }
+  .error { display: none; margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: rgba(210,60,60,.16); white-space: pre-wrap; font-size: 13px; line-height: 1.4; max-height: 90px; overflow: auto; user-select: text; }
+  .error.show { display: block; }
+  .row { display: none; justify-content: flex-end; margin-top: 16px; }
+  .row.show { display: flex; }
+  button { font: inherit; padding: 6px 16px; border-radius: 7px; border: 1px solid rgba(127,127,127,.4); background: rgba(127,127,127,.12); color: inherit; cursor: pointer; }
+  button.primary { background: #2f6fdb; border-color: #2f6fdb; color: #fff; }
+</style>
+</head>
+<body>
+  <h1>AI Smart Tender</h1>
+  <p class="lead" id="lead"><span class="spinner" id="spinner"></span><span id="leadText">Загрузка…</span></p>
+  <ul id="services"></ul>
+  <div class="error" id="error"></div>
+  <div class="row" id="row"><button class="primary" id="close">Закрыть</button></div>
+  <script src="splash.js"></script>
+</body>
+</html>

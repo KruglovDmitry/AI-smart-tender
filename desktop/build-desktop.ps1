@@ -3,6 +3,7 @@ param(
   [switch]$SkipElectron,
   [switch]$SkipServices,
   [switch]$Zip,
+  [switch]$Installer,
   [string]$OpenWebUISource = ""
 )
 
@@ -241,6 +242,41 @@ fs.writeFileSync(target, JSON.stringify(cfg, null, 2) + '\n');
   }
 } else {
   Write-Host "Skip Electron pack"
+}
+
+if ($Installer) {
+  Write-Host ""
+  Write-Host "--- Inno Setup ---"
+  $unpacked = Join-Path $ReleaseDir "win-unpacked"
+  $exe = Join-Path $unpacked "start.exe"
+  if (-not (Test-Path $exe)) {
+    Write-Error "Missing $exe - build Electron first (without -SkipElectron)"
+    exit 1
+  }
+  $iscc = $null
+  $isccCmd = Get-Command iscc -ErrorAction SilentlyContinue
+  if ($isccCmd) { $iscc = $isccCmd.Source }
+  if (-not $iscc) {
+    foreach ($candidate in @(
+        (Join-Path $env:LocalAppData "Programs\Inno Setup 6\ISCC.exe"),
+        (Join-Path ${env:ProgramFiles} "Inno Setup 6\ISCC.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe")
+      )) {
+      if ($candidate -and (Test-Path $candidate)) { $iscc = $candidate; break }
+    }
+  }
+  if (-not $iscc) {
+    Write-Error "Inno Setup 6 not found (ISCC.exe). Install https://jrsoftware.org/isinfo.php"
+    exit 1
+  }
+  $iss = Join-Path $Desktop "installer\setup.iss"
+  $setupName = "AI-Smart-Tender-Setup-$product.exe"
+  Write-Host "ISCC: $iscc"
+  & $iscc "/DMyAppVersion=$product" "/DSourceDir=$unpacked" "/DOutputDir=$ReleasesDir" $iss
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  $setupPath = Join-Path $ReleasesDir $setupName
+  if (-not (Test-Path $setupPath)) { Write-Error "Missing installer $setupPath"; exit 1 }
+  Write-Host "Installer: $setupPath"
 }
 
 Write-Host ""

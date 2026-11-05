@@ -7,8 +7,11 @@ for (const view of ["chat", "dashboard"]) {
 }
 
 window.shellApi.onState((state) => {
+  const dashBtn = document.getElementById("tab-dashboard");
+  dashBtn.hidden = state.hasDashboard === false;
   for (const view of ["chat", "dashboard"]) {
     const button = document.getElementById(`tab-${view}`);
+    if (!button || button.hidden) continue;
     button.classList.toggle("active", state.view === view);
     button.setAttribute("aria-selected", String(state.view === view));
   }

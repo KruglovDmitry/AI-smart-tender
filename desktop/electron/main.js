@@ -40,6 +40,7 @@ const RESTART_WINDOW_MS = 5 * 60 * 1000;
 // остальным сервисам (в том числе Open WebUI) их не передаём.
 const AGENT_ONLY_ENV = /^(AGENT_LLM_|TENDER_AGENT_|AV_)|^QWEN_API_KEY$/;
 const MODEL_KEY_SERVICES = new Set(["tender-agent", "tools"]);
+const LICENSE_SERVICES = ["tools", "tender-agent", "dashboard"];
 
 /** @type {Map<string, import('child_process').ChildProcess>} */
 const procs = new Map();
@@ -50,6 +51,8 @@ let baseCtx = null;
 let quitting = false;
 
 let mainWindow = null;
+let splashWindow = null;
+let splashHandoff = false;
 let toolbarView = null;
 /** @type {Record<string, WebContentsView>} */
 const views = {};
@@ -145,6 +148,15 @@ function enabledServices(manifest) {
 
 function processServices(manifest) {
   return enabledServices(manifest).filter((s) => s.kind === "process");
+}
+
+function hasService(id, manifest = servicesManifest) {
+  return Boolean(manifest && processServices(manifest).some((s) => s.id === id));
+}
+
+function licenseServices(manifest = servicesManifest) {
+  if (!manifest) return [];
+  return processServices(manifest).filter((s) => LICENSE_SERVICES.includes(s.id));
 }
 
 function dbService(manifest) {
@@ -446,15 +458,38 @@ function setState(svc, state, detail = "") {
   pushState();
 }
 
-function pushState() {
-  if (!toolbarView || toolbarView.webContents.isDestroyed()) return;
-  const services = processServices(servicesManifest)
-    .filter((s) => !s.primaryUi)
+function serviceSnapshot(includePrimary = false) {
+  if (!servicesManifest) return [];
+  return processServices(servicesManifest)
+    .filter((s) => includePrimary || !s.primaryUi)
     .map((s) => {
       const item = serviceState.get(s.id) || {};
-      return { name: s.displayName || s.id, state: item.state || "starting", detail: item.detail || "" };
+      return {
+        id: s.id,
+        name: s.displayName || s.id,
+        state: item.state || "starting",
+        detail: item.detail || "",
+      };
     });
-  toolbarView.webContents.send("shell:state", { view: currentView, services });
+}
+
+function pushSplashState(extra = {}) {
+  if (!splashWindow || splashWindow.isDestroyed()) return;
+  splashWindow.webContents.send("splash:state", {
+    message: extra.message || "",
+    error: extra.error || "",
+    services: serviceSnapshot(true),
+  });
+}
+
+function pushState() {
+  pushSplashState();
+  if (!toolbarView || toolbarView.webContents.isDestroyed()) return;
+  toolbarView.webContents.send("shell:state", {
+    view: currentView,
+    hasDashboard: hasService("dashboard"),
+    services: serviceSnapshot(false),
+  });
 }
 
 /** Запустить сервис и дождаться его /health; при падении — перезапуск (не больше RESTART_LIMIT за 5 минут). */
@@ -568,6 +603,61 @@ function resetStaleLoginOnError(contents, chatUrl) {
   contents.on("did-navigate-in-page", check);
 }
 
+function createSplash() {
+  splashWindow = new BrowserWindow({
+    width: 480,
+    height: 360,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    autoHideMenuBar: true,
+    title: "AI Smart Tender",
+    show: true,
+    backgroundColor: "#f4f4f2",
+    webPreferences: {
+      preload: path.join(__dirname, "splash-preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  splashWindow.setMenu(null);
+  splashWindow.loadFile(path.join(__dirname, "splash.html"));
+  log("splash shown");
+  splashWindow.webContents.on("did-finish-load", () => pushSplashState());
+  splashWindow.on("close", () => {
+    if (splashHandoff) return;
+    quitting = true;
+    stopServers();
+  });
+  splashWindow.on("closed", () => {
+    splashWindow = null;
+    if (!splashHandoff && !mainWindow) app.quit();
+  });
+}
+
+function closeSplash() {
+  if (!splashWindow || splashWindow.isDestroyed()) return;
+  splashHandoff = true;
+  splashWindow.close();
+  log("splash closed");
+}
+
+function showSplashError(err) {
+  const message = String(err && err.message ? err.message : err);
+  if (!splashWindow || splashWindow.isDestroyed()) {
+    dialog.showErrorBox("Не удалось запустить", message);
+    return;
+  }
+  pushSplashState({ error: message, message: "Не удалось запустить" });
+}
+
+function focusExistingWindow() {
+  const win = mainWindow || splashWindow;
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  win.focus();
+}
+
 function createWindow(chatUrl) {
   mainWindow = new BaseWindow({
     width: 1280,
@@ -581,22 +671,27 @@ function createWindow(chatUrl) {
     webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false },
   });
   views.chat = new WebContentsView({ webPreferences: { contextIsolation: true, nodeIntegration: false } });
-  views.dashboard = new WebContentsView({ webPreferences: { contextIsolation: true, nodeIntegration: false } });
-  for (const view of [toolbarView, views.chat, views.dashboard]) mainWindow.contentView.addChildView(view);
+  const children = [toolbarView, views.chat];
+  if (hasService("dashboard")) {
+    views.dashboard = new WebContentsView({ webPreferences: { contextIsolation: true, nodeIntegration: false } });
+    children.push(views.dashboard);
+  }
+  for (const view of children) mainWindow.contentView.addChildView(view);
   openExternalLinks(views.chat);
-  openExternalLinks(views.dashboard);
+  if (views.dashboard) openExternalLinks(views.dashboard);
 
   toolbarView.webContents.loadFile(path.join(__dirname, "toolbar.html"));
   toolbarView.webContents.on("did-finish-load", pushState);
   log(`loading ${chatUrl}`);
   views.chat.webContents.loadURL(chatUrl);
   resetStaleLoginOnError(views.chat.webContents, chatUrl);
-  // Дашборд обычно готов раньше чата: тогда сразу грузим его, иначе — заглушку до готовности.
   const dashboard = processServices(servicesManifest).find((s) => s.id === "dashboard");
-  if (dashboard && (serviceState.get("dashboard") || {}).state === "ready") {
-    loadDashboardView(dashboard);
-  } else {
-    views.dashboard.webContents.loadURL(placeholderUrl("Дашборд запускается…"));
+  if (dashboard && views.dashboard) {
+    if ((serviceState.get("dashboard") || {}).state === "ready") {
+      loadDashboardView(dashboard);
+    } else {
+      views.dashboard.webContents.loadURL(placeholderUrl("Дашборд запускается…"));
+    }
   }
   mainWindow.on("resize", layout);
   mainWindow.on("closed", () => {
@@ -614,12 +709,18 @@ function loadDashboardView(svc) {
 }
 
 ipcMain.on("shell:show", (_event, name) => showView(name));
+ipcMain.on("splash:close", () => {
+  quitting = true;
+  stopServers();
+  splashHandoff = false;
+  if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
+  app.quit();
+});
 
 // ---------- лицензия ----------
 // Проверяют сами сервисы (общий модуль smart_license): без лицензии они отвечают 403.
 // Оболочка только показывает состояние и принимает ключ — через /license любого запущенного сервиса.
 
-const LICENSE_SERVICES = ["tools", "tender-agent", "dashboard"];
 let licenseWindow = null;
 
 function httpJson(method, url, body) {
@@ -697,7 +798,11 @@ function openLicenseWindow() {
 
 /** После старта сервисов: без действующей лицензии сразу открыть окно ключа. */
 async function checkLicenseOnStart(waits) {
-  const first = LICENSE_SERVICES.map((id) => waits.get(id)).filter(Boolean);
+  const first = licenseServices().map((s) => waits.get(s.id)).filter(Boolean);
+  if (!first.length) {
+    log("license check skipped: no licensed services installed");
+    return;
+  }
   try {
     await Promise.any(first);
     const res = await licenseRequest("GET", "/license");
@@ -798,7 +903,9 @@ function buildMenu(manifest) {
       label: "Вид",
       submenu: [
         { label: "Чат", accelerator: "CmdOrCtrl+1", click: () => showView("chat") },
-        { label: "Дашборд", accelerator: "CmdOrCtrl+2", click: () => showView("dashboard") },
+        ...(processServices(manifest).some((s) => s.id === "dashboard")
+          ? [{ label: "Дашборд", accelerator: "CmdOrCtrl+2", click: () => showView("dashboard") }]
+          : []),
         { type: "separator" },
         {
           label: "Обновить страницу",
@@ -815,7 +922,7 @@ function buildMenu(manifest) {
     {
       label: "Справка",
       submenu: [
-        { label: "Лицензия…", click: openLicenseWindow },
+        ...(licenseServices(manifest).length ? [{ label: "Лицензия…", click: openLicenseWindow }] : []),
         {
           label: "Лицензии сторонних компонентов",
           click: async () => {
@@ -862,17 +969,15 @@ function buildMenu(manifest) {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
-    if (!mainWindow) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
-  });
+  app.on("second-instance", () => focusExistingWindow());
 
   app.whenReady().then(async () => {
+    createSplash();
     try {
       // Файлы Open WebUI отдаются как immutable: после правки сборки (owui-patches) старые копии
       // оставались бы в кэше навсегда. Сервер локальный, так что кэш просто сбрасываем при старте.
       await session.defaultSession.clearCache();
+      if (quitting) return;
       ensureDataFolders();
       loadDotEnvFiles();
       servicesManifest = loadServices();
@@ -887,6 +992,7 @@ if (!app.requestSingleInstanceLock()) {
       const info = readBuildInfo();
       if (info) log(`build product=${info.product} sha=${info.git_sha || "?"}`);
       buildMenu(servicesManifest);
+      pushSplashState();
 
       const processes = processServices(servicesManifest);
       const ui = processes.find((s) => s.primaryUi) || processes[0];
@@ -895,22 +1001,37 @@ if (!app.requestSingleInstanceLock()) {
       ensureRagSettings(servicesManifest);
       // Все сервисы стартуют сразу, но окно ждёт только чат: агент и дашборд догружаются в фоне,
       // их состояние видно в верхней панели, а медленный старт одного не закрывает приложение.
-      const waits = new Map(processes.map((svc) => [svc.id, startService(svc)]));
+      const waits = new Map();
+      for (const svc of processes) {
+        try {
+          waits.set(svc.id, startService(svc));
+        } catch (err) {
+          log(`start ${svc.id} failed: ${err}`);
+          setState(svc, "failed", String(err && err.message ? err.message : err));
+          const failed = Promise.reject(err);
+          failed.catch(() => {});
+          waits.set(svc.id, failed);
+        }
+      }
       checkLicenseOnStart(waits);
       await waits.get(ui.id);
+      if (quitting) return;
       createWindow(`http://${ui.host}:${ui.port}/`);
+      closeSplash();
       log("window opened");
     } catch (err) {
+      if (quitting) return;
       log(`startup failed: ${err && err.stack ? err.stack : err}`);
       quitting = true;
       stopServers();
-      dialog.showErrorBox("Не удалось запустить", String(err && err.message ? err.message : err));
-      app.quit();
+      showSplashError(err);
+      if (!splashWindow || splashWindow.isDestroyed()) app.quit();
     }
   });
 }
 
 app.on("window-all-closed", () => {
+  if (splashHandoff && !mainWindow) return;
   quitting = true;
   stopServers();
   app.quit();

@@ -28,7 +28,26 @@ Open WebUI: `%LOCALAPPDATA%\AISmartTender\webui-desktop\`.
 ```powershell
 cd desktop
 powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1
+powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1 -Zip
+powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1 -Installer
 ```
+
+`-Installer` собирает `AI-Smart-Tender-Setup-<версия>.exe` (нужен [Inno Setup 6](https://jrsoftware.org/isinfo.php)).
+Мастер на русском: папка, ярлыки и компоненты. Невыбранные модули на диск не копируются;
+после установки в `resources\services.json` остаются включёнными только они.
+
+| Компонент | Что ставится |
+|-----------|----------------|
+| Оболочка и чат | `start.exe`, Open WebUI (обязательно) |
+| Инструменты | ToolsServer |
+| Поиск закупок | Tender Agent + Chromium |
+| Дашборд | Dashboard |
+| Модель знаний | `resources\models` |
+
+Типы: полная / чат и инструменты / выборочная. Установка в `%LOCALAPPDATA%\Programs\AI Smart Tender`
+(без прав администратора). Данные по-прежнему в `%LOCALAPPDATA%\AISmartTender`. Деинсталлятор их не удаляет.
+
+Портативный вариант без установщика — папка `win-unpacked` или zip (`-Zip`).
 
 Всё, что создаёт сборка, лежит **вне репозитория** — в соседней папке `..\AI-smart-tender-build`
 (другое место — переменная `AST_BUILD_ROOT`, пути заданы в [`build-paths.ps1`](build-paths.ps1)):
@@ -40,7 +59,7 @@ powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1
 | `work\` | временные файлы PyInstaller / Nuitka, сгенерированный конфиг electron-builder |
 | `dist\` | exe сервисов, модели, `build-info.json` |
 | `release\win-unpacked\start.exe` | готовая программа — копировать **всю** папку `win-unpacked` |
-| `releases\` | zip для заказчика (`-Zip`) |
+| `releases\` | zip (`-Zip`) и setup.exe (`-Installer`) для заказчика |
 
 `work\` и `release\` можно удалять в любой момент; без `venvs\` и `dist\` следующая сборка будет дольше.
 
@@ -48,12 +67,14 @@ powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1
 
 ## Окно
 
-Сверху панель с двумя кнопками: **чат** (Open WebUI) и **дашборд**, также `Ctrl+1` / `Ctrl+2` и меню «Вид».
-Справа в панели — состояние агента, инструментов и дашборда (запускается / работает / не отвечает).
+При запуске сразу открывается окно загрузки со статусом каждого сервиса. Главное окно — когда готов Open WebUI;
+остальные сервисы догружаются в фоне. Закрытие окна загрузки отменяет старт.
 
-- Окно открывается, как только готов Open WebUI; остальные сервисы догружаются в фоне.
+Сверху панель с кнопками **чат** (Open WebUI) и **дашборд** (`Ctrl+1` / `Ctrl+2` и меню «Вид»).
+Если дашборд не установлен, вкладка скрыта. Справа — состояние сервисов (запускается / работает / не отвечает).
+
 - Упавший сервис перезапускается (не больше 3 раз за 5 минут), логи — меню **Файл → Открыть логи**.
-- Повторный запуск `start.exe` не поднимает вторую копию, а показывает уже открытое окно.
+- Повторный запуск `start.exe` не поднимает вторую копию, а показывает уже открытое окно (или окно загрузки).
 - Ссылки «в новой вкладке» открываются в системном браузере.
 
 ## Ключи и настройки агента
@@ -78,6 +99,8 @@ powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1
 - У каждого сервиса свой venv (`venvs\agent`, `venvs\dashboard`, `venvs\tools` в папке сборки), зависимости ставятся при каждой сборке.
 - Библиотека зрения `ai_vision` берётся из соседнего репозитория `..\AI-vision` (или путь в `AI_VISION_PATH`) и попадает внутрь `TenderAgent.exe`.
 - Chromium ставится сразу в `dist\TenderAgent\ms-playwright` папки сборки (только нужная версия).
+- Для `-Installer` — Inno Setup 6 (`ISCC.exe`). Коммерческим сборкам JRSoftware просит купить лицензию
+  (без ключа компилятор пишет non-commercial; установщик при этом собирается).
 
 ## Заметки по tender-agent
 

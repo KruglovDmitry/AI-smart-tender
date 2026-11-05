@@ -11,6 +11,9 @@
     "license.html",
     "license.js",
     "license-preload.js",
+    "splash.html",
+    "splash.js",
+    "splash-preload.js",
     "package.json"
   ],
   "win": {

@@ -9,6 +9,17 @@ from ..config import ALLOWED_EXTENSIONS, DATA_ROOT
 from .extract import TEXT_EXTENSIONS, extract_file
 
 
+def detected_extension(path: Path) -> str:
+    from .sniff import detect_extension
+
+    return detect_extension(path)
+
+
+def is_supported(path: Path) -> bool:
+    ext = detected_extension(path)
+    return ext in ALLOWED_EXTENSIONS or ext in TEXT_EXTENSIONS
+
+
 def resolve_under_data(relative_or_abs: str) -> Path:
     """
     Путь относительно DATA_ROOT (например tenders/foo.pdf)
@@ -48,16 +59,15 @@ def list_directory(path: str = "", recursive: bool = True) -> dict[str, Any]:
         if p.is_dir():
             entries.append({"path": rel, "type": "dir", "name": p.name})
         elif p.is_file():
-            ext = p.suffix.lower()
-            supported = ext in ALLOWED_EXTENSIONS or ext in TEXT_EXTENSIONS
+            ext = detected_extension(p)
             entries.append(
                 {
                     "path": rel,
                     "type": "file",
                     "name": p.name,
                     "size_bytes": p.stat().st_size,
-                    "extension": ext,
-                    "supported": supported,
+                    "extension": ext or p.suffix.lower(),
+                    "supported": ext in ALLOWED_EXTENSIONS or ext in TEXT_EXTENSIONS,
                 }
             )
 
@@ -119,8 +129,7 @@ def read_folder_documents(
     for p in sorted(iterator):
         if not p.is_file() or any(part.startswith('.') for part in p.relative_to(root).parts):
             continue
-        ext = p.suffix.lower()
-        if ext in ALLOWED_EXTENSIONS or ext in TEXT_EXTENSIONS:
+        if is_supported(p):
             files.append(p)
 
     # Сначала маленькие файлы: так целиком попадает больше документов, а оглавлениями идут большие.

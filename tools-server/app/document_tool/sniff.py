@@ -109,12 +109,26 @@ def sniff_path(path: Path) -> str:
         return ""
 
 
+_OFFICE_CLAIMED = {".docx", ".xlsx", ".xlsm", ".pptx", ".odt", ".ods", ".odp", ".doc", ".xls", ".ppt"}
+
+
 def detect_extension(path: Path, name: str | None = None) -> str:
     """Настоящее расширение файла: из имени, если содержимое ему не противоречит, иначе по содержимому."""
     claimed = known_suffix(name or path.name)
     sniffed = sniff_path(path)
     if sniffed and (not claimed or sniffed in CONTENT_TYPED):
         return sniffed
+    if claimed in _OFFICE_CLAIMED and not sniffed:
+        # A download error page is often saved under the office name from the link.
+        try:
+            head = path.read_bytes()[:512].lstrip().lower()
+        except OSError:
+            head = b""
+        if head.startswith((b"<!doctype", b"<html")):
+            return ".html"
+        if head.startswith((b"<?xml", b"<xml")):
+            return ".xml"
+        return ""
     return claimed or Path(name or path.name).suffix.lower()
 
 

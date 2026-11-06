@@ -179,6 +179,13 @@ def test_legacy_odf_repeated_cells_and_rtf(client):
         archive.writestr('content.xml',xml)
     out=c.post('/read_file',json={'path':'legacy.ods'}).json()
     assert out['parts'][0]['text'].count('00123')==4 and out['parts'][0]['warnings']
+    padded='''<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:spreadsheet><table:table><table:table-row><table:table-cell><text:p>Артикул 00123</text:p></table:table-cell><table:table-cell table:number-columns-repeated="16384"></table:table-cell></table:table-row><table:table-row table:number-rows-repeated="1048528"><table:table-cell table:number-columns-repeated="16384"></table:table-cell></table:table-row></table:table></office:spreadsheet></office:body></office:document-content>'''
+    with zipfile.ZipFile(root/'padded.ods','w') as archive:
+        archive.writestr('mimetype','application/vnd.oasis.opendocument.spreadsheet')
+        archive.writestr('content.xml',padded)
+    wide=c.post('/read_file',json={'path':'padded.ods'})
+    assert wide.status_code==200,wide.text
+    assert wide.json()['parts'][0]['text'].count('00123')==1
     # XML entity expansion must never resolve local files or network resources.
     with zipfile.ZipFile(root/'entity.odt','w') as archive:
         archive.writestr('content.xml','<!DOCTYPE x [<!ENTITY e SYSTEM "file:///secret">]><x>&e;</x>')

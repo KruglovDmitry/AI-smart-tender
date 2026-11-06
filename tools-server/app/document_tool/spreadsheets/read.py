@@ -60,33 +60,39 @@ def load(path: Path, read_mode='values') -> dict[str, Sheet]:
     from ..sniff import detect_extension
     ext=detect_extension(path)
     if ext in {'.xlsx','.xlsm'}:
+        import zipfile
         from openpyxl import load_workbook
+        from openpyxl.utils.exceptions import InvalidFileException
         # File objects allow files with absent/false suffixes to use the same reader.
-        with path.open('rb') as fh, path.open('rb') as ch:
-            wb=load_workbook(fh,read_only=True,data_only=False)
-            cached=load_workbook(ch,read_only=True,data_only=True)
-            try:
-                result={}
-                for ws in wb.worksheets:
-                    rows=[];formulas={};raw={}
-                    import itertools
-                    for r,(cells,vals) in enumerate(itertools.zip_longest(ws.iter_rows(),cached[ws.title].iter_rows(values_only=True),fillvalue=()),1):
-                        row=[]
-                        for c,cell in enumerate(cells,1):
-                            val=vals[c-1] if c<=len(vals) else None
-                            if cell.data_type=='f':
-                                if not isinstance(cell.value,str):
-                                    raise ValueError('Array/data-table formulas require a dedicated reader')
-                                formulas[r,c]=cell.value
-                            if isinstance(val,(int,float)) and not isinstance(val,bool) and val>=0 and float(val).is_integer() and re.fullmatch('0{2,}',cell.number_format or ''):
-                                raw[r,c]=value(val); val=str(int(val)).zfill(len(cell.number_format))
-                            row.append(value(val))
-                        rows.append(row)
-                    warnings=[]
-                    if formulas:warnings.append('formula_results_are_saved_cache_not_recalculated')
-                    result[ws.title]=Sheet(ws.title,rows,formulas,raw,read_mode,warnings)
-                return result
-            finally:wb.close();cached.close()
+        try:
+            with path.open('rb') as fh, path.open('rb') as ch:
+                wb=load_workbook(fh,read_only=True,data_only=False)
+                cached=load_workbook(ch,read_only=True,data_only=True)
+                try:
+                    result={}
+                    for ws in wb.worksheets:
+                        rows=[];formulas={};raw={}
+                        import itertools
+                        for r,(cells,vals) in enumerate(itertools.zip_longest(ws.iter_rows(),cached[ws.title].iter_rows(values_only=True),fillvalue=()),1):
+                            row=[]
+                            for c,cell in enumerate(cells,1):
+                                val=vals[c-1] if c<=len(vals) else None
+                                if cell.data_type=='f':
+                                    if not isinstance(cell.value,str):
+                                        raise ValueError('Array/data-table formulas require a dedicated reader')
+                                    formulas[r,c]=cell.value
+                                if isinstance(val,(int,float)) and not isinstance(val,bool) and val>=0 and float(val).is_integer() and re.fullmatch('0{2,}',cell.number_format or ''):
+                                    raw[r,c]=value(val); val=str(int(val)).zfill(len(cell.number_format))
+                                row.append(value(val))
+                            rows.append(row)
+                        warnings=[]
+                        if formulas:warnings.append('formula_results_are_saved_cache_not_recalculated')
+                        result[ws.title]=Sheet(ws.title,rows,formulas,raw,read_mode,warnings)
+                    return result
+                finally:
+                    wb.close();cached.close()
+        except (zipfile.BadZipFile, InvalidFileException) as exc:
+            raise ValueError('File is not a readable XLSX workbook') from exc
     if ext in {'.csv','.tsv'}:
         data=path.read_bytes()
         if data.startswith((b'\xff\xfe',b'\xfe\xff')):encoding='utf-16'

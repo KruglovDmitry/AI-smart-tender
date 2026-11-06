@@ -112,6 +112,19 @@ def page_structure(path: Path, n: int, include_tables: bool = True) -> dict[str,
                     result["warnings"].append("tables_truncated")
             except Exception as exc:
                 result["warnings"].append(f"table_detection_failed: {type(exc).__name__}")
-        result["visual_recommended"] = bool(result["warnings"] or images or not text_blocks or len(page.get_drawings()) > 15
-            or any(t["columns"] >= 5 or t["rows"] >= 20 for t in result["tables"]))
+        page_area = max(page.rect.width * page.rect.height, 1)
+        def image_area(im) -> float:
+            box = im.get("bbox")
+            if not box or len(box) != 4:
+                return 0.0
+            return max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])
+        # A letterhead logo or table borders are not a reason to call the vision model.
+        # A scan, a large picture, a short-text drawing or an ambiguous table still is.
+        large_image = any(image_area(im) >= 0.12 * page_area for im in images)
+        text_chars = sum(len(block[4]) for block in text_blocks)
+        drawing_scheme = len(page.get_drawings()) > 15 and text_chars < 400
+        result["visual_recommended"] = bool(
+            not text_blocks or large_image or len(images) >= 4 or drawing_scheme
+            or any(t["columns"] >= 5 or t["rows"] >= 20 for t in result["tables"])
+            or any(w.startswith("table_grid_ambiguous") or w.startswith("table_detection_failed") for w in result["warnings"]))
         return result

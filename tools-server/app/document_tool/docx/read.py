@@ -67,9 +67,24 @@ def _refs(zf,part,node):
     return out
 
 
+def _flags(node) -> list[str]:
+    flags=[]
+    if node.xpath('.//w:instrText | .//w:fldSimple',namespaces=NS):flags.append('field_results_are_saved_not_recalculated')
+    if node.xpath('.//*[local-name()="oMath"]'):flags.append('math_layout_requires_visual_review')
+    if node.xpath('.//w:altChunk | .//w:object | .//w:txbxContent',namespaces=NS):flags.append('embedded_objects_or_textboxes_require_visual_review')
+    if node.xpath('.//w:tbl/w:tr/w:tc/w:tbl',namespaces=NS):flags.append('nested_table_grid_flattened; inspect rendered page if needed')
+    if node.xpath('.//w:ins | .//w:del',namespaces=NS):flags.append('tracked_changes_present; deleted_text_marked_explicitly')
+    if node.xpath('.//*[local-name()="chart" or local-name()="relIds"]'):flags.append('charts_or_smartart_require_rendered_page_review')
+    return flags
+
+
 def extract_parts(path:Path):
-    blocks=[]; warnings=[];section=1;heading='';table_number=0
-    with zipfile.ZipFile(path) as zf:
+    blocks=[]; loose=[];section=1;heading='';table_number=0
+    try:
+        package=zipfile.ZipFile(path)
+    except zipfile.BadZipFile as exc:
+        raise ValueError('File is not a DOCX package') from exc
+    with package as zf:
         if sum(i.file_size for i in zf.infolist()) > 256*1024*1024:raise ValueError('DOCX expanded package exceeds 256 MiB')
         if 'word/document.xml' not in zf.namelist():raise ValueError('Not a DOCX document')
         styles=xml(zf,'word/styles.xml'); levels={}
@@ -80,22 +95,18 @@ def extract_parts(path:Path):
         parts=['word/document.xml']+sorted(n for n in zf.namelist() if re.fullmatch(r'word/(header\d+|footer\d+|footnotes|endnotes|comments)\.xml',n))
         for part in parts:
             root=xml(zf,part)
+            if root is None:continue
             container=root.find('w:body',NS) if part=='word/document.xml' else root
-            if root.xpath('.//w:instrText | .//w:fldSimple',namespaces=NS):warnings.append('field_results_are_saved_not_recalculated')
-            if root.xpath('.//*[local-name()="oMath"]'):warnings.append('math_layout_requires_visual_review')
-            if root.xpath('.//w:altChunk | .//w:object | .//w:txbxContent',namespaces=NS):warnings.append('embedded_objects_or_textboxes_require_visual_review')
-            if root.xpath('.//w:tbl/w:tr/w:tc/w:tbl',namespaces=NS):warnings.append('nested_table_grid_flattened; inspect rendered page if needed')
-            if root.xpath('.//w:ins | .//w:del',namespaces=NS):warnings.append('tracked_changes_present; deleted_text_marked_explicitly')
-            if root.xpath('.//*[local-name()="chart" or local-name()="relIds"]'):warnings.append('charts_or_smartart_require_rendered_page_review')
             if container is None:continue
             nodes=list(_body_nodes(container))
             for node in nodes:
                 tag=ET.QName(node).localname
                 if tag not in {'p','tbl'}:
-                    if tag not in {'sectPr','bookmarkStart','bookmarkEnd'}:warnings.append('unsupported_body_block: '+tag)
+                    if tag not in {'sectPr','bookmarkStart','bookmarkEnd'}:loose.append('unsupported_body_block: '+tag)
                     continue
                 refs=_refs(zf,part,node)
-                if any(not r['available'] for r in refs):warnings.append('external_or_missing_image_not_loaded')
+                flags=_flags(node)
+                if any(not r['available'] for r in refs):flags.append('external_or_missing_image_not_loaded')
                 if tag=='p':
                     text=text_of(node)
                     style_node=node.find('w:pPr/w:pStyle',NS)
@@ -108,7 +119,7 @@ def extract_parts(path:Path):
                     if node.find('w:pPr/w:numPr',NS) is not None or style.startswith('List'):kind='list_item'
                     if kind=='heading':heading=text[:120]
                     block={'id':f'b{len(blocks)+1}','kind':kind,'text':text,'style':style,'level':level,'images':refs,
-                           'section':section,'heading':heading,'source_part':part}
+                           'flags':flags,'section':section,'heading':heading,'source_part':part}
                     parent=node.getparent()
                     if parent is not None and parent.get(f'{{{W}}}id') is not None:
                         block['note_id']=parent.get(f'{{{W}}}id')
@@ -123,10 +134,12 @@ def extract_parts(path:Path):
                             span=tc.find('w:tcPr/w:gridSpan',NS); merge=tc.find('w:tcPr/w:vMerge',NS)
                             spans.append({'columns':int(span.get(f'{{{W}}}val','1')) if span is not None else 1,
                                           'vertical_merge':merge.get(f'{{{W}}}val','continue') if merge is not None else None})
+                        row_flags=list(flags)
+                        if any(not r['available'] for r in _refs(zf,part,row)):row_flags.append('external_or_missing_image_not_loaded')
                         blocks.append({'id':f'b{len(blocks)+1}','kind':'table_row','table_id':f'table-{table_number}',
                             'row':row_n,'text':' | '.join(cells),'cells':cells,'spans':spans,
                             'header':row.find('w:trPr/w:tblHeader',NS) is not None,'images':_refs(zf,part,row),
-                            'section':section,'heading':heading,'source_part':part})
+                            'flags':row_flags,'section':section,'heading':heading,'source_part':part})
     # Keep paragraph/table-row order. Oversized blocks are split, with offsets for reconstruction.
     records=[];current=[];size=0
     def flush():
@@ -135,14 +148,16 @@ def extract_parts(path:Path):
         text='\n'.join(f"[{b['id']} {b['kind']}] {b['text']}" for b in current)
         images={r['id']:r for b in current for r in b.get('images',[])}
         meta=[]
+        part_flags=[]
         for b in current:
-            brief={k:v for k,v in b.items() if k not in {'text','cells','images'}}
+            brief={k:v for k,v in b.items() if k not in {'text','cells','images','flags'}}
             brief['preview']=b['text'][:160];brief['image_ids']=[r['id'] for r in b.get('images',[])]
             if 'cells' in b:brief['cell_previews']=[c[:80] for c in b['cells'][:30]]
+            part_flags.extend(b.get('flags', []))
             meta.append(brief)
         records.append({'text':text,'chars':len(text),'broken':False,'empty':not text.strip(),
             'images':len(images),'image_refs':list(images.values()),'blocks':meta,
-            'warnings':list(dict.fromkeys(warnings)),'unit':'logical_part'})
+            'warnings':list(dict.fromkeys(part_flags)),'unit':'logical_part'})
         current=[];size=0
     for block in blocks:
         text=block['text']
@@ -151,7 +166,9 @@ def extract_parts(path:Path):
             if current and (size+len(piece['text'])>PART_CHARS or len(current)>=25):flush()
             current.append(piece);size+=len(piece['text'])
     flush()
-    return records or [{'text':'','chars':0,'broken':False,'empty':True,'images':0,'image_refs':[],'blocks':[],'warnings':warnings,'unit':'logical_part'}]
+    if records and loose:
+        records[0]['warnings']=list(dict.fromkeys(loose+records[0]['warnings']))
+    return records or [{'text':'','chars':0,'broken':False,'empty':True,'images':0,'image_refs':[],'blocks':[],'warnings':loose,'unit':'logical_part'}]
 
 
 def extract_text(path:Path):

@@ -47,7 +47,11 @@ def _rar_module():
 def _entries(path):
     kind = _type(path)
     if kind == '.zip':
-        with zipfile.ZipFile(path) as archive:
+        try:
+            archive_cm = zipfile.ZipFile(path)
+        except zipfile.BadZipFile as exc:
+            raise ValueError('Archive is not a readable ZIP') from exc
+        with archive_cm as archive:
             rows = [{'name': _zip_name(i), 'stored_name': i.filename, 'size_bytes': i.file_size,
                      'directory': i.is_dir(), 'link': stat.S_ISLNK(i.external_attr >> 16),
                      'encrypted': bool(i.flag_bits & 1)} for i in archive.infolist()]

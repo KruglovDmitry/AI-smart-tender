@@ -9,6 +9,32 @@ from ..document_tool.pdf import vision
 SMALL_MAX_PAGES = 8
 SMALL_MAX_CHARS = 40000
 LAYOUT_BUDGET = 6000
+# These warnings mean the requested text or visual pass is missing. Advisory notes
+# (saved fields, encoding, legacy layout) stay visible and do not block completion.
+_INCOMPLETE_MARKERS = (
+    "visual_budget_exhausted",
+    "visual_answer_budget_exhausted",
+    "visual_unavailable",
+    "visual_answer_truncated",
+    "text_extraction_failed",
+    "layout_failed",
+    "layout_omitted_budget",
+    "table_grid_ambiguous",
+    "table_detection_failed",
+    "tables_truncated",
+    "image_content_requires_visual_review",
+    "archive_manifest_only",
+    "archive_contents_incomplete",
+)
+
+
+def _blocks_completion(warnings: list[str], *, visual_done: bool) -> bool:
+    for warning in warnings:
+        if visual_done and warning.startswith("image_content_requires_visual_review"):
+            continue
+        if any(marker in warning for marker in _INCOMPLETE_MARKERS):
+            return True
+    return False
 
 
 def _read_indexed(path: str, mode: str = "auto", pages: str | None = None,
@@ -81,6 +107,7 @@ def _read_indexed(path: str, mode: str = "auto", pages: str | None = None,
         visual_needed = visual_mode == 'required' or (visual_mode == 'auto' and
             (structure.get('visual_recommended', False) or source != 'text'))
         item['visual_recommended'] = visual_needed
+        visual_done = False
         if visual_needed:
             if remaining <= 0:
                 item["warnings"].append("visual_answer_budget_exhausted: use view_page for this page")
@@ -107,6 +134,7 @@ def _read_indexed(path: str, mode: str = "auto", pages: str | None = None,
                     answer = result['answer']
                     item['visual'] = {k: v for k, v in result.items() if k != 'answer'}
                     item['visual']['answer'] = answer[:remaining]
+                    visual_done = True
                     if len(answer) > remaining:
                         item['warnings'].append('visual_answer_truncated: use view_page for this page')
                     remaining -= len(item['visual']['answer'])
@@ -114,7 +142,7 @@ def _read_indexed(path: str, mode: str = "auto", pages: str | None = None,
                     item['warnings'].append(f"visual_unavailable: {type(exc).__name__}: {str(exc)[:200]}; retry with the format-specific viewer")
             else:
                 item['warnings'].append('visual_budget_exhausted: use view_page for this page')
-        item['complete'] = not partial and not item['warnings']
+        item['complete'] = not partial and not _blocks_completion(item['warnings'], visual_done=visual_done)
         output.append(item)
         if item['complete']:
             completed.append(n)
@@ -129,6 +157,14 @@ def _read_indexed(path: str, mode: str = "auto", pages: str | None = None,
     if next_cursor and returned and next_cursor['start_page'] == returned[-1]:
         unread = [returned[-1]] + unread
     scope_done = next_cursor is None
+    if next_cursor:
+        continuation = ("Repeat mode=full with next_cursor; preserve explicit pages scope if supplied. "
+                        "Completion describes this response, not prior calls.")
+    elif failed:
+        continuation = ("No further text cursor. pages_needing_review are missing text or a requested visual/OCR result; "
+                        "use the format viewer or ocr tool instead of repeating this call.")
+    else:
+        continuation = "No further cursor. Completion describes this response, not prior calls."
     return {"path": idx.rel, "mode": "read", "page_unit": idx.page_unit, "page_count": count, "pages": output,
             "pages_read": returned, "pages_complete": completed, "pages_needing_review": failed,
             "requested_scope_complete": scope_done and not failed,
@@ -136,7 +172,7 @@ def _read_indexed(path: str, mode: str = "auto", pages: str | None = None,
             "truncated": next_cursor is not None,
             "next_cursor": next_cursor,
             "remaining_pages": unread[:100], "remaining_page_count": len(unread),
-            "continuation": "Repeat mode=full with next_cursor; preserve explicit pages scope if supplied. Completion describes this response, not prior calls.",
+            "continuation": continuation,
             "visual_attempts": visual_calls,
             "budgets": {"content_chars": max_chars, "layout_chars": LAYOUT_BUDGET},
             "warnings": warnings}

@@ -128,6 +128,7 @@ def _extract_opendocument(path: Path) -> str:
             raise ValueError('OpenDocument DTDs are unsupported')
     lines: list[str] = []
     emitted_chars = 0
+    omitted = False
 
     def emit(value, repeat=1):
         nonlocal emitted_chars
@@ -152,18 +153,30 @@ def _extract_opendocument(path: Path) -> str:
         return "".join(parts)
 
     def walk(el) -> None:
+        nonlocal omitted
         for ch in el:
             if ch.tag == f"{{{ns_table}}}table-row":
                 cells = []
                 for cell in ch:
                     if not cell.tag.endswith(('}table-cell', '}covered-table-cell')): continue
                     repeat = int(cell.get(f'{{{ns_table}}}number-columns-repeated', '1'))
-                    if not 1 <= repeat <= 10000: raise ValueError('OpenDocument column repetition exceeds budget')
+                    if repeat < 1: raise ValueError('OpenDocument column repetition exceeds budget')
                     value = text_of(cell).strip() or cell.get('{urn:oasis:names:tc:opendocument:xmlns:office:1.0}string-value', '') or cell.get('{urn:oasis:names:tc:opendocument:xmlns:office:1.0}value', '')
+                    # Spreadsheets pad the used range with empty repeats up to the whole grid.
+                    if not value:
+                        if repeat > 1:
+                            omitted = True
+                        else:
+                            cells.append('')
+                        continue
+                    if repeat > 10000: raise ValueError('OpenDocument column repetition exceeds budget')
                     cells.extend([value] * repeat)
                 if any(cells):
                     repeat = int(ch.get(f'{{{ns_table}}}number-rows-repeated', '1'))
-                    if not 1 <= repeat <= 10000: raise ValueError('OpenDocument row repetition exceeds budget')
+                    if repeat < 1: raise ValueError('OpenDocument row repetition exceeds budget')
+                    if repeat > 10000:
+                        omitted = True
+                        repeat = 1
                     row = ' | '.join(cells)
                     emit(row, repeat)
             elif ch.tag in (f"{{{ns_text}}}p", f"{{{ns_text}}}h"):
@@ -174,4 +187,6 @@ def _extract_opendocument(path: Path) -> str:
                 walk(ch)
 
     walk(root)
+    if omitted:
+        lines.append('[OpenDocument: empty repeated rows or columns were omitted]')
     return "\n".join(lines)

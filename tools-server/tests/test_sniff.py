@@ -40,6 +40,14 @@ def test_zip_named_docx_is_read_as_archive(tmp_path):
     assert "кабель ВВГнг" in extract_file(fake)["content"]
 
 
+def test_html_error_page_named_docx_is_html(tmp_path):
+    f = tmp_path / "notice.docx"
+    f.write_text("<!DOCTYPE html><html><body>Сессия истекла</body></html>", encoding="utf-8")
+    assert detect_extension(f) == ".html"
+    out = extract_file(f)
+    assert out["extension"] == ".html" and "Сессия истекла" in out["content"]
+
+
 def test_known_extension_kept_when_content_agrees(tmp_path):
     f = tmp_path / "ТЗ.docx"
     _docx(f, "текст")

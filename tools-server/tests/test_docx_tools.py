@@ -20,6 +20,41 @@ def _document(root,large=False):
     doc.save(root/'input.docx')
 
 
+def test_read_folder_uses_content_type_for_extensionless_docx(client):
+    c, root = client
+    folder = root / 'tenders' / 'lot'
+    folder.mkdir(parents=True)
+    _document(folder)
+    (folder / 'input.docx').replace(folder / 'I. Общие сведения')
+    listed = c.get('/list_documents', params={'path': 'tenders/lot'}).json()
+    entry = next(item for item in listed['entries'] if item['name'].startswith('I.'))
+    assert entry['supported'] and entry['extension'] == '.docx'
+    out = c.post('/read_folder', json={'path': 'tenders/lot'}).json()
+    assert any('00123' in doc['content'] for doc in out['documents'])
+
+
+def test_docx_field_note_does_not_block_a_finished_read(client):
+    from docx.oxml import OxmlElement
+    c, root = client
+    doc = Document()
+    doc.add_paragraph('Срок поставки 15 дней')
+    paragraph = doc.add_paragraph()
+    run = paragraph.add_run()
+    field = OxmlElement('w:fldSimple')
+    field.set('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}instr', 'DATE')
+    text = OxmlElement('w:t')
+    text.text = '01.02.2026'
+    run._r.append(field)
+    field.append(text)
+    doc.save(root / 'fields.docx')
+    out = c.post('/read_docx', json={'path': 'fields.docx', 'visual_mode': 'off'})
+    assert out.status_code == 200, out.text
+    out = out.json()
+    assert any('field_results_are_saved_not_recalculated' in part['warnings'] for part in out['parts'])
+    assert out['content_complete'] is True
+    assert 'Срок поставки 15 дней' in '\n'.join(part['text'] for part in out['parts'])
+
+
 def test_docx_order_tables_images_headers_and_search(client):
     c,root=client;_document(root)
     skill=c.get('/document_skill',params={'file_type':'docx'});assert skill.status_code==200,skill.text

@@ -36,6 +36,7 @@ Invoke-ProtectedPyInstaller $Py "Dashboard" $Out $Work @("app", "smart_license")
   "--hidden-import", "app.data_scan",
   "--hidden-import", "smart_license",
   "--hidden-import", "smart_license.web",
+  "--hidden-import", "smart_license.keys",
   "--hidden-import", "uvicorn.logging",
   "--hidden-import", "uvicorn.loops.auto",
   "--hidden-import", "uvicorn.protocols.http.auto",

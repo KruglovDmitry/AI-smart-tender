@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 
 from .core import install_key, required, status
+from .keys import clear_model_keys
 
 OPEN_PATHS = ("/health", "/license")
 
@@ -15,9 +16,14 @@ def install(app, module: str) -> None:
     from fastapi import Body, HTTPException  # noqa: PLC0415
     from fastapi.responses import HTMLResponse, JSONResponse  # noqa: PLC0415
 
+    def _expire_keys(current) -> None:
+        if required() and current.state == "expired":
+            clear_model_keys()
+
     @app.get("/license", include_in_schema=False)
     def license_status():
         current = status()
+        _expire_keys(current)
         return {**current.to_dict(), "module": module, "required": required(), "allowed": current.allows(module)}
 
     @app.post("/license/key", include_in_schema=False)
@@ -37,6 +43,7 @@ def install(app, module: str) -> None:
         if any(path == p or path.startswith(p + "/") for p in OPEN_PATHS):
             return await call_next(request)
         current = status()
+        _expire_keys(current)
         if current.allows(module):
             return await call_next(request)
         detail = current.message if not current.active else f"Модуль «{module}» не входит в лицензию."

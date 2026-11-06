@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from tender_agent.agent.vision import configure_vision
-from tender_agent.agent_settings import apply_overrides, describe, load_overrides, save_overrides
+from tender_agent.agent_settings import apply_overrides, describe, effective, load_overrides, save_overrides
 from tender_agent.config import Settings
 
 
@@ -25,6 +25,20 @@ def test_dashboard_values_override_env_and_keys_are_masked(tmp_path: Path, monke
     assert load_overrides(tmp_path) == {"vision_max_calls": 3}
 
 
+def test_settings_file_stops_taking_secrets_from_env(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_LLM_API_KEY", "from-env-secret")
+    monkeypatch.setenv("AV_PLANNER_API_KEY", "from-env-vl")
+    save_overrides(tmp_path, {"llm_model": "deepseek-flash"})
+    rows = {row["key"]: row for row in describe(tmp_path)}
+    assert rows["llm_api_key"]["source"] == "default" and rows["llm_api_key"]["set"] is False
+    assert effective(tmp_path, "llm_api_key") == ""
+    assert effective(tmp_path, "vision_planner_api_key") == ""
+    settings = apply_overrides(Settings(
+        data_dir=tmp_path, llm_api_key="from-env-secret", vision_planner_api_key="from-env-vl",
+    ))
+    assert (settings.llm_api_key, settings.vision_planner_api_key, settings.llm_model) == ("", "", "deepseek-flash")
+
+
 def test_vision_models_from_settings() -> None:
     class Endpoint:
         def __init__(self) -> None:
@@ -39,6 +53,23 @@ def test_vision_models_from_settings() -> None:
     assert av.headless is False
     assert (av.tars.base_url, av.tars.model) == ("http://tars/v1", "env-model")
     assert (av.planner.api_key, av.planner.base_url) == ("k", "env-url")
+
+
+def test_dashboard_file_clears_vision_key_from_environment(tmp_path: Path) -> None:
+    save_overrides(tmp_path, {"llm_model": "m"})
+
+    class Endpoint:
+        def __init__(self) -> None:
+            self.base_url, self.api_key, self.model = "env-url", "env-key", "env-model"
+
+    class AV:
+        headless = True
+        planner = Endpoint()
+        tars = Endpoint()
+
+    av = configure_vision(AV(), Settings(data_dir=tmp_path))
+    assert av.planner.api_key == "" and av.tars.api_key == ""
+    assert av.planner.base_url == "env-url"
 
 
 def test_ground_fallback_uses_planner_key_and_can_be_switched_off() -> None:

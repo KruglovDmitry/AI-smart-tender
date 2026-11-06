@@ -7,12 +7,9 @@ import os
 import httpx
 
 def _vl_config() -> tuple[str, str, str]:
-    base = os.getenv("TOOLS_VL_BASE_URL") or os.getenv("AV_PLANNER_BASE_URL") or "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-    key = os.getenv("TOOLS_VL_API_KEY") or os.getenv("AV_PLANNER_API_KEY") or os.getenv("QWEN_API_KEY") or ""
-    model = os.getenv("TOOLS_VL_MODEL") or os.getenv("AV_PLANNER_MODEL") or "qwen3-vl-plus"
-    if not key:
-        raise RuntimeError("Vision model is not configured: set AV_PLANNER_API_KEY (Qwen-VL) or TOOLS_VL_* in .env")
-    return base.rstrip("/"), key, model
+    from ..model_config import vl_config
+
+    return vl_config()
 
 
 

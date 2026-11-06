@@ -39,6 +39,16 @@ const RESTART_WINDOW_MS = 5 * 60 * 1000;
 // Ключи моделей нужны только агенту и tool-server (фоновые задания по таблицам, «посмотреть страницу»):
 // остальным сервисам (в том числе Open WebUI) их не передаём.
 const AGENT_ONLY_ENV = /^(AGENT_LLM_|TENDER_AGENT_|AV_)|^QWEN_API_KEY$/;
+// Секреты моделей после первого запуска живут в файле дашборда и в процессы не передаются.
+const SECRET_ENV_KEYS = new Set([
+  "AGENT_LLM_API_KEY",
+  "TENDER_AGENT_LLM_API_KEY",
+  "TOOLS_LLM_API_KEY",
+  "TOOLS_VL_API_KEY",
+  "AV_PLANNER_API_KEY",
+  "QWEN_API_KEY",
+  "AV_TARS_API_KEY",
+]);
 const MODEL_KEY_SERVICES = new Set(["tender-agent", "tools"]);
 const LICENSE_SERVICES = ["tools", "tender-agent", "dashboard"];
 
@@ -90,9 +100,8 @@ function parseEnvFile(filePath) {
 }
 
 /**
- * Запасной источник ключей агента (DOM LLM, VL, UI-TARS) — .env. Основной — вкладка «Агент»
- * в дашборде (data/tenders/_agent/settings.json), она сильнее .env.
- * Порядок: уже заданный process.env > LocalAppData > рядом с exe > корень репо > tender-agent/.env
+ * .env читается один раз при старте и, если файла настроек ещё нет, переносится в дашборд.
+ * Порядок поиска: LocalAppData > рядом с exe > корень репо > tender-agent/.env
  */
 function loadDotEnvFiles() {
   const candidates = [
@@ -123,6 +132,44 @@ function loadDotEnvFiles() {
   } else {
     log(`env: .env не найден — ключи задаются во вкладке «Агент» дашборда`);
   }
+  seedModelSettings();
+}
+
+function modelSettingsFile() {
+  return path.join(DATA_ROOT, "tenders", "_agent", "settings.json");
+}
+
+function envValue(names) {
+  for (const name of names) {
+    const value = (process.env[name] || "").trim();
+    if (value) return value;
+  }
+  return "";
+}
+
+/** Первый запуск: перенести непустые ключи и адреса из .env в файл дашборда. Повторно не трогает. */
+function seedModelSettings() {
+  const file = modelSettingsFile();
+  if (fs.existsSync(file)) return;
+  const fields = {
+    llm_base_url: envValue(["TENDER_AGENT_LLM_BASE_URL", "AGENT_LLM_BASE_URL", "TOOLS_LLM_BASE_URL"]),
+    llm_api_key: envValue(["TENDER_AGENT_LLM_API_KEY", "AGENT_LLM_API_KEY", "TOOLS_LLM_API_KEY"]),
+    llm_model: envValue(["TENDER_AGENT_LLM_MODEL", "AGENT_LLM_MODEL", "TOOLS_LLM_MODEL"]),
+    vision_planner_base_url: envValue(["TOOLS_VL_BASE_URL", "AV_PLANNER_BASE_URL"]),
+    vision_planner_api_key: envValue(["TOOLS_VL_API_KEY", "AV_PLANNER_API_KEY", "QWEN_API_KEY"]),
+    vision_planner_model: envValue(["TOOLS_VL_MODEL", "AV_PLANNER_MODEL"]),
+    vision_tars_base_url: envValue(["AV_TARS_BASE_URL"]),
+    vision_tars_api_key: envValue(["AV_TARS_API_KEY"]),
+    vision_tars_model: envValue(["AV_TARS_MODEL"]),
+  };
+  const stored = {};
+  for (const [key, value] of Object.entries(fields)) {
+    if (value) stored[key] = value;
+  }
+  if (!Object.keys(stored).length) return;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(stored, null, 2));
+  log(`model settings seeded from .env (${Object.keys(stored).length} fields)`);
 }
 
 function loadServices() {
@@ -421,8 +468,10 @@ function ensureRagSettings(manifest) {
 
 function serviceEnv(svc) {
   const env = {};
+  const settingsReady = fs.existsSync(modelSettingsFile());
   for (const [key, value] of Object.entries(process.env)) {
     if (!MODEL_KEY_SERVICES.has(svc.id) && AGENT_ONLY_ENV.test(key)) continue;
+    if (settingsReady && SECRET_ENV_KEYS.has(key)) continue;
     env[key] = value;
   }
   const localCtx = { ...baseCtx, host: svc.host, port: svc.port };

@@ -45,12 +45,9 @@ _quality: ContextVar[str] = ContextVar("table_job_quality", default="strict")
 
 
 def _llm_config() -> tuple[str, str, str]:
-    base = os.getenv("TOOLS_LLM_BASE_URL") or os.getenv("AGENT_LLM_BASE_URL") or ""
-    key = os.getenv("TOOLS_LLM_API_KEY") or os.getenv("AGENT_LLM_API_KEY") or ""
-    model = os.getenv("TOOLS_LLM_MODEL") or os.getenv("AGENT_LLM_MODEL") or ""
-    if not (base and key and model):
-        raise RuntimeError("LLM is not configured: set AGENT_LLM_BASE_URL, AGENT_LLM_API_KEY, AGENT_LLM_MODEL in .env")
-    return base.rstrip("/"), key, model
+    from ...model_config import llm_config
+
+    return llm_config()
 
 
 def _chat(messages: list[dict[str, str]]) -> str:

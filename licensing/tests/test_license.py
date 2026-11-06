@@ -1,3 +1,4 @@
+import json
 import time
 from datetime import date, timedelta
 
@@ -111,3 +112,24 @@ def test_web_guard(monkeypatch):
     assert page.status_code == 403 and "Справка" in page.text
     assert client.get("/health").status_code == 200 and client.get("/license").json()["state"] == "licensed"
     assert client.post("/license/key", json={"key": "AST1.x.y"}).status_code == 400
+
+
+def test_expired_license_clears_dashboard_keys(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("AST_LICENSE_REQUIRED", "1")
+    path = tmp_path / "tenders" / "_agent" / "settings.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"llm_api_key": "secret", "llm_model": "m"}), encoding="utf-8")
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from smart_license import core, web
+
+    monkeypatch.setattr(web, "status", lambda fresh=False: core.Status("expired", message="конец"))
+    app = FastAPI()
+    web.install(app, "documents")
+    assert TestClient(app).get("/license").json()["state"] == "expired"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["llm_model"] == "m" and "llm_api_key" not in data and data["keys_cleared"] is True
+    assert TestClient(app).get("/license").status_code == 200

@@ -63,7 +63,7 @@
   function settingInput(o) {
     const id = `as-${o.key}`;
     const reset = o.source === "dashboard"
-      ? `<button type="button" class="link" data-reset="${o.key}" title="Вернуть значение из .env / по умолчанию">сбросить</button>` : "";
+      ? `<button type="button" class="link" data-reset="${o.key}" title="Убрать значение, заданное здесь">сбросить</button>` : "";
     const source = `<span class="mu sm">${SOURCES[o.source] || o.source}</span> ${reset}`;
     if (o.kind === "bool") {
       return `<label class="check"><input type="checkbox" id="${id}" data-key="${o.key}" ${o.value ? "checked" : ""}> ${esc(o.label)}</label> ${source}`;

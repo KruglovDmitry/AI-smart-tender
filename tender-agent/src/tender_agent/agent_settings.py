@@ -1,9 +1,9 @@
-"""Настройки агента, которые меняются из дашборда (вкладка «Агент»), без перезапуска.
+"""Настройки моделей, которые меняются из дашборда (вкладка «Агент»), без перезапуска.
 
-Файл ``<data_dir>/_agent/settings.json`` пишет дашборд через API агента (``/settings``), агент
-читает его в начале каждого задания. Порядок: значение из файла → переменная окружения
-(``.env``) → значение по умолчанию. Ключи хранятся открытым текстом (файл локальный, в git
-не попадает) и наружу отдаются только маской.
+Файл ``<data_dir>/_agent/settings.json`` — общее место для tender-agent и tools-server.
+Оболочка один раз переносит в него ключи из ``.env``. Пока файла нет, секрет можно взять
+из окружения. Когда файл уже есть, секрет берётся только из него: пустое поле не
+подменяется старым ``.env``. Наружу ключи отдаются только маской.
 """
 
 from __future__ import annotations
@@ -74,9 +74,22 @@ def _coerce(option: Option, value: object) -> object:
     return str(value).strip()
 
 
+def _read(data_dir: Path) -> dict:
+    try:
+        data = json.loads(settings_path(data_dir).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _locked(data_dir: Path) -> bool:
+    """Файл дашборда уже создан: секреты из .env больше не подставляются."""
+    return settings_path(data_dir).is_file()
+
+
 def save_overrides(data_dir: Path, changes: dict) -> dict:
-    """Записать изменения: значение — задать, None или "" — убрать (вернуться к .env / умолчанию)."""
-    current = load_overrides(data_dir)
+    """Записать изменения: значение — задать, None или "" — убрать из файла."""
+    current = _read(data_dir)
     for key, value in changes.items():
         option = BY_KEY.get(key)
         if option is None:
@@ -85,20 +98,27 @@ def save_overrides(data_dir: Path, changes: dict) -> dict:
             current.pop(key, None)
         else:
             current[key] = _coerce(option, value)
+            if option.kind == "secret":
+                current.pop("keys_cleared", None)
     path = settings_path(data_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(".tmp")
     temp.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
     temp.replace(path)
-    return current
+    return load_overrides(data_dir)
 
 
 def apply_overrides(settings: Settings) -> Settings:
     """Settings задания с учётом файла из дашборда."""
     overrides = load_overrides(settings.data_dir)
-    if not overrides:
+    locked = _locked(settings.data_dir)
+    if not overrides and not locked:
         return settings
     values = {}
+    if locked:
+        for option in OPTIONS:
+            if option.kind == "secret" and option.key not in overrides:
+                values[option.key] = ""
     for key, value in overrides.items():
         try:
             values[key] = _coerce(BY_KEY[key], value)
@@ -130,6 +150,8 @@ def describe(data_dir: Path) -> list[dict]:
     for option in OPTIONS:
         if option.key in overrides:
             value, source = overrides[option.key], "dashboard"
+        elif option.kind == "secret" and _locked(data_dir):
+            value, source = "", "default"
         elif (env := _env_value(option)) is not None:
             value, source = env, "env"
         else:
@@ -153,5 +175,7 @@ def effective(data_dir: Path, key: str) -> str:
     option = BY_KEY[key]
     if key in overrides:
         return str(overrides[key])
+    if option.kind == "secret" and _locked(data_dir):
+        return ""
     env = _env_value(option)
     return env if env is not None else str(option.default)

@@ -53,6 +53,7 @@ Invoke-ProtectedPyInstaller $Py "TenderAgent" $Out $Work @("tender_agent", "smar
   "--hidden-import", "tender_agent.api.service",
   "--hidden-import", "smart_license",
   "--hidden-import", "smart_license.web",
+  "--hidden-import", "smart_license.keys",
   "--hidden-import", "ai_vision",
   "--hidden-import", "uvicorn.logging",
   "--hidden-import", "uvicorn.loops.auto",

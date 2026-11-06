@@ -51,11 +51,16 @@ def vision_available() -> bool:
 
 def configure_vision(av_settings, settings: Settings):
     """Модели зрения из настроек агента (дашборд) поверх AV_* окружения ai_vision."""
+    from ..agent_settings import settings_path
+
+    locked = settings_path(settings.data_dir).is_file()
     av_settings.headless = settings.headless
     for endpoint, prefix in ((av_settings.planner, "vision_planner"), (av_settings.tars, "vision_tars")):
         for field in ("base_url", "api_key", "model"):
             value = getattr(settings, f"{prefix}_{field}")
-            if value:
+            # Пустой ключ из дашборда затирает ключ окружения. Пока файла нет, пустое поле
+            # оставляет то, что ai_vision прочитал из AV_*.
+            if value or (locked and field == "api_key"):
                 setattr(endpoint, field, value.rstrip("/") if field == "base_url" else value)
     # Запасная модель координат (UI-TARS недоступен, например без VPN): тот же облачный ключ, что у планировщика.
     fallback = getattr(av_settings, "ground_fallback", None)

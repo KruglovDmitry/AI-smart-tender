@@ -321,6 +321,7 @@ def start_job(
     with _jobs_lock:
         _jobs[job_id] = job
     batches = [rows[i : i + batch_size] for i in range(0, len(rows), batch_size)]
+    log.info("job %s started path=%s rows=%d batches=%d", job_id, path, len(rows), len(batches))
     threading.Thread(
         target=_worker, args=(job, batches, max(1, min(workers, 6)), public_base_url), name=f"job:{job_id}", daemon=True
     ).start()
@@ -409,6 +410,10 @@ def _worker(job: dict[str, Any], batches: list[list[dict[str, Any]]], workers: i
         job["state"] = "failed"
         job["errors"].append({"rows": [], "error": f"{type(e).__name__}: {e}"})
     job["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    log.info(
+        "job %s finished state=%s filled=%s/%s errors=%d",
+        job["job_id"], job["state"], job.get("rows_filled"), job.get("rows_total"), len(job.get("errors") or []),
+    )
     _save_status(job)
 
 

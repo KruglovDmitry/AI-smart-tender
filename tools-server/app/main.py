@@ -19,6 +19,7 @@ def _force_utf8_stdio() -> None:
 
 _force_utf8_stdio()
 
+from contextlib import asynccontextmanager
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -33,21 +34,24 @@ from .document_tool.spreadsheets import jobs as table_jobs
 from .document_tool import list_directory, read_document, read_folder_documents
 from .document_tool.artifacts import resolve_export_file
 from .document_tool.spreadsheets.create import write_excel
+from .observe import begin_call, call_fields, format_fields, get_logger, hint, record, setup_logging, skip_path, summarize
 from .web_tool import fetch_page
 
-_handler = logging.StreamHandler(sys.stdout)
-_handler.setFormatter(
-    logging.Formatter(
-        "%(asctime)s %(levelname)s [%(name)s] %(message)s",
-        datefmt="%H:%M:%S",
-    )
-)
-logging.basicConfig(level=logging.INFO, handlers=[_handler], force=True)
+setup_logging()
+
+
+@asynccontextmanager
+async def _lifespan(_app):
+    # uvicorn заново настраивает журналы после импорта приложения.
+    setup_logging()
+    yield
+
 
 app = FastAPI(
     title="Tender Tools API",
     version="1.5.0",
     description="Server documents, URL fetch, and Excel export.",
+    lifespan=_lifespan,
 )
 
 app.add_middleware(
@@ -57,6 +61,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _log_request(request: Request, call_next):
+    import time
+
+    if skip_path(request.url.path):
+        return await call_next(request)
+    begin_call()
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        get_logger().exception("request failed %s %s", request.method, request.url.path)
+        raise
+    elapsed = int((time.perf_counter() - started) * 1000)
+    status = getattr(response, "status_code", 0)
+    level = logging.INFO if status < 400 else logging.WARNING if status < 500 else logging.ERROR
+    detail = format_fields(call_fields())
+    get_logger("tools.http").log(level, "%s %s %s %dms %s", request.method, request.url.path, status, elapsed, detail)
+    return response
+
 
 try:
     from smart_license.web import install as install_license
@@ -342,18 +368,30 @@ class StartTableJobBody(BaseModel):
     skip_filled: bool = Field(True, description="Do not reprocess rows whose output columns are all filled.")
 
 
+def _ok(result):
+    record(**summarize(result))
+    return result
+
+
+def _fail(status: int, detail: str, exc: BaseException):
+    record(error=detail[:300])
+    if status >= 500:
+        get_logger().exception("tool failed")
+    raise HTTPException(status_code=status, detail=detail) from exc
+
+
 def _http_errors(fn, *args, **kwargs):
+    record(tool=getattr(fn, "__name__", ""), **hint(args, kwargs))
     try:
-        return fn(*args, **kwargs)
+        return _ok(fn(*args, **kwargs))
     except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+        _fail(404, str(e), e)
     except (ValueError, KeyError, IsADirectoryError) as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        _fail(400, str(e), e)
     except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e)) from e
+        _fail(403, str(e), e)
     except Exception as e:
-        logging.getLogger(__name__).exception("tool failed")
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}") from e
+        _fail(500, f"{type(e).__name__}: {e}", e)
 
 
 def _public_base(request: Request) -> str:
@@ -385,14 +423,15 @@ def list_documents(
     ),
     recursive: bool = Query(True, description="Include nested files."),
 ):
+    record(tool="list_documents", path=path)
     try:
-        return list_directory(path, recursive=recursive)
+        return _ok(list_directory(path, recursive=recursive))
     except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+        _fail(404, str(e), e)
     except NotADirectoryError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        _fail(400, str(e), e)
     except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e)) from e
+        _fail(403, str(e), e)
 
 
 @app.post(
@@ -407,16 +446,17 @@ def list_documents(
     ),
 )
 def api_read_document(body: ReadDocumentBody):
+    record(tool="read_document", path=body.path)
     try:
-        return read_document(body.path, max_chars=body.max_chars)
+        return _ok(read_document(body.path, max_chars=body.max_chars))
     except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+        _fail(404, str(e), e)
     except (IsADirectoryError, ValueError) as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        _fail(400, str(e), e)
     except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e)) from e
+        _fail(403, str(e), e)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Extract failed: {e}") from e
+        _fail(500, f"Extract failed: {e}", e)
 
 
 @app.post(
@@ -429,20 +469,21 @@ def api_read_document(body: ReadDocumentBody):
     ),
 )
 def api_read_folder(body: ReadFolderBody):
+    record(tool="read_folder", path=body.path)
     try:
-        return read_folder_documents(
+        return _ok(read_folder_documents(
             body.path,
             max_files=body.max_files,
             max_chars_per_file=body.max_chars_per_file,
             max_total_chars=body.max_total_chars,
             recursive=body.recursive,
-        )
+        ))
     except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+        _fail(404, str(e), e)
     except NotADirectoryError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        _fail(400, str(e), e)
     except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e)) from e
+        _fail(403, str(e), e)
 
 
 @app.post(
@@ -628,7 +669,9 @@ async def api_owui_process(request: Request):
 
     data = await request.body()
     if not data:
+        record(tool="process_upload", error="Empty body")
         raise HTTPException(status_code=400, detail="Empty body")
+    record(tool="process_upload", filename=request.headers.get("X-Filename", "")[:180])
     return await run_in_threadpool(
         _http_errors, process_upload, data, request.headers.get("X-Filename", ""), request.headers.get("Content-Type")
     )
@@ -761,16 +804,17 @@ def api_table_job_status(job_id: str = Query(..., description="job_id from start
     ),
 )
 def api_fetch_url(body: FetchUrlBody):
+    record(tool="fetch_url", path=body.url[:180])
     try:
-        return fetch_page(
+        return _ok(fetch_page(
             body.url,
             max_chars=body.max_chars,
             timeout_sec=config.FETCH_TIMEOUT_SEC,
-        )
+        ))
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        _fail(400, str(e), e)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Fetch failed: {e}") from e
+        _fail(502, f"Fetch failed: {e}", e)
 
 
 @app.post(
@@ -784,18 +828,19 @@ def api_fetch_url(body: FetchUrlBody):
     ),
 )
 def api_write_excel(body: WriteExcelBody, request: Request):
+    record(tool="write_excel", path=body.filename)
     try:
-        return write_excel(
+        return _ok(write_excel(
             filename=body.filename,
             sheets=[s.model_dump() for s in body.sheets],
             public_base_url=_public_base(request),
-        )
+        ))
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        _fail(400, str(e), e)
     except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e)) from e
+        _fail(403, str(e), e)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Excel write failed: {e}") from e
+        _fail(500, f"Excel write failed: {e}", e)
 
 
 @app.get(
@@ -810,12 +855,13 @@ def api_download_file(
         description="Relative path under data root, e.g. exports/2026-03-26/x.xlsx",
     ),
 ):
+    record(tool="download_file", path=path)
     try:
         file_path = resolve_export_file(path)
     except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+        _fail(404, str(e), e)
     except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e)) from e
+        _fail(403, str(e), e)
     return FileResponse(
         path=file_path,
         filename=file_path.name,

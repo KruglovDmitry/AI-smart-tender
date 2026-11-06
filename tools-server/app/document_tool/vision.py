@@ -17,6 +17,10 @@ def _vl_config() -> tuple[str, str, str]:
 
 
 def inspect_images(idx,unit,identity,load_images,prompt,config=None):
+    import time
+
+    from ..observe import get_logger
+
     base,key,model=config or _vl_config()
     token=hashlib.sha256(json.dumps([identity,prompt,base,model],ensure_ascii=False).encode()).hexdigest()
     fresh=False
@@ -34,5 +38,17 @@ def inspect_images(idx,unit,identity,load_images,prompt,config=None):
         answer=(payload['choices'][0]['message'].get('content') or '').strip()
         if not answer:raise RuntimeError('Vision returned an empty answer')
         return {'answer':answer,'model':model,'usage':payload.get('usage',{})}
-    result=idx.cached('vision-'+token,unit,request)
-    return {**result,'cached':not fresh,'usage':result.get('usage',{}) if fresh else {}}
+    started = time.perf_counter()
+    try:
+        result=idx.cached('vision-'+token,unit,request)
+    except Exception as exc:
+        elapsed = int((time.perf_counter() - started) * 1000)
+        get_logger("tools.vision").warning("unit=%s model=%s ms=%d error=%s: %s", unit, model, elapsed, type(exc).__name__, exc)
+        raise
+    elapsed = int((time.perf_counter() - started) * 1000)
+    usage = result.get("usage") or {}
+    get_logger("tools.vision").info(
+        "unit=%s model=%s cached=%s ms=%d tokens=%s",
+        unit, model, not fresh, elapsed, usage.get("total_tokens", 0),
+    )
+    return {**result,'cached':not fresh,'usage':usage if fresh else {}}

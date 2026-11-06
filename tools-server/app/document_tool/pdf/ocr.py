@@ -48,11 +48,17 @@ def available() -> bool:
 
 
 def page_text(path: Path, n: int) -> str:
+    import time
+
     engine = _get_engine()
     if engine is None:
         raise RuntimeError(f"OCR unavailable: {_unavailable}")
-    png = pdf.render_png(path, n, dpi=OCR_DPI)
-    return image_text(png)
+    started = time.perf_counter()
+    text = image_text(pdf.render_png(path, n, dpi=OCR_DPI))
+    elapsed = int((time.perf_counter() - started) * 1000)
+    level = logging.WARNING if not text.strip() else logging.INFO
+    log.log(level, "ocr %s p.%d chars=%d ms=%d", path.name, n, len(text), elapsed)
+    return text
 
 
 def image_text(png: bytes) -> str:

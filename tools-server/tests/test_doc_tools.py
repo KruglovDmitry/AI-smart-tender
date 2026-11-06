@@ -323,6 +323,37 @@ def test_read_pdf_auto_vision_and_layout_cache(client,monkeypatch):
     assert layouts==[1] and calls==[1,1]
 
 
+def test_wide_table_alone_does_not_request_vision():
+    from app.document_tool.pdf.read import needs_vision
+
+    plain = dict(text_chars=2000, image_count=0, large_image=False, drawing_count=40, warnings=[])
+    assert needs_vision(**plain) is False
+    assert needs_vision(**{**plain, "text_chars": 10}) is True
+    assert needs_vision(**{**plain, "warnings": ["table_grid_ambiguous: table-1"]}) is True
+    assert needs_vision(**{**plain, "large_image": True}) is True
+
+
+def test_table_page_keeps_prose_and_prefers_grid(client):
+    import pymupdf
+    c, root = client
+    doc = pymupdf.open()
+    page = doc.new_page(width=500, height=320)
+    page.insert_text((40, 36), "UNIQUE PROSE ABOVE")
+    for y in (80, 110, 140):
+        page.draw_line((40, y), (460, y))
+    for x in (40, 220, 460):
+        page.draw_line((x, 80), (x, 140))
+    page.insert_text((50, 100), "Article")
+    page.insert_text((230, 100), "CELL-99")
+    doc.save(root / "mixed.pdf")
+    doc.close()
+    out = c.post("/read_pdf", json={"path": "mixed.pdf", "visual_mode": "off"})
+    assert out.status_code == 200, out.text
+    text = out.json()["pages"][0]["text"]
+    assert "UNIQUE PROSE ABOVE" in text and "[TABLES:" in text and "CELL-99" in text
+    assert text.index("UNIQUE PROSE ABOVE") < text.index("[TABLES:")
+
+
 def test_read_pdf_table_has_coordinates_and_values(client):
     import pymupdf
     c,root=client

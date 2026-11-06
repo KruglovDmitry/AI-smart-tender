@@ -62,6 +62,10 @@ class PdfReader:
             except Exception as exc:
                 warnings.append(f'layout_failed: {type(exc).__name__}')
         tables = structure.get('tables', []) if table_enabled else []
+        if table_enabled and source == "text" and "outside_text" in structure:
+            # Trusted table cells are omitted here; callers append the grid separately.
+            # OCR stays intact: the text layer of a scan is not the page prose.
+            text = structure["outside_text"]
         # Do not mutate a cached full structure when a caller requests text only.
         if structure and not include_tables:
             structure = {**structure, 'tables': []}

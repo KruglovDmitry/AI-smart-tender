@@ -98,7 +98,7 @@ class ReadFolderBody(BaseModel):
     )
     max_total_chars: int = Field(
         150_000,
-        description="Budget for full text of the folder; files beyond it come as outlines to read with search/read_pages.",
+        description="Budget for full text of the folder; files beyond it come as outlines to read with search and read_pdf or read_file.",
     )
 
 
@@ -403,7 +403,7 @@ def list_documents(
         "(PDF/DOCX/TXT/CSV/XLSX/ZIP/...). "
         "Do NOT call this for files attached in the chat — use chat context instead. "
         "Use only for paths under tenders/, catalogs/, uploads/ on the server. "
-        "For big PDFs use document_info/search_document/read_pages; for spreadsheets describe_table/query_table."
+        "For big PDFs use document_info/search_document/read_pdf; for spreadsheets describe_table/query_table."
     ),
 )
 def api_read_document(body: ReadDocumentBody):
@@ -424,7 +424,7 @@ def api_read_document(body: ReadDocumentBody):
     summary="Read all documents from a server folder",
     description=(
         "Start here for a tender folder (tenders/, catalogs/, ...): small files come in full, the rest as "
-        "outlines (pages and titles, sheets and columns) to read further with search_document / read_pages / "
+        "outlines (pages and titles, sheets and columns) to read further with search_document / read_pdf / "
         "query_table. Not a substitute for chat attachments."
     ),
 )
@@ -451,7 +451,7 @@ def api_read_folder(body: ReadFolderBody):
     description=(
         "Page count and a one-line title per page for a PDF/DOCX on the server, plus pages that needed OCR. "
         "Use for big files (catalogs, tender documentation) instead of read_document; then search_document "
-        "and read_pages."
+        "and read_pdf with the page numbers you need."
     ),
 )
 def api_document_info(body: DocumentInfoBody):
@@ -474,7 +474,7 @@ def api_search_document(body: SearchDocumentBody):
 @app.post(
     "/read_pages",
     summary="Read selected pages of a document",
-    description="Text and tables (Markdown) of chosen pages; broken-font or scanned pages are OCR-ed.",
+    description="Text and tables of chosen pages. Prefer read_pdf: it places the grid after the surrounding prose and can call vision.",
 )
 def api_read_pages(body: ReadPagesBody):
     return _http_errors(document_index.read_pages, body.path, body.pages, body.include_tables, body.max_chars)
@@ -639,7 +639,7 @@ async def api_owui_process(request: Request):
     summary="Look at a document page as an image",
     description=(
         "Render a PDF page and ask a vision model a question about it: diagrams, drawings, photos, "
-        "tables printed as images. Use when read_pages text is not enough to decide. Answers are cached."
+        "tables printed as images. Pass the page number and a specific question. Answers are cached."
     ),
 )
 def api_view_page(body: ViewPageBody):

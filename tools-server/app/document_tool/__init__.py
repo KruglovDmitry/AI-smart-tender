@@ -105,7 +105,7 @@ def read_document(path: str, max_chars: int) -> dict[str, Any]:
     content = result["content"]
     truncated = bool(result.get('truncated', False))
     if max_chars > 0 and len(content) > max_chars:
-        content = content[:max_chars] + "\n\n[... truncated: use search_document / read_pages for the rest ...]"
+        content = content[:max_chars] + "\n\n[... truncated: use search_document / read_pdf or read_file for the rest ...]"
         truncated = True
 
     return {**result, "path": rel, "content": content, "truncated": truncated}
@@ -165,8 +165,8 @@ def read_folder_documents(
         "errors": errors,
         "note": (
             "Full text of the first files fits the budget. Files in not_read_fully and truncated ones are "
-            "given as outlines: read them with search_document / read_pages (PDF, DOCX) or "
-            "describe_table / query_table (Excel)."
+            "given as outlines: read them with search_document / read_pdf or read_file, "
+            "and describe_table / query_table for spreadsheets."
             if outlines or any(d.get("truncated") for d in documents)
             else "All files are given in full."
         ),
@@ -174,7 +174,7 @@ def read_folder_documents(
 
 
 def _outline(rel: str) -> dict[str, Any]:
-    if rel.lower().endswith((".xlsx", ".xls", ".csv")):
+    if detected_extension((DATA_ROOT / rel)) in {".xlsx", ".xlsm", ".xls", ".csv", ".tsv"}:
         from .spreadsheets.operations import describe_table
 
         d = describe_table(rel)

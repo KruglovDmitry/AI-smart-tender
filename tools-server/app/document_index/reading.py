@@ -43,6 +43,7 @@ def _read_indexed(path: str, mode: str = "auto", pages: str | None = None,
              include_layout: bool = True, visual_mode: str = "auto",
              max_visual_pages: int = 2, expected_format: str = "pdf") -> dict[str, Any]:
     from . import get_index, document_info, parse_pages
+    from ..document_tool.pdf.read import presented_text
 
     if mode not in {"auto", "full", "index"} or visual_mode not in {"off", "auto", "required"}:
         raise ValueError("Invalid reading or visual mode")
@@ -85,9 +86,7 @@ def _read_indexed(path: str, mode: str = "auto", pages: str | None = None,
         item = {"page": n, "warnings": list(page["warnings"]), "source": page["source"]}
         text, source, structure = page['text'], page['source'], page['structure']
         tables = structure.get('tables', []) if include_tables else []
-        content = text
-        if tables:
-            content += '\n\n[TABLES: extracted from page, verify headers and units]\n' + '\n\n'.join(t['markdown'] for t in tables)
+        content = presented_text(text, [table['markdown'] for table in tables])
         offset = text_offset if pos == 0 else 0
         if offset > len(content):
             raise ValueError("text_offset exceeds page content; restart this page with offset=0")
@@ -96,7 +95,7 @@ def _read_indexed(path: str, mode: str = "auto", pages: str | None = None,
         remaining -= len(chunk)
         partial = offset + len(chunk) < len(content)
         if include_layout and structure:
-            layout = {k: v for k, v in structure.items() if k not in {'warnings', 'visual_recommended'}}
+            layout = {k: v for k, v in structure.items() if k not in {'warnings', 'visual_recommended', 'outside_text'}}
             layout['tables'] = [{k: v for k, v in table.items() if k != 'markdown'} for table in tables]
             size = len(json.dumps(layout, ensure_ascii=False))
             if size <= layout_remaining:

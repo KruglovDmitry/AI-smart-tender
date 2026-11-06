@@ -68,6 +68,61 @@ def render_png(path: Path, n: int, dpi: int = 200, bbox: list[float] | None = No
         return page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), clip=clip).tobytes("png")
 
 
+def _box_area(box: list[float] | tuple) -> float:
+    return max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])
+
+
+def _image_area(image: dict) -> float:
+    box = image.get("bbox")
+    if not box or len(box) != 4:
+        return 0.0
+    return _box_area(box)
+
+
+def _covers(block: tuple, table_box: list[float], ratio: float = 0.5) -> bool:
+    area = _box_area(block[:4])
+    if area <= 0:
+        return False
+    x0, y0 = max(block[0], table_box[0]), max(block[1], table_box[1])
+    x1, y1 = min(block[2], table_box[2]), min(block[3], table_box[3])
+    return _box_area((x0, y0, x1, y1)) / area >= ratio
+
+
+def needs_vision(*, text_chars: int, image_count: int, large_image: bool, drawing_count: int, warnings: list[str]) -> bool:
+    """Scan, large picture, short-text drawing, or a table whose grid could not be trusted."""
+    ambiguous = any(item.startswith(("table_grid_ambiguous", "table_detection_failed")) for item in warnings)
+    return text_chars < 20 or large_image or image_count >= 4 or (drawing_count > 15 and text_chars < 400) or ambiguous
+
+
+def prose_outside_tables(text_blocks: list, tables: list[dict], warnings: list[str]) -> str | None:
+    """Drop reading-order text that sits inside a trusted table. None means keep the raw page text."""
+    ambiguous = set()
+    for warning in warnings:
+        if warning.startswith("table_grid_ambiguous:"):
+            ambiguous.add(warning.split(":", 1)[1].split(";", 1)[0].strip())
+    trusted = [table for table in tables if table["id"] not in ambiguous]
+    if not trusted:
+        return None
+    lines = []
+    for block in text_blocks:
+        if any(_covers(block, table["bbox"]) for table in trusted):
+            continue
+        line = block[4].strip()
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def presented_text(text: str, tables: list[str]) -> str:
+    """Model-facing page: prose that is not inside a table, then the extracted grid."""
+    prose = (text or "").strip()
+    grids = [item.strip() for item in tables if item and item.strip()]
+    if not grids:
+        return text or ""
+    grid = "[TABLES: grid extracted from the page; use these cells, not reading order]\n" + "\n\n".join(grids)
+    return f"{prose}\n\n{grid}" if prose else grid
+
+
 def extract_text(path: Path) -> str:
     """Простой резервный текстовый разбор; без OCR и анализа изображений."""
     from pypdf import PdfReader
@@ -112,19 +167,16 @@ def page_structure(path: Path, n: int, include_tables: bool = True) -> dict[str,
                     result["warnings"].append("tables_truncated")
             except Exception as exc:
                 result["warnings"].append(f"table_detection_failed: {type(exc).__name__}")
+            outside = prose_outside_tables(text_blocks, result["tables"], result["warnings"])
+            if outside is not None:
+                result["outside_text"] = outside
         page_area = max(page.rect.width * page.rect.height, 1)
-        def image_area(im) -> float:
-            box = im.get("bbox")
-            if not box or len(box) != 4:
-                return 0.0
-            return max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])
-        # A letterhead logo or table borders are not a reason to call the vision model.
-        # A scan, a large picture, a short-text drawing or an ambiguous table still is.
-        large_image = any(image_area(im) >= 0.12 * page_area for im in images)
-        text_chars = sum(len(block[4]) for block in text_blocks)
-        drawing_scheme = len(page.get_drawings()) > 15 and text_chars < 400
-        result["visual_recommended"] = bool(
-            not text_blocks or large_image or len(images) >= 4 or drawing_scheme
-            or any(t["columns"] >= 5 or t["rows"] >= 20 for t in result["tables"])
-            or any(w.startswith("table_grid_ambiguous") or w.startswith("table_detection_failed") for w in result["warnings"]))
+        large_image = any(_image_area(im) >= 0.12 * page_area for im in images)
+        result["visual_recommended"] = needs_vision(
+            text_chars=sum(len(block[4]) for block in text_blocks),
+            image_count=len(images),
+            large_image=large_image,
+            drawing_count=len(page.get_drawings()),
+            warnings=result["warnings"],
+        )
         return result

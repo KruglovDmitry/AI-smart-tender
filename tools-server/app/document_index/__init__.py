@@ -23,7 +23,7 @@ from ..document_tool.pdf import ocr, read as pdf
 
 log = logging.getLogger(__name__)
 
-INDEX_VERSION = 6
+INDEX_VERSION = 7
 INDEX_ROOT = DATA_ROOT / ".index"
 # Не-PDF документы режем на условные страницы такого размера, чтобы поиск и чтение работали одинаково.
 PSEUDO_PAGE_CHARS = 4000
@@ -313,7 +313,7 @@ def document_info(path: str, page_from: int = 1, page_to: int = 0) -> dict[str, 
         "outline": rows,
         "page_unit": idx.page_unit,
         **({"skill_hint": "Load document_skill(file_type=pdf) once for PDF reading instructions."} if idx.is_pdf else {"skill_hint": "Load document_skill(file_type=docx) once for DOCX reading/creation instructions."} if idx.is_docx else {}),
-        "note": "Use search_document then read_pages/read_file. Check page_unit: logical parts, slides, frames and archive manifests are different units.",
+        "note": "Search, then read_pdf or read_file with the page numbers. For a figure call view_page or the format image tool. Check page_unit.",
     }
 
 
@@ -454,7 +454,7 @@ def search_document(path: str, query: str, max_results: int = 10, mode: str = "a
             "match=prefix: the full code is not printed in the document; catalogs often build codes from a "
             "series prefix plus option tables — read those pages and decode the remaining digits."
             if res.get("match") == "prefix"
-            else "Use read_pages to read the pages found."
+            else "Read the found pages with read_pdf or read_file. Call view_page for a figure or an unreadable cell."
         ),
     }
 

@@ -243,6 +243,28 @@ async def api_agent_settings_check(body: AgentCheckBody):
     return await _agent_call("POST", "/settings/check", {"target": body.target, "values": body.values})
 
 
+async def _tools_call(path: str):
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            r = await client.post(f"{TOOLS_SERVER_URL}{path}")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"tools-server недоступен: {exc}") from exc
+    try:
+        return r.json()
+    except ValueError:
+        return {"ok": False, "detail": r.text[:300]}
+
+
+@app.post("/api/mail/check")
+async def api_mail_check():
+    return await _tools_call("/mail_check")
+
+
+@app.post("/api/search/check")
+async def api_search_check():
+    return await _tools_call("/search_check")
+
+
 def _database_status() -> dict:
     try:
         return {"ok": True, "tenders_total": db.summary()["tenders_total"]}

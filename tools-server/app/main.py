@@ -35,7 +35,8 @@ from .document_tool import list_directory, read_document, read_folder_documents
 from .document_tool.artifacts import resolve_export_file
 from .document_tool.spreadsheets.create import write_excel
 from .observe import begin_call, call_fields, format_fields, get_logger, hint, record, setup_logging, skip_path, summarize
-from .web_tool import fetch_page
+from .mail_tool import check_mailbox, list_messages, read_message, send_message
+from .web_tool import check_search, fetch_page, search_web
 
 setup_logging()
 
@@ -50,7 +51,7 @@ async def _lifespan(_app):
 app = FastAPI(
     title="Tender Tools API",
     version="1.5.0",
-    description="Server documents, URL fetch, and Excel export.",
+    description="Server documents, mail, web search, URL fetch, and Excel export.",
     lifespan=_lifespan,
 )
 
@@ -126,6 +127,30 @@ class ReadFolderBody(BaseModel):
         150_000,
         description="Budget for full text of the folder; files beyond it come as outlines to read with search and read_pdf or read_file.",
     )
+
+
+class ListMailBody(BaseModel):
+    folder: str = Field("INBOX", description="IMAP folder, usually INBOX.")
+    limit: int = Field(10, ge=1, le=20, description="How many latest messages to return.")
+    unread_only: bool = Field(False, description="Only messages the mailbox marks as unseen.")
+
+
+class ReadMailBody(BaseModel):
+    uid: str = Field(..., description="uid from list_mail.")
+    folder: str = Field("INBOX", description="IMAP folder that contains the message.")
+    save_attachments: bool = Field(True, description="Save attachments under uploads/mail/ and return their paths.")
+
+
+class SendMailBody(BaseModel):
+    to: list[str] = Field(..., description="Recipients. One address or a comma-separated list in each item.")
+    subject: str = Field(..., description="Subject line.")
+    body: str = Field("", description="Plain-text body. Do not invent recipients or facts.")
+    cc: list[str] = Field(default_factory=list, description="Copy recipients.")
+
+
+class SearchWebBody(BaseModel):
+    query: str = Field(..., description="What to look up on the public web. Use the user's words.")
+    limit: int = Field(5, ge=1, le=10, description="How many results to return.")
 
 
 class FetchUrlBody(BaseModel):
@@ -791,6 +816,73 @@ def api_start_table_job(body: StartTableJobBody, request: Request):
 )
 def api_table_job_status(job_id: str = Query(..., description="job_id from start_table_job")):
     return _http_errors(table_jobs.job_status, job_id)
+
+
+@app.post(
+    "/list_mail",
+    summary="List recent mailbox messages",
+    description=(
+        "List the latest messages in the mailbox configured in the dashboard (IMAP). "
+        "Use when the user asks to check mail, unread letters, or a folder. "
+        "Then read_mail with the uid. Do not invent messages."
+    ),
+)
+def api_list_mail(body: ListMailBody):
+    return _http_errors(list_messages, body.folder, body.limit, body.unread_only)
+
+
+@app.post(
+    "/read_mail",
+    summary="Read one mailbox message",
+    description=(
+        "Read one message by uid from list_mail. Attachments are saved under uploads/mail/ "
+        "so read_document can open them. Do not use for files already attached in the chat."
+    ),
+)
+def api_read_mail(body: ReadMailBody):
+    return _http_errors(read_message, body.uid, body.folder, body.save_attachments)
+
+
+@app.post(
+    "/send_mail",
+    summary="Send an email",
+    description=(
+        "Send a plain-text email through the mailbox configured in the dashboard (SMTP). "
+        "Use only when the user explicitly asks to send a message and names the recipient. "
+        "Do not invent the address, subject, or body."
+    ),
+)
+def api_send_mail(body: SendMailBody):
+    return _http_errors(send_message, body.to, body.subject, body.body, body.cc)
+
+
+@app.post("/mail_check", include_in_schema=False)
+def api_mail_check():
+    try:
+        return check_mailbox()
+    except Exception as exc:
+        return {"ok": False, "detail": str(exc)[:300]}
+
+
+@app.post(
+    "/search_web",
+    summary="Search the public web",
+    description=(
+        "Search the public internet and return titles, URLs and short snippets. "
+        "Use when the user asks to find information on the web and did not give a direct URL. "
+        "Open a promising result with fetch_url. Do not invent links."
+    ),
+)
+def api_search_web(body: SearchWebBody):
+    return _http_errors(search_web, body.query, body.limit)
+
+
+@app.post("/search_check", include_in_schema=False)
+def api_search_check():
+    try:
+        return check_search()
+    except Exception as exc:
+        return {"ok": False, "detail": str(exc)[:300]}
 
 
 @app.post(

@@ -48,6 +48,9 @@ const SECRET_ENV_KEYS = new Set([
   "AV_PLANNER_API_KEY",
   "QWEN_API_KEY",
   "AV_TARS_API_KEY",
+  "MAIL_PASSWORD",
+  "SEARCH_API_KEY",
+  "BRAVE_SEARCH_API_KEY",
 ]);
 const MODEL_KEY_SERVICES = new Set(["tender-agent", "tools"]);
 const LICENSE_SERVICES = ["tools", "tender-agent", "dashboard"];
@@ -161,6 +164,17 @@ function seedModelSettings() {
     vision_tars_base_url: envValue(["AV_TARS_BASE_URL"]),
     vision_tars_api_key: envValue(["AV_TARS_API_KEY"]),
     vision_tars_model: envValue(["AV_TARS_MODEL"]),
+    mail_imap_host: envValue(["MAIL_IMAP_HOST"]),
+    mail_imap_port: envValue(["MAIL_IMAP_PORT"]),
+    mail_imap_security: envValue(["MAIL_IMAP_SECURITY"]),
+    mail_smtp_host: envValue(["MAIL_SMTP_HOST"]),
+    mail_smtp_port: envValue(["MAIL_SMTP_PORT"]),
+    mail_smtp_security: envValue(["MAIL_SMTP_SECURITY"]),
+    mail_username: envValue(["MAIL_USERNAME"]),
+    mail_password: envValue(["MAIL_PASSWORD"]),
+    mail_from: envValue(["MAIL_FROM"]),
+    search_provider: envValue(["SEARCH_PROVIDER"]),
+    search_api_key: envValue(["SEARCH_API_KEY", "BRAVE_SEARCH_API_KEY"]),
   };
   const stored = {};
   for (const [key, value] of Object.entries(fields)) {

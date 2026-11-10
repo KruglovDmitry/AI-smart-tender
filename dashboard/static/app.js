@@ -57,6 +57,8 @@
     vision: ["Зрение: VL-планировщик и UI-TARS", null],
     browser: ["Браузер", null],
     limits: ["Ограничения", null],
+    mail: ["Почта", "mail"],
+    search: ["Поиск в интернете", "search"],
   };
   const SOURCES = { dashboard: "задано здесь", env: "из .env", default: "по умолчанию" };
   let agentOptions = [];
@@ -86,7 +88,11 @@
         ? '<button type="button" class="btn secondary" data-check="dom">Проверить модель</button>'
         : group === "vision"
           ? '<button type="button" class="btn secondary" data-check="planner">Проверить VL</button> <button type="button" class="btn secondary" data-check="tars">Проверить UI-TARS</button>'
-          : "";
+          : group === "mail"
+            ? '<button type="button" class="btn secondary" data-probe="mail">Проверить почту</button>'
+            : group === "search"
+              ? '<button type="button" class="btn secondary" data-probe="search">Проверить поиск</button>'
+              : "";
       return `<fieldset class="settings-group"><legend>${title}</legend>${items.map(settingInput).join("")}
         ${checks ? `<div class="form-actions">${checks} <span class="mu" id="check-${group}"></span></div>` : ""}</fieldset>`;
     }).join("");
@@ -169,6 +175,24 @@
     const reset = ev.target.closest("[data-reset]");
     if (reset) {
       try { await saveAgentSettings({ [reset.dataset.reset]: null }); } catch (e) { alert(e.message); }
+      return;
+    }
+    const probe = ev.target.closest("[data-probe]");
+    if (probe) {
+      const kind = probe.dataset.probe;
+      const out = $(`#check-${kind}`);
+      out.textContent = "Проверяю…";
+      probe.disabled = true;
+      try {
+        const r = await fetch(kind === "mail" ? "/api/mail/check" : "/api/search/check", { method: "POST" });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+        out.textContent = `${data.ok ? "✓ " : "✗ "}${data.detail || ""}`;
+      } catch (e) {
+        out.textContent = `Ошибка: ${e.message}`;
+      } finally {
+        probe.disabled = false;
+      }
       return;
     }
     const check = ev.target.closest("[data-check]");

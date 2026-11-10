@@ -35,7 +35,7 @@
       "toolServer": {
         "id": "tender-tools",
         "name": "Tender Tools",
-        "description": "Documents, Excel, page fetch"
+        "description": "Documents, mail, web search, Excel, page fetch"
       },
       "env": {
         "DATA_ROOT": "{dataRoot}",

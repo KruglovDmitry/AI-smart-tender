@@ -25,6 +25,13 @@ def test_dashboard_values_override_env_and_keys_are_masked(tmp_path: Path, monke
     assert load_overrides(tmp_path) == {"vision_max_calls": 3}
 
 
+def test_mail_settings_do_not_break_agent_overrides(tmp_path: Path) -> None:
+    save_overrides(tmp_path, {"mail_password": "mailbox-secret", "mail_imap_port": "993", "llm_model": "m"})
+    settings = apply_overrides(Settings(data_dir=tmp_path, llm_model="from-env"))
+    assert settings.llm_model == "m"
+    assert not hasattr(settings, "mail_password")
+
+
 def test_settings_file_stops_taking_secrets_from_env(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("AGENT_LLM_API_KEY", "from-env-secret")
     monkeypatch.setenv("AV_PLANNER_API_KEY", "from-env-vl")

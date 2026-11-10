@@ -6,7 +6,13 @@ import json
 import os
 from pathlib import Path
 
-SECRET_FIELDS = ("llm_api_key", "vision_planner_api_key", "vision_tars_api_key")
+SECRET_FIELDS = (
+    "llm_api_key",
+    "vision_planner_api_key",
+    "vision_tars_api_key",
+    "mail_password",
+    "search_api_key",
+)
 
 
 def settings_path() -> Path | None:

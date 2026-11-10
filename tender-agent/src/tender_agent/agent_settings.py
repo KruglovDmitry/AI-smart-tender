@@ -47,6 +47,17 @@ OPTIONS: tuple[Option, ...] = (
     Option("downloads_enabled", "Скачивание разрешено", "browser", "bool", ("TENDER_AGENT_DOWNLOADS",), True),
     Option("timeout_seconds", "Время на задание, с", "limits", "int", ("TENDER_AGENT_TIMEOUT_SECONDS",), 300),
     Option("card_timeout_seconds", "Время на карточку, с", "limits", "int", ("TENDER_AGENT_CARD_TIMEOUT_SECONDS",), 90),
+    Option("mail_imap_host", "IMAP-сервер", "mail", env=("MAIL_IMAP_HOST",)),
+    Option("mail_imap_port", "IMAP-порт", "mail", "int", ("MAIL_IMAP_PORT",), 993),
+    Option("mail_imap_security", "IMAP: ssl, starttls или plain", "mail", env=("MAIL_IMAP_SECURITY",), default="ssl"),
+    Option("mail_smtp_host", "SMTP-сервер (пусто — тот же, что IMAP)", "mail", env=("MAIL_SMTP_HOST",)),
+    Option("mail_smtp_port", "SMTP-порт", "mail", "int", ("MAIL_SMTP_PORT",), 587),
+    Option("mail_smtp_security", "SMTP: starttls, ssl или plain", "mail", env=("MAIL_SMTP_SECURITY",), default="starttls"),
+    Option("mail_username", "Ящик", "mail", env=("MAIL_USERNAME",)),
+    Option("mail_password", "Пароль", "mail", "secret", ("MAIL_PASSWORD",)),
+    Option("mail_from", "Адрес отправителя (пусто — ящик)", "mail", env=("MAIL_FROM",)),
+    Option("search_provider", "Поиск: duckduckgo или brave", "search", env=("SEARCH_PROVIDER",), default="duckduckgo"),
+    Option("search_api_key", "Ключ Brave (для duckduckgo не нужен)", "search", "secret", ("SEARCH_API_KEY", "BRAVE_SEARCH_API_KEY")),
 )
 BY_KEY = {option.key: option for option in OPTIONS}
 
@@ -126,7 +137,9 @@ def apply_overrides(settings: Settings) -> Settings:
             continue
     if "llm_base_url" in values:
         values["llm_base_url"] = str(values["llm_base_url"]).rstrip("/")
-    return dataclasses.replace(settings, **values)
+    # Почта и поиск живут в том же файле, но агенту закупок не нужны.
+    known = {item.name for item in dataclasses.fields(Settings)}
+    return dataclasses.replace(settings, **{key: value for key, value in values.items() if key in known})
 
 
 def _env_value(option: Option) -> str | None:

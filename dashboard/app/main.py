@@ -225,6 +225,7 @@ class AgentSettingsBody(BaseModel):
 
 class AgentCheckBody(BaseModel):
     target: str
+    values: dict = Field(default_factory=dict)
 
 
 @app.get("/api/agent/settings")
@@ -239,7 +240,7 @@ async def api_agent_settings_save(body: AgentSettingsBody):
 
 @app.post("/api/agent/settings/check")
 async def api_agent_settings_check(body: AgentCheckBody):
-    return await _agent_call("POST", "/settings/check", {"target": body.target})
+    return await _agent_call("POST", "/settings/check", {"target": body.target, "values": body.values})
 
 
 def _database_status() -> dict:

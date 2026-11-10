@@ -50,6 +50,7 @@
   // ---------- настройки агента (вкладка «Агент») ----------
   // Владелец настроек — сам агент (/settings); дашборд их только показывает и меняет.
   // Ключи приходят маской: пустое поле ключа при сохранении не меняет ключ.
+  // «Проверить» смотрит на текст в поле. Удачный ответ записывает введённые значения.
 
   const GROUPS = {
     dom: ["Модель по DOM", "dom"],
@@ -70,7 +71,8 @@
     }
     const type = o.kind === "secret" ? "password" : o.kind === "int" ? "number" : "text";
     const value = o.kind === "secret" ? "" : esc(String(o.value ?? ""));
-    const placeholder = o.kind === "secret" ? (o.set ? `${o.value} — оставьте пустым, чтобы не менять` : "не задан") : "";
+    const placeholder = o.kind === "secret"
+      ? (o.set ? `${o.value} — оставьте пустым, чтобы не менять` : "вставьте ключ и нажмите «Проверить»") : "";
     return `<div class="field"><label for="${id}">${esc(o.label)} ${source}</label>
       <input type="${type}" id="${id}" data-key="${o.key}" value="${value}" placeholder="${esc(placeholder)}" autocomplete="off"></div>`;
   }
@@ -92,6 +94,7 @@
         <button type="submit" class="btn primary">Сохранить</button> <span class="mu" id="agent-settings-saved"></span></div>`;
     $("#agent-settings-hint").textContent = (data.vision_available ? "" :
       "Внимание: библиотека зрения (ai_vision) не установлена в агенте — зрение работать не будет. ") +
+      "«Проверить» берёт ключ из поля и сохраняет его, только если модель ответила. " +
       `Файл настроек: ${data.path}`;
   }
 
@@ -135,6 +138,33 @@
     }
   });
 
+  const CHECK_FIELDS = {
+    dom: ["llm_base_url", "llm_api_key", "llm_model"],
+    planner: ["vision_planner_base_url", "vision_planner_api_key", "vision_planner_model"],
+    tars: ["vision_tars_base_url", "vision_tars_api_key", "vision_tars_model"],
+  };
+
+  function checkOutput(target) {
+    return $(target === "dom" ? "#check-dom" : "#check-vision");
+  }
+
+  // Несохранённые адрес, ключ и модель той кнопки, которую нажали.
+  function pendingCheckValues(target) {
+    const values = {};
+    for (const key of CHECK_FIELDS[target] || []) {
+      const option = agentOptions.find((item) => item.key === key);
+      const input = document.getElementById(`as-${key}`);
+      if (!option || !input) continue;
+      if (option.kind === "secret") {
+        const typed = input.value.trim();
+        if (typed) values[key] = typed;
+      } else if (input.value.trim() !== String(option.value ?? "")) {
+        values[key] = option.kind === "int" ? Number(input.value) : input.value.trim();
+      }
+    }
+    return values;
+  }
+
   $("#agent-settings").addEventListener("click", async (ev) => {
     const reset = ev.target.closest("[data-reset]");
     if (reset) {
@@ -143,16 +173,34 @@
     }
     const check = ev.target.closest("[data-check]");
     if (!check) return;
-    const out = $(check.dataset.check === "dom" ? "#check-dom" : "#check-vision");
+    const target = check.dataset.check;
+    const pending = pendingCheckValues(target);
+    const secretKey = (CHECK_FIELDS[target] || []).find((key) => key.endsWith("_api_key"));
+    const secret = agentOptions.find((item) => item.key === secretKey);
+    const typedKey = secret && pending[secret.key];
+    const out = checkOutput(target);
+    if (secret && !typedKey && !secret.set && target !== "tars") {
+      out.textContent = "Ключ не задан. Вставьте его в поле и нажмите «Проверить».";
+      return;
+    }
+    const label = check.textContent.replace("Проверить ", "");
     out.textContent = "Проверяю…";
     check.disabled = true;
     try {
       const r = await fetch("/api/agent/settings/check", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target: check.dataset.check }),
+        body: JSON.stringify({ target, values: pending }),
       });
       const data = await r.json();
-      out.textContent = `${check.textContent.replace("Проверить ", "")}: ${data.ok ? "✓ " : "✗ "}${data.detail || ""}`;
+      if (data.ok && Object.keys(pending).length) {
+        await saveAgentSettings(pending);
+        const savedOut = checkOutput(target);
+        if (savedOut) savedOut.textContent = `${label}: ✓ ${data.detail || ""} Введённое значение сохранено.`;
+        return;
+      }
+      let text = `${label}: ${data.ok ? "✓ " : "✗ "}${data.detail || ""}`;
+      if (!data.ok && typedKey) text += " Введённое значение не сохранено.";
+      out.textContent = text;
     } catch (e) {
       out.textContent = `Ошибка: ${e.message}`;
     } finally {

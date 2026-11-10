@@ -128,6 +128,7 @@ class SettingsBody(BaseModel):
 
 class CheckBody(BaseModel):
     target: str = Field(..., description="dom | planner | tars")
+    values: dict = Field(default_factory=dict, description="Несохранённые поля формы: проверяются, но сами по себе не записываются")
 
 
 @app.get("/settings", include_in_schema=False)
@@ -154,9 +155,14 @@ async def check_settings(body: CheckBody):
     prefix = {"dom": "llm", "planner": "vision_planner", "tars": "vision_tars"}.get(body.target)
     if prefix is None:
         raise HTTPException(status_code=400, detail="target: dom | planner | tars")
-    base = effective(data_dir, f"{prefix}_base_url").rstrip("/")
-    key = effective(data_dir, f"{prefix}_api_key")
-    model = effective(data_dir, f"{prefix}_model")
+    # Поля из формы важнее файла: пользователь мог вставить ключ и сразу нажать «Проверить».
+    allowed = {f"{prefix}_base_url", f"{prefix}_api_key", f"{prefix}_model"}
+    typed = {key: str(value).strip() for key, value in body.values.items() if key in allowed and str(value).strip()}
+    base = str(typed.get(f"{prefix}_base_url", effective(data_dir, f"{prefix}_base_url"))).rstrip("/")
+    key = str(typed.get(f"{prefix}_api_key", effective(data_dir, f"{prefix}_api_key"))).strip()
+    model = str(typed.get(f"{prefix}_model", effective(data_dir, f"{prefix}_model"))).strip()
+    if not key and prefix != "vision_tars":
+        return {"ok": False, "detail": "Ключ не задан. Вставьте его в поле и нажмите «Проверить»."}
     if not base or not model:
         return {"ok": False, "detail": "Не заданы адрес или модель."}
     payload = {"model": model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1}

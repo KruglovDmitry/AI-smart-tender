@@ -702,8 +702,10 @@ function showSplashError(err) {
 
 function focusExistingWindow() {
   const win = mainWindow || splashWindow;
-  if (!win) return;
+  if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
+  // Повторный запуск должен вытащить окно на экран, даже если оно осталось скрытым.
+  win.show();
   win.focus();
 }
 
@@ -1067,6 +1069,12 @@ if (!app.requestSingleInstanceLock()) {
       if (quitting) return;
       createWindow(`http://${ui.host}:${ui.port}/`);
       closeSplash();
+      // Show() в конструкторе BaseWindow на Windows иногда не ставит WS_VISIBLE,
+      // если в этот же момент закрывается сплэш. Показываем окно ещё раз уже после него.
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.show();
+        mainWindow.focus();
+      }
       log("window opened");
     } catch (err) {
       if (quitting) return;
@@ -1080,7 +1088,10 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 app.on("window-all-closed", () => {
-  if (splashHandoff && !mainWindow) return;
+  // splashHandoff остаётся true на всё время работы. Раньше из-за этого закрытие
+  // главного окна не завершало процесс: он держал single-instance lock, и следующий
+  // запуск тихо выходил, не открыв окно.
+  if (mainWindow && !mainWindow.isDestroyed()) return;
   quitting = true;
   stopServers();
   app.quit();

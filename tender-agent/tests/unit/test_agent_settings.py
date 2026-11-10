@@ -88,6 +88,45 @@ def test_ground_fallback_uses_planner_key_and_can_be_switched_off() -> None:
     assert configure_vision(AV(), Settings(vision_fallback_model="-")).ground_fallback is None
 
 
+def test_check_uses_typed_key_without_saving_a_failure(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("TENDER_AGENT_DATA_DIR", str(tmp_path))
+    save_overrides(tmp_path, {"llm_model": "deepseek-flash", "llm_base_url": "https://example.invalid/v1"})
+    seen: dict = {}
+
+    class Response:
+        status_code = 401
+        text = "invalid"
+
+    class Client:
+        def __init__(self, timeout: float) -> None:
+            del timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def post(self, url: str, json: dict, headers: dict) -> Response:
+            seen["url"] = url
+            seen["auth"] = headers["Authorization"]
+            seen["model"] = json["model"]
+            return Response()
+
+    monkeypatch.setattr("tender_agent.server.httpx.AsyncClient", Client)
+    from tender_agent.server import app
+
+    client = TestClient(app)
+    missing = client.post("/settings/check", json={"target": "dom"}).json()
+    assert missing == {"ok": False, "detail": "Ключ не задан. Вставьте его в поле и нажмите «Проверить»."}
+    assert "auth" not in seen
+
+    checked = client.post("/settings/check", json={"target": "dom", "values": {"llm_api_key": "sk-typed"}}).json()
+    assert checked["ok"] is False and "не сохранено" not in checked["detail"]
+    assert seen["auth"] == "Bearer sk-typed" and seen["model"] == "deepseek-flash"
+    assert effective(tmp_path, "llm_api_key") == ""
+
+
 def test_settings_api_is_hidden_from_open_webui(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("TENDER_AGENT_DATA_DIR", str(tmp_path))
     from tender_agent.server import app
